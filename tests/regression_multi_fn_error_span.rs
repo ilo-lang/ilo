@@ -215,7 +215,7 @@ fn valid_indented_continuation_still_parses() {
     // `normalize_newlines` turns an indented continuation into a `;`, so a
     // function whose body wraps onto the next line is NOT a decl boundary
     // from the parser's perspective. The boundary check must let this
-    // through unchanged. Mirrors the shape from `examples/multiline-bodies.ilo`.
+    // through unchanged. Mirrors the shape from `examples/multiline-bodies.@`.
     let src = "f a:n>n\n  b=+a 1\n  *b 2\nmain>n;f 3";
     run_ok(src);
 }

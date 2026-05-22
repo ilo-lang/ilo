@@ -11,6 +11,7 @@ use ilo::graph;
 use ilo::interpreter;
 use ilo::lexer;
 use ilo::parser;
+use ilo::runtime;
 use ilo::tools;
 use ilo::verify;
 use ilo::vm;
@@ -50,7 +51,7 @@ struct Skill {
 const SKILLS: &[Skill] = &[
     Skill {
         name: "ilo-language",
-        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, Results, loops, and lambdas.",
+        description: "Use this when writing or reviewing .@ source (canonical; .ilo accepted with deprecation warning). Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.",
         path: "skills/ilo/ilo-language.md",
         content: include_str!("../skills/ilo/ilo-language.md"),
     },
@@ -110,7 +111,7 @@ const SKILLS: &[Skill] = &[
     },
     Skill {
         name: "ilo-examples",
-        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.ilo` grouped by what each one demonstrates.",
+        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.@` grouped by what each one demonstrates.",
         path: "skills/ilo/ilo-examples.md",
         content: include_str!("../skills/ilo/ilo-examples.md"),
     },
@@ -281,6 +282,18 @@ fn skill_show_cmd(name: &str, as_json: bool) -> i32 {
 
 /// `ilo version` — plain prints `ilo X.Y.Z`, `--json` emits a structured
 /// envelope so agent tooling can route on the version without parsing.
+/// Emit a deprecation hint when the user loads a `.ilo` file.
+/// `.@` is the canonical extension from 0.13.0 onwards; `.ilo` is retained
+/// for backward compatibility but nudges users toward the shorter form.
+fn maybe_warn_ilo_ext(source_arg: &str) {
+    if source_arg.ends_with(".ilo") {
+        eprintln!(
+            "hint: .ilo extension is deprecated; rename to .@ \
+             (saves 1 token/filename on LLM tokenisers)"
+        );
+    }
+}
+
 fn version_cmd(as_json: bool) -> i32 {
     if as_json {
         let v = serde_json::json!({
@@ -1380,32 +1393,41 @@ fn process_serv_request(
         return serde_json::json!({"schemaVersion": 1, "error": {"phase": "verify", "diagnostics": diags}});
     }
 
+    // Compile to VM bytecode (PR E of ILO-45: tree-walker engine removed).
+    let compiled = match vm::compile(&program) {
+        Ok(c) => c,
+        Err(e) => {
+            let d = Diagnostic::from(&e).with_source(source);
+            return serde_json::json!({"schemaVersion": 1, "error": {"phase": "compile", "diagnostics": [diag_to_json(&d)]}});
+        }
+    };
+
     // Run
     let func_name = req.func.as_deref();
     let run_args = parse_cli_args_typed(&program, func_name, &req.args);
 
     #[cfg(feature = "tools")]
     let result = if let Some(p) = provider {
-        interpreter::run_with_tools(&program, func_name, run_args, p, rt)
+        vm::run_with_tools(&compiled, func_name, run_args, &*p, &*rt)
     } else if let Some(cfg) = http_config {
-        let p = std::sync::Arc::new(tools::http_provider::HttpProvider::new(cfg.clone()));
-        interpreter::run_with_tools(&program, func_name, run_args, p, rt)
+        let p = tools::http_provider::HttpProvider::new(cfg.clone());
+        vm::run_with_tools(&compiled, func_name, run_args, &p, &*rt)
     } else {
-        interpreter::run(&program, func_name, run_args)
+        vm::run(&compiled, func_name, run_args)
     };
 
     #[cfg(not(feature = "tools"))]
-    let result = interpreter::run(&program, func_name, run_args);
+    let result = vm::run(&compiled, func_name, run_args);
 
     let ms = start.elapsed().as_millis() as u64;
 
     match result {
         Ok(value) => match value {
-            interpreter::Value::Ok(inner) => {
+            runtime::Value::Ok(inner) => {
                 let v = inner.to_json().unwrap_or(serde_json::Value::Null);
                 serde_json::json!({"schemaVersion": 1, "ok": v, "ms": ms})
             }
-            interpreter::Value::Err(inner) => {
+            runtime::Value::Err(inner) => {
                 let v = inner
                     .to_json()
                     .unwrap_or_else(|_| serde_json::Value::String(inner.to_string()));
@@ -1548,7 +1570,7 @@ fn repl_cmd() {
                     if defs.is_empty() {
                         eprintln!("no definitions to save");
                     } else {
-                        eprintln!("usage: :w <file.ilo>");
+                        eprintln!("usage: :w <file.@>");
                     }
                     continue;
                 }
@@ -1557,7 +1579,7 @@ fn repl_cmd() {
                     let path = match input.split_once(' ') {
                         Some((_, p)) => p.trim(),
                         None => {
-                            eprintln!("usage: :w <file.ilo>");
+                            eprintln!("usage: :w <file.@>");
                             continue;
                         }
                     };
@@ -1728,9 +1750,17 @@ fn repl_cmd() {
             continue;
         }
 
-        // Skip type checking for the repl wrapper — just run it
-        // This allows expressions of any type to be evaluated
-        match interpreter::run(&full_program, Some("repleval"), vec![]) {
+        // Skip type checking for the repl wrapper — just compile and run on VM.
+        // (PR E of ILO-45: tree-walker engine removed.)
+        let compiled = match vm::compile(&full_program) {
+            Ok(c) => c,
+            Err(e) => {
+                let d = Diagnostic::from(&e).with_source(full_source);
+                eprintln!("{}", renderer.render(&d));
+                continue;
+            }
+        };
+        match vm::run(&compiled, Some("repleval"), vec![]) {
             Ok(value) => println!("{value}"),
             Err(e) => {
                 let d = Diagnostic::from(&e).with_source(full_source);
@@ -1744,8 +1774,13 @@ fn repl_cmd() {
 #[cfg(feature = "cranelift")]
 fn compile_cmd(args: &[String]) -> i32 {
     if args.is_empty() {
-        eprintln!("Usage: ilo compile <file-or-code> [-o output] [func]");
+        print_build_help();
         return 1;
+    }
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_build_help();
+        return 0;
     }
 
     let mut output_path: Option<String> = None;
@@ -1753,6 +1788,11 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut func_name: Option<&str> = None;
     let mut bench_mode = false;
     let mut as_json = false;
+    let mut python_mode = false;
+    let mut wasm_mode = false;
+    let mut wasm_target_arg: Option<String> = None;
+    let mut zero_mode = false;
+    let mut zero_bin_mode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1770,6 +1810,26 @@ fn compile_cmd(args: &[String]) -> i32 {
             "--json" | "-j" => {
                 as_json = true;
             }
+            "--py" => {
+                python_mode = true;
+            }
+            "--wasm" => {
+                wasm_mode = true;
+            }
+            "--0" => {
+                zero_mode = true;
+            }
+            "--0bin" => {
+                zero_bin_mode = true;
+            }
+            "--target" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --target requires a target name (e.g. wasm32-component)");
+                    return 1;
+                }
+                wasm_target_arg = Some(args[i].clone());
+            }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
             }
@@ -1778,6 +1838,27 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
         }
         i += 1;
+    }
+
+    if python_mode && bench_mode {
+        eprintln!("Error: --py and --bench are mutually exclusive");
+        return 1;
+    }
+    if wasm_mode && (python_mode || bench_mode) {
+        eprintln!("Error: --wasm is mutually exclusive with --py / --bench");
+        return 1;
+    }
+    if wasm_target_arg.is_some() && !wasm_mode {
+        eprintln!("Error: --target only applies to --wasm builds");
+        return 1;
+    }
+    if zero_mode && zero_bin_mode {
+        eprintln!("Error: --0 and --0bin are mutually exclusive (--0bin already emits the source)");
+        return 1;
+    }
+    if (zero_mode || zero_bin_mode) && (python_mode || wasm_mode || bench_mode) {
+        eprintln!("Error: --0/--0bin is mutually exclusive with --py / --wasm / --bench");
+        return 1;
     }
 
     let source_arg = match source_arg {
@@ -1790,6 +1871,7 @@ fn compile_cmd(args: &[String]) -> i32 {
 
     // Read source from file or treat as inline code
     let source = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         match std::fs::read_to_string(source_arg) {
             Ok(s) => s,
             Err(e) => {
@@ -1801,10 +1883,38 @@ fn compile_cmd(args: &[String]) -> i32 {
         source_arg.to_string()
     };
 
-    // Default output path: strip .ilo extension or use "a.out"
+    // Default output path: strip .ilo extension or use "a.out". With `--py`,
+    // the default is `<basename>.py` so `ilo build foo.ilo --py` writes
+    // `foo.py` next to the source.
     let output = output_path.unwrap_or_else(|| {
-        if source_arg.ends_with(".ilo") {
+        if python_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.py", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.py".to_string()
+            }
+        } else if wasm_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.wasm", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.wasm".to_string()
+            }
+        } else if zero_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.0", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.0".to_string()
+            }
+        } else if zero_bin_mode {
+            if source_arg.ends_with(".ilo") {
+                source_arg.trim_end_matches(".ilo").to_string()
+            } else {
+                "a.out".to_string()
+            }
+        } else if source_arg.ends_with(".ilo") {
             source_arg.trim_end_matches(".ilo").to_string()
+        } else if source_arg.ends_with(".@") {
+            source_arg.trim_end_matches(".@").to_string()
         } else {
             "a.out".to_string()
         }
@@ -1891,6 +2001,121 @@ fn compile_cmd(args: &[String]) -> i32 {
         return 1;
     }
 
+    // `--py`: transpile to Python via the PythonBackend and short-circuit
+    // before the bytecode/Cranelift pipeline runs.
+    //
+    // NOTE: like the Cranelift dispatch below, Python is a HIR-trait-surface
+    // call with a side channel. The `_hir` argument is threaded for
+    // signature parity, but the actual transpile reads `config.program`
+    // (the verified AST) because the current HIR doesn't carry the full
+    // expression-level surface Python emit needs (sum types, full match
+    // shapes, etc.). See `backend/python/mod.rs` module doc and the
+    // Backend trait doc for the wider story. The side channel is
+    // documented and intentional in 0.13.0; it disappears once HIR grows.
+    if python_mode {
+        // Lower to HIR so the trait surface is HIR-first even if the Python
+        // backend currently ignores it. Keeps the dispatch site uniform with
+        // the Cranelift path.
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let config = ilo::backend::python::PythonConfig {
+            program: &program,
+            output_path: std::path::PathBuf::from(&output),
+        };
+        return match ilo::backend::python::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("Python transpile error: {}", e);
+                1
+            }
+        };
+    }
+
+    // `--wasm`: emit a WebAssembly module via the WasmBackend. The default
+    // target is wasm32-component (Component Model wrapper); `--target` lets
+    // the user pick wasm32-wasip1, wasm32-wasip2, or wasm32-unknown-unknown.
+    // See `backend/wasm/mod.rs` and `docs/wasm-capabilities.md` for the
+    // per-target capability matrix.
+    if wasm_mode {
+        let target = match wasm_target_arg.as_deref() {
+            None => ilo::backend::wasm::WasmTarget::Component,
+            Some(s) => match ilo::backend::wasm::WasmTarget::parse(s) {
+                Some(t) => t,
+                None => {
+                    eprintln!(
+                        "Error: unknown --target `{}`. Supported: wasm32-wasip1, wasm32-wasip2, wasm32-component, wasm32-unknown-unknown (alias wasm32-web)",
+                        s
+                    );
+                    return 1;
+                }
+            },
+        };
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let config = ilo::backend::wasm::WasmConfig {
+            target,
+            output_path: std::path::PathBuf::from(&output),
+            entry: func_name.map(|s| s.to_string()),
+        };
+        return match ilo::backend::wasm::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("WASM compile error: {}", e);
+                1
+            }
+        };
+    }
+
+    // `--0` / `--0bin`: emit Zero source (`.0`) via the ZeroBackend.
+    // `--0bin` chains through the pinned `zero` compiler (0.1.2) to produce
+    // a native binary. See `backend/zero/mod.rs` and
+    // `docs/zero-transpile-capabilities.md` for the capability matrix.
+    if zero_mode || zero_bin_mode {
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let mode = if zero_bin_mode {
+            ilo::backend::zero::ZeroMode::Binary
+        } else {
+            ilo::backend::zero::ZeroMode::Source
+        };
+        let config = ilo::backend::zero::ZeroConfig {
+            output_path: std::path::PathBuf::from(&output),
+            mode,
+            entry: func_name.map(|s| s.to_string()),
+        };
+        return match ilo::backend::zero::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("Zero transpile error: {}", e);
+                1
+            }
+        };
+    }
+
     // Compile to bytecode
     let compiled = match vm::compile(&program) {
         Ok(c) => c,
@@ -1957,16 +2182,30 @@ fn compile_cmd(args: &[String]) -> i32 {
         return 1;
     };
 
-    // AOT compile
-    let start = std::time::Instant::now();
-    let result = if bench_mode {
-        vm::compile_cranelift::compile_to_bench_binary(&compiled, entry, &output)
-    } else {
-        vm::compile_cranelift::compile_to_binary(&compiled, entry, &output)
+    // Lower verified AST to HIR. The Cranelift backend ignores it today
+    // (Stage 5b uses bytecode via the config side-channel) but the dispatch
+    // surface is HIR-first so subsequent stages can swap backends without
+    // touching `main.rs`.
+    let hir = match ilo::hir::lower(&program, &verify_result) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("HIR lowering error: {}", e);
+            return 1;
+        }
     };
+
+    // AOT compile via the backend trait surface.
+    let start = std::time::Instant::now();
+    let config = ilo::backend::cranelift::CraneliftConfig {
+        program: &compiled,
+        entry,
+        output_path: &output,
+        bench: bench_mode,
+    };
+    let result = ilo::backend::cranelift::emit(&hir, config);
     let duration_ms = start.elapsed().as_millis();
     match result {
-        Ok(()) => {
+        Ok(_artefact) => {
             if as_json {
                 let size_bytes = std::fs::metadata(&output).map(|m| m.len()).ok();
                 let v = serde_json::json!({
@@ -2004,9 +2243,33 @@ fn compile_cmd(args: &[String]) -> i32 {
 }
 
 #[cfg(not(feature = "cranelift"))]
-fn compile_cmd(_args: &[String]) -> i32 {
+fn compile_cmd(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_build_help();
+        return 0;
+    }
     eprintln!("Error: AOT compilation requires the cranelift feature (--features cranelift)");
     1
+}
+
+/// Manifesto-strict `ilo build` help. Exactly five forms.
+///
+/// Emitted on stderr so it composes with the friendly-usage handlers in
+/// `main()` (which also use stderr) and matches the wider unix-y convention
+/// of usage/help being a diagnostic rather than program output.
+fn print_build_help() {
+    eprintln!("ilo build — compile an ilo program\n");
+    eprintln!("Usage:");
+    eprintln!("  ilo build <file.ilo>              Native binary (default; Cranelift)");
+    eprintln!("  ilo build <file.ilo> --wasm       WebAssembly Component Model binary");
+    eprintln!("  ilo build <file.ilo> --0          Zero source (.0)");
+    eprintln!("  ilo build <file.ilo> --0bin       Native binary via the Zero compiler");
+    eprintln!("  ilo build <file.ilo> --py         Python source (.py)\n");
+    eprintln!("Options:");
+    eprintln!("  -o <path>          Output path (default: alongside the source)");
+    eprintln!("  --target <name>    For --wasm: wasm32-component (default),");
+    eprintln!("                     wasm32-wasip1, wasm32-wasip2, wasm32-unknown-unknown");
+    eprintln!("  --help / -h        Show this help");
 }
 
 /// Stdio-based agent serve loop.
@@ -3442,6 +3705,15 @@ fn main() {
         std::process::exit(0);
     }
 
+    // `ilo build --help` / `ilo build -h`: print the manifesto-strict build
+    // help and exit 0 before clap or the unknown-flag guard sees it.
+    if raw_args.get(1).map(|s| s.as_str()) == Some("build")
+        && raw_args.iter().skip(2).any(|a| a == "--help" || a == "-h")
+    {
+        print_build_help();
+        std::process::exit(0);
+    }
+
     // Friendly usage for `ilo run` / `ilo check` / `ilo build` with no
     // source argument. Without this, clap rejects the missing-positional
     // and we fall through to dispatch_bare_args, which then tries to lex
@@ -3452,18 +3724,18 @@ fn main() {
     if raw_args.len() == 2 {
         match raw_args[1].as_str() {
             "run" => {
-                eprintln!("Usage: ilo run <file.ilo> [func] [args...]");
+                eprintln!("Usage: ilo run <file.@> [func] [args...]");
                 eprintln!("       ilo run <inline-code> [func] [args...]");
                 std::process::exit(1);
             }
             "check" => {
-                eprintln!("Usage: ilo check <file.ilo>");
+                eprintln!("Usage: ilo check <file.@>");
                 eprintln!("       ilo check <inline-code>");
-                eprintln!("       ilo check <file.ilo> --json   (machine-readable diagnostics)");
+                eprintln!("       ilo check <file.@> --json   (machine-readable diagnostics)");
                 std::process::exit(1);
             }
             "build" => {
-                eprintln!("Usage: ilo build <file.ilo> [-o out] [func]");
+                print_build_help();
                 std::process::exit(1);
             }
             "trace" => {
@@ -3774,7 +4046,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
 
     if args.len() < 2 {
         eprintln!(
-            "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]"
+            "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args...]"
         );
         eprintln!("       ilo run <file> [args...]                  Run (verb form)");
         eprintln!("       ilo check <file> [--json]                 Verify without running");
@@ -3856,7 +4128,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         (args[1].clone(), 2)
     } else if args[1] == "-e" {
         if args.len() < 3 || args[2].is_empty() {
-            eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --emit python]");
+            eprintln!("Usage: ilo <file-or-code> [args... | --run func args...]");
             return 1;
         }
         (args[2].clone(), 3)
@@ -3932,8 +4204,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3958,8 +4228,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3989,8 +4257,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -4015,8 +4281,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -4041,8 +4305,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -4079,8 +4341,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     let run_args = cli::RunArgs {
         source,
         engine,
-        run_tree: false,
-        run: false,
         run_vm: false,
         jit: false,
         run_llvm: false,
@@ -4186,6 +4446,7 @@ fn check_cmd(
 ) -> i32 {
     // Read source from file or treat as inline code.
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         match std::fs::read_to_string(source_arg) {
             Ok(s) => (s, true),
             Err(e) => {
@@ -4404,6 +4665,7 @@ fn dispatch_run(
 
     // Read source from file or treat as inline code
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         let s = match std::fs::read_to_string(source_arg) {
             Ok(s) => s,
             Err(e) => {
@@ -4608,16 +4870,22 @@ fn dispatch_run(
         print!("{}", codegen::explain::explain(&program, filename));
         0
     } else if let Some(ref target) = r.emit {
+        // Stage 5c (manifesto-strict CLI): `--emit <target>` is removed.
+        // The canonical form is now `ilo build <file> --<target>`. For
+        // python this means `ilo build file.ilo --py`. Print a migration
+        // hint and exit 2 so scripts notice the breakage immediately.
+        // Per Stage 5c the legacy --emit path is a migration hint only.
         if target == "python" {
-            println!("{}", codegen::python::emit(&program));
-            0
+            eprintln!(
+                "error: `--emit python` is removed. Use `ilo build <file.ilo> --py` instead."
+            );
         } else if target == "js" {
+            // JS emit retained for now via codegen::js.
             println!("{}", codegen::js::emit(&program));
-            0
         } else {
-            eprintln!("Unknown emit target. Supported: python, js");
-            1
+            eprintln!("Unknown emit target. Supported: python (use --py), js");
         }
+        2
     } else if r.dense {
         println!(
             "{}",
@@ -4675,36 +4943,6 @@ fn dispatch_run(
                     mode,
                     explicit_json,
                     suppress,
-                    caps,
-                )
-            }
-            cli::Engine::Tree => {
-                let (func_name, raw) = resolve_engine_func_name(&program, rest);
-                let run_args = parse_cli_args_typed(&program, func_name, raw);
-                // CLI-boundary arity guard. The tree interpreter already
-                // enforces this at dispatch (interpreter/mod.rs:4152), but
-                // running it here keeps the diagnostic shape consistent
-                // across every engine and avoids a one-off code path
-                // where the engine surfaces an ILO-R012 ("undefined
-                // function") for inline programs with a typoed entry
-                // while the others use ILO-R004.
-                if let Err(code) =
-                    check_cli_arity(&program, func_name, run_args.len(), &source, mode)
-                {
-                    return code;
-                }
-                run_interp_with_provider(
-                    &program,
-                    func_name,
-                    run_args,
-                    tools_config_path.as_deref(),
-                    #[cfg(feature = "tools")]
-                    mcp_provider_holder,
-                    #[cfg(feature = "tools")]
-                    mcp_rt,
-                    &source,
-                    mode,
-                    explicit_json,
                     caps,
                 )
             }
@@ -5068,11 +5306,11 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
-    println!("  ilo run <file.ilo> [args...]      Run (verb form; alias for positional)");
-    println!("  ilo check <file.ilo>              Verify without running (exit 0 = clean)");
-    println!("  ilo build <file.ilo> -o <out>     AOT compile (alias for `compile`)");
+    println!("  ilo run <file.@> [args...]        Run (verb form; alias for positional)");
+    println!("  ilo check <file.@>               Verify without running (exit 0 = clean)");
+    println!("  ilo build <file.@>               Native binary (Cranelift; default)");
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
-    println!("  ilo <file.ilo> [args...]          Run from file");
+    println!("  ilo <file.@> [args...]           Run from file (.ilo also accepted)");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
     println!("  ilo <code> --emit js              Transpile to JavaScript (ES modules)");
@@ -5115,16 +5353,13 @@ fn print_help() {
     println!("  ilo graph <file> --subgraph         Transitive dependencies");
     println!("  ilo graph <file> --budget N         Limit to N tokens of source");
     println!("  ilo graph <file> --dot              Output as DOT (Graphviz)\n");
-    println!("AOT compilation:");
-    println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
-    println!("Backends:");
-    println!("  (default)        Register VM (closure-aware, all opcodes supported)");
-    println!(
-        "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
-    );
-    println!(
-        "  --vm             Register VM (canonical form, symmetric with --jit; --run-vm is a deprecated alias)\n"
-    );
+    println!("Compilation (`ilo build`):");
+    println!("  ilo build <file.ilo>              Native binary (Cranelift; default)");
+    println!("  ilo build <file.ilo> --wasm       WebAssembly Component Model");
+    println!("  ilo build <file.ilo> --0          Zero source (.0)");
+    println!("  ilo build <file.ilo> --0bin       Native binary via Zero");
+    println!("  ilo build <file.ilo> --py         Python source");
+    println!("  See `ilo build --help` for all options.\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
@@ -5139,7 +5374,7 @@ fn print_help() {
 fn run_vm_with_provider(
     compiled: &vm::CompiledProgram,
     func_name: Option<&str>,
-    args: Vec<interpreter::Value>,
+    args: Vec<runtime::Value>,
     tools_config_path: Option<&str>,
     #[cfg(feature = "tools")] mcp_provider: Option<&tools::mcp_provider::McpProvider>,
     #[cfg(feature = "tools")] mcp_rt: Option<&tokio::runtime::Runtime>,
@@ -5209,92 +5444,6 @@ fn run_vm_with_provider(
     }
 }
 
-/// Dispatch --run-tree, routing to MCP / HTTP / plain run based on available providers.
-/// Returns exit code.
-#[allow(clippy::too_many_arguments)]
-fn run_interp_with_provider(
-    program: &ast::Program,
-    func_name: Option<&str>,
-    args: Vec<interpreter::Value>,
-    tools_config_path: Option<&str>,
-    #[cfg(feature = "tools")] mcp_provider: Option<tools::mcp_provider::McpProvider>,
-    #[cfg(feature = "tools")] mcp_rt: Option<tokio::runtime::Runtime>,
-    source: &str,
-    mode: OutputMode,
-    explicit_json: bool,
-    caps: Arc<Caps>,
-) -> i32 {
-    let suppress = program_result_should_suppress(program, func_name);
-    #[cfg(feature = "tools")]
-    if let Some(provider) = mcp_provider {
-        let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
-        match interpreter::run_with_tools_and_caps(
-            program,
-            func_name,
-            args,
-            std::sync::Arc::new(provider),
-            rt,
-            caps,
-        ) {
-            Ok(val) => {
-                print_value(&val, explicit_json, suppress);
-                return program_exit_code(&val);
-            }
-            Err(e) => {
-                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                return 1;
-            }
-        }
-    }
-
-    if let Some(tools_path) = tools_config_path {
-        let config = match tools::http_provider::ToolsConfig::from_file(tools_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("{}", e);
-                return 1;
-            }
-        };
-        let provider = std::sync::Arc::new(tools::http_provider::HttpProvider::new(config));
-        #[cfg(feature = "tools")]
-        let runtime = std::sync::Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime"),
-        );
-        return match interpreter::run_with_tools_and_caps(
-            program,
-            func_name,
-            args,
-            provider,
-            #[cfg(feature = "tools")]
-            runtime,
-            caps,
-        ) {
-            Ok(val) => {
-                print_value(&val, explicit_json, suppress);
-                program_exit_code(&val)
-            }
-            Err(e) => {
-                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                1
-            }
-        };
-    }
-
-    match interpreter::run_with_caps(program, func_name, args, caps) {
-        Ok(val) => {
-            print_value(&val, explicit_json, suppress);
-            program_exit_code(&val)
-        }
-        Err(e) => {
-            report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-            1
-        }
-    }
-}
-
 /// Serialize the program as pretty JSON to stdout. Used by the explicit
 /// `--ast` flag and by the legacy inline-no-func default path.
 ///
@@ -5331,7 +5480,7 @@ fn dump_ast_json(program: &ast::Program) -> i32 {
 fn run_default(
     program: &ast::Program,
     func_name: Option<&str>,
-    args: Vec<interpreter::Value>,
+    args: Vec<runtime::Value>,
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
@@ -5352,30 +5501,20 @@ fn run_default(
     let suppress = program_result_should_suppress(program, func_name);
     // Default engine is the bytecode register VM: it supports every opcode
     // (closures, listview, len-has-k-count, every modern shape), and avoids
-    // the JIT compile-and-bail cost the old Cranelift-first default paid on
-    // any program touching opcodes the JIT can't yet handle. Cranelift
-    // remains opt-in for hot numeric workloads via `--jit`; the tree
-    // interpreter remains the canonical
-    // reference semantics and the last-resort fallback for any program the
-    // VM compile/run rejects (e.g. shapes the VM doesn't yet support).
-    if let Ok(compiled) = vm::compile(program) {
-        match vm::run_with_caps(&compiled, func_name, args.clone(), caps.clone()) {
-            Ok(val) => {
-                print_value(&val, explicit_json, suppress);
-                return program_exit_code(&val);
-            }
-            Err(_e) => {
-                // Fall through to the tree interpreter — the VM's error
-                // reporting may not match the interpreter's diagnostics,
-                // and the interpreter is the canonical reference
-                // semantics. Preserves prior behaviour for any program the
-                // bytecode VM rejects.
-            }
+    // Cranelift is opt-in for hot numeric workloads via `--jit`. The
+    // tree-walker engine was removed in 0.13.0 (ILO-45 PR E); VM is now
+    // the only default-engine runtime. The previous "VM-first, tree
+    // fallback" shape paid a tree-walker fallback cost on any program
+    // VM compilation rejected — that fallback is gone and VM compile
+    // errors now surface directly.
+    let compiled = match vm::compile(program) {
+        Ok(c) => c,
+        Err(e) => {
+            report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+            return 1;
         }
-    }
-
-    // Fall back to interpreter
-    match interpreter::run_with_caps(program, func_name, args, caps) {
+    };
+    match vm::run_with_caps(&compiled, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
             program_exit_code(&val)
@@ -5550,7 +5689,7 @@ fn body_has_top_level_prnt(body: &[ast::Spanned<ast::Stmt>]) -> bool {
 /// stream convention for failures). In JSON mode the `{"error": ...}` envelope is
 /// still written to stdout, so machine consumers can keep parsing stdout uniformly
 /// and discriminate on the top-level key.
-fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool) {
+fn print_value(val: &runtime::Value, as_json: bool, suppress_loop_tail: bool) {
     if !as_json {
         // Value::Err always prints to stderr — even when suppress_loop_tail
         // is on. The loop-tail suppression rule exists to avoid duplicating
@@ -5559,7 +5698,7 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         // companion exit-code surfacing happens in `program_exit_code`, so
         // skipping the err here would leave the operator with `exit 1` and
         // zero diagnostic context.
-        if matches!(val, interpreter::Value::Err(_)) {
+        if matches!(val, runtime::Value::Err(_)) {
             eprintln!("{}", val);
             return;
         }
@@ -5576,7 +5715,7 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         // `Value::Ok` still renders `~v` everywhere else (nested values,
         // `prnt ~"x"`, REPL prompts, error messages, debug formatting) — those
         // contexts genuinely want the wrapper visible.
-        if let interpreter::Value::Ok(inner) = val {
+        if let runtime::Value::Ok(inner) = val {
             println!("{}", inner);
             return;
         }
@@ -5584,11 +5723,11 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         return;
     }
     let json = match val {
-        interpreter::Value::Ok(inner) => {
+        runtime::Value::Ok(inner) => {
             let v = inner.to_json().unwrap_or(serde_json::Value::Null);
             serde_json::json!({"schemaVersion": 1, "ok": v})
         }
-        interpreter::Value::Err(inner) => {
+        runtime::Value::Err(inner) => {
             let v = inner
                 .to_json()
                 .unwrap_or_else(|_| serde_json::Value::String(inner.to_string()));
@@ -5609,8 +5748,8 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
 /// detect failure — this is the companion to [#248]'s `!!` panic-unwrap fix, which
 /// addressed the explicit-crash path. Returning the error variant from the `~`/`^`
 /// arm without `!!` is the same kind of failure semantically, just with a value.
-fn program_exit_code(val: &interpreter::Value) -> i32 {
-    if matches!(val, interpreter::Value::Err(_)) {
+fn program_exit_code(val: &runtime::Value) -> i32 {
+    if matches!(val, runtime::Value::Err(_)) {
         1
     } else {
         0
@@ -5774,7 +5913,7 @@ fn emit_bench_json(
 fn run_bench(
     program: &ast::Program,
     func_name: Option<&str>,
-    args: &[interpreter::Value],
+    args: &[runtime::Value],
     json: bool,
     silent: bool,
 ) {
@@ -5791,42 +5930,9 @@ fn run_bench(
     // harness still receives the bench numbers on stdout.
     let silencer = if silent { StdoutSilencer::new() } else { None };
 
-    // -- Rust interpreter benchmark --
-    // Warmup
-    for _ in 0..100 {
-        let _ = interpreter::run(program, func_name, args.to_vec());
-    }
-
-    let start = Instant::now();
-    let mut result = interpreter::Value::Nil;
-    for _ in 0..iterations {
-        result = interpreter::run(program, func_name, args.to_vec())
-            .expect("interpreter error during benchmark");
-    }
-    let interp_dur = start.elapsed();
-    let interp_ns = interp_dur.as_nanos() / iterations as u128;
-
-    if json {
-        emit_bench_json(
-            "tree",
-            None,
-            &result.to_string(),
-            iterations,
-            interp_dur.as_nanos() as f64 / 1e6,
-            interp_ns,
-            silencer.as_ref(),
-        );
-    } else {
-        bench_println(silencer.as_ref(), "Rust interpreter");
-        bench_println(silencer.as_ref(), &format!("  result:     {}", result));
-        bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
-        bench_println(
-            silencer.as_ref(),
-            &format!("  total:      {:.2}ms", interp_dur.as_nanos() as f64 / 1e6),
-        );
-        bench_println(silencer.as_ref(), &format!("  per call:   {}ns", interp_ns));
-        bench_println(silencer.as_ref(), "");
-    }
+    // Tree-walker bench removed in PR E of ILO-45 (engine deleted).
+    // VM is now the canonical interpreter baseline; cranelift/python below
+    // continue to provide cross-engine comparison numbers.
 
     // -- Register VM benchmark --
     let compiled = vm::compile(program).expect("compile error in benchmark");
@@ -5836,7 +5942,7 @@ fn run_bench(
     }
 
     let start = Instant::now();
-    let mut vm_result = interpreter::Value::Nil;
+    let mut vm_result = runtime::Value::Nil;
     for _ in 0..iterations {
         vm_result =
             vm::run(&compiled, func_name, args.to_vec()).expect("VM error during benchmark");
@@ -5930,7 +6036,7 @@ fn run_bench(
     let jit_args: Vec<f64> = args
         .iter()
         .filter_map(|a| match a {
-            interpreter::Value::Number(n) => Some(*n),
+            runtime::Value::Number(n) => Some(*n),
             _ => None,
         })
         .collect();
@@ -6048,20 +6154,20 @@ fn run_bench(
     if json {
         return;
     }
-    let py_code = codegen::python::emit(program);
+    let py_code = ilo::backend::python::emit_to_string(program);
     let call_func = func_name.unwrap_or("main").replace('-', "_");
     let call_args: Vec<String> = args
         .iter()
         .map(|a| match a {
-            interpreter::Value::Number(n) => {
+            runtime::Value::Number(n) => {
                 if *n == (*n as i64) as f64 {
                     format!("{}", *n as i64)
                 } else {
                     format!("{}", n)
                 }
             }
-            interpreter::Value::Text(s) => format!("\"{}\"", s),
-            interpreter::Value::Bool(b) => {
+            runtime::Value::Text(s) => format!("\"{}\"", s),
+            runtime::Value::Bool(b) => {
                 if *b {
                     "True".to_string()
                 } else {
@@ -6121,25 +6227,7 @@ print(f"__NS__={{_per}}")
 
     // -- Summary --
     bench_println(silencer.as_ref(), "Summary");
-    if vm_ns > 0 && interp_ns > 0 {
-        if vm_ns < interp_ns {
-            bench_println(
-                silencer.as_ref(),
-                &format!(
-                    "  Register VM is {:.1}x faster than interpreter",
-                    interp_ns as f64 / vm_ns as f64
-                ),
-            );
-        } else {
-            bench_println(
-                silencer.as_ref(),
-                &format!(
-                    "  Interpreter is {:.1}x faster than bytecode VM",
-                    vm_ns as f64 / interp_ns as f64
-                ),
-            );
-        }
-    }
+    // Tree interpreter vs VM comparison removed in PR E of ILO-45.
     if let Some(jit_ns) = jit_cranelift_ns
         && jit_ns > 0
         && vm_reuse_ns > 0
@@ -6165,25 +6253,7 @@ print(f"__NS__={{_per}}")
         );
     }
     if let Some(py) = py_ns {
-        if interp_ns > 0 && py > 0 {
-            if interp_ns < py {
-                bench_println(
-                    silencer.as_ref(),
-                    &format!(
-                        "  Rust interpreter is {:.1}x faster than Python",
-                        py as f64 / interp_ns as f64
-                    ),
-                );
-            } else {
-                bench_println(
-                    silencer.as_ref(),
-                    &format!(
-                        "  Python is {:.1}x faster than Rust interpreter",
-                        interp_ns as f64 / py as f64
-                    ),
-                );
-            }
-        }
+        // Tree interpreter vs Python comparison removed in PR E of ILO-45.
         if vm_ns > 0 && py > 0 {
             if vm_ns < py {
                 bench_println(
@@ -6345,7 +6415,7 @@ fn lookup_param_types<'a>(
 ///
 /// Mirrors the resolution every engine entry uses internally: if the caller
 /// supplied `func_name`, use it; otherwise pick the first declared function
-/// (matching `vm::run` / `interpreter::run_with_env` / `run_default`).
+/// (matching `vm::run` / `runtime::run_with_env` / `run_default`).
 ///
 /// Returned name is the canonical target so the CLI-boundary arity check can
 /// report a faithful function name in the diagnostic, regardless of whether
@@ -6396,7 +6466,7 @@ fn check_cli_arity(
     if args_len == params.len() {
         return Ok(());
     }
-    let err = interpreter::RuntimeError {
+    let err = runtime::RuntimeError {
         code: "ILO-R004",
         message: format!(
             "{}: expected {} args, got {}",
@@ -6427,7 +6497,7 @@ fn parse_cli_args_typed(
     program: &ast::Program,
     func_name: Option<&str>,
     raw: &[String],
-) -> Vec<interpreter::Value> {
+) -> Vec<runtime::Value> {
     let params = lookup_param_types(program, func_name);
     raw.iter()
         .enumerate()
@@ -6435,9 +6505,9 @@ fn parse_cli_args_typed(
             let expected = params.and_then(|ps| ps.get(i)).map(|p| &p.ty);
             let mut v = parse_cli_arg_for_param(s, expected);
             if matches!(expected, Some(ast::Type::List(_)))
-                && !matches!(&v, interpreter::Value::List(_))
+                && !matches!(&v, runtime::Value::List(_))
             {
-                v = interpreter::Value::List(std::sync::Arc::new(vec![v]));
+                v = runtime::Value::List(std::sync::Arc::new(vec![v]));
             }
             v
         })
@@ -6456,8 +6526,8 @@ fn parse_cli_args_typed(
 fn coerce_cli_args(
     program: &ast::Program,
     func_name: Option<&str>,
-    mut args: Vec<interpreter::Value>,
-) -> Vec<interpreter::Value> {
+    mut args: Vec<runtime::Value>,
+) -> Vec<runtime::Value> {
     let Some(params) = lookup_param_types(program, func_name) else {
         return args;
     };
@@ -6465,10 +6535,8 @@ fn coerce_cli_args(
         if i >= args.len() {
             break;
         }
-        if matches!(&param.ty, ast::Type::List(_))
-            && !matches!(&args[i], interpreter::Value::List(_))
-        {
-            args[i] = interpreter::Value::List(std::sync::Arc::new(vec![args[i].clone()]));
+        if matches!(&param.ty, ast::Type::List(_)) && !matches!(&args[i], runtime::Value::List(_)) {
+            args[i] = runtime::Value::List(std::sync::Arc::new(vec![args[i].clone()]));
         }
     }
     args
@@ -6600,31 +6668,31 @@ mod tests {
 
     #[test]
     fn cli_arg_integer() {
-        assert_eq!(parse_cli_arg("42"), interpreter::Value::Number(42.0));
+        assert_eq!(parse_cli_arg("42"), runtime::Value::Number(42.0));
     }
 
     #[test]
     fn cli_arg_float() {
         #[allow(clippy::approx_constant)]
-        let expected = interpreter::Value::Number(3.14);
+        let expected = runtime::Value::Number(3.14);
         assert_eq!(parse_cli_arg("3.14"), expected);
     }
 
     #[test]
     fn cli_arg_bool_true() {
-        assert_eq!(parse_cli_arg("true"), interpreter::Value::Bool(true));
+        assert_eq!(parse_cli_arg("true"), runtime::Value::Bool(true));
     }
 
     #[test]
     fn cli_arg_bool_false() {
-        assert_eq!(parse_cli_arg("false"), interpreter::Value::Bool(false));
+        assert_eq!(parse_cli_arg("false"), runtime::Value::Bool(false));
     }
 
     #[test]
     fn cli_arg_text() {
         assert_eq!(
             parse_cli_arg("hello"),
-            interpreter::Value::Text(Arc::new("hello".to_string()))
+            runtime::Value::Text(Arc::new("hello".to_string()))
         );
     }
 
@@ -6632,30 +6700,27 @@ mod tests {
     fn cli_arg_bracketed_list() {
         assert_eq!(
             parse_cli_arg("[1,2,3]"),
-            interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(1.0),
-                interpreter::Value::Number(2.0),
-                interpreter::Value::Number(3.0),
+            runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(1.0),
+                runtime::Value::Number(2.0),
+                runtime::Value::Number(3.0),
             ]))
         );
     }
 
     #[test]
     fn cli_arg_empty_bracketed_list() {
-        assert_eq!(
-            parse_cli_arg("[]"),
-            interpreter::Value::List(Arc::new(vec![]))
-        );
+        assert_eq!(parse_cli_arg("[]"), runtime::Value::List(Arc::new(vec![])));
     }
 
     #[test]
     fn cli_arg_comma_list() {
         assert_eq!(
             parse_cli_arg("1,2,3"),
-            interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(1.0),
-                interpreter::Value::Number(2.0),
-                interpreter::Value::Number(3.0),
+            runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(1.0),
+                runtime::Value::Number(2.0),
+                runtime::Value::Number(3.0),
             ]))
         );
     }
@@ -6664,10 +6729,10 @@ mod tests {
     fn cli_arg_mixed_comma_list() {
         assert_eq!(
             parse_cli_arg("1,hello,true"),
-            interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(1.0),
-                interpreter::Value::Text(Arc::new("hello".to_string())),
-                interpreter::Value::Bool(true),
+            runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(1.0),
+                runtime::Value::Text(Arc::new("hello".to_string())),
+                runtime::Value::Bool(true),
             ]))
         );
     }
@@ -6677,7 +6742,7 @@ mod tests {
         // inf is not finite so it should fall through to text
         assert_eq!(
             parse_cli_arg("inf"),
-            interpreter::Value::Text(Arc::new("inf".to_string()))
+            runtime::Value::Text(Arc::new("inf".to_string()))
         );
     }
 
@@ -7225,7 +7290,7 @@ mod tests {
     #[test]
     fn decl_name_use_returns_none() {
         let d = ast::Decl::Use {
-            path: "lib.ilo".into(),
+            path: "lib.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7260,14 +7325,14 @@ mod tests {
     #[test]
     fn resolve_imports_only_filter_keeps_named_decl() {
         use std::io::Write;
-        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.ilo";
+        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.@";
         let mut f = std::fs::File::create(lib_path).unwrap();
         writeln!(f, "dbl n:n>n;*n 2").unwrap();
         writeln!(f, "half n:n>n;/n 2").unwrap();
         drop(f);
 
         let use_decl = ast::Decl::Use {
-            path: "ilo_test_resolve_only_F2G7.ilo".into(),
+            path: "ilo_test_resolve_only_F2G7.@".into(),
             only: Some(vec!["dbl".into()]),
             alias: None,
             predicate: None,
@@ -7300,13 +7365,13 @@ mod tests {
     #[test]
     fn resolve_imports_only_filter_warns_missing_name() {
         use std::io::Write;
-        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.ilo";
+        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.@";
         let mut f = std::fs::File::create(lib_path).unwrap();
         writeln!(f, "dbl n:n>n;*n 2").unwrap();
         drop(f);
 
         let use_decl = ast::Decl::Use {
-            path: "ilo_test_resolve_missing_H4K9.ilo".into(),
+            path: "ilo_test_resolve_missing_H4K9.@".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
             alias: None,
             predicate: None,
@@ -7441,7 +7506,7 @@ mod tests {
         run_vm_with_provider(
             &compiled,
             Some("f"),
-            vec![interpreter::Value::Number(5.0)],
+            vec![runtime::Value::Number(5.0)],
             None,
             #[cfg(feature = "tools")]
             None,
@@ -7461,7 +7526,7 @@ mod tests {
         run_vm_with_provider(
             &compiled,
             Some("f"),
-            vec![interpreter::Value::Number(4.0)],
+            vec![runtime::Value::Number(4.0)],
             None,
             #[cfg(feature = "tools")]
             None,
@@ -7475,47 +7540,7 @@ mod tests {
         );
     }
 
-    // ── run_interp_with_provider: success path ────────────────────────────────
-
-    #[test]
-    fn run_interp_with_provider_success_no_tools() {
-        let program = make_program("f x:n>n;*x 2");
-        run_interp_with_provider(
-            &program,
-            Some("f"),
-            vec![interpreter::Value::Number(7.0)],
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            "f x:n>n;*x 2",
-            OutputMode::Text,
-            false,
-            Arc::new(Caps::default()),
-        );
-    }
-
-    #[test]
-    fn run_interp_with_provider_explicit_json() {
-        let program = make_program("f x:n>n;+x 1");
-        run_interp_with_provider(
-            &program,
-            Some("f"),
-            vec![interpreter::Value::Number(10.0)],
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            "f x:n>n;+x 1",
-            OutputMode::Json,
-            true,
-            Arc::new(Caps::default()),
-        );
-    }
-
-    // ── run_default: cranelift-then-interpreter dispatch ──────────────────────
+    // ── run_default: VM-then-runtime-fallback dispatch ────────────────────────
 
     #[test]
     fn run_default_simple_numeric() {
@@ -7523,7 +7548,7 @@ mod tests {
         run_default(
             &program,
             Some("f"),
-            vec![interpreter::Value::Number(3.0)],
+            vec![runtime::Value::Number(3.0)],
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
@@ -7537,7 +7562,7 @@ mod tests {
         run_default(
             &program,
             Some("greet"),
-            vec![interpreter::Value::Text(Arc::new("world".to_string()))],
+            vec![runtime::Value::Text(Arc::new("world".to_string()))],
             "greet name:t>t;cat \"hi \" name",
             OutputMode::Text,
             false,
@@ -7551,7 +7576,7 @@ mod tests {
         run_default(
             &program,
             None,
-            vec![interpreter::Value::Number(4.0)],
+            vec![runtime::Value::Number(4.0)],
             "double x:n>n;*x 2",
             OutputMode::Text,
             false,
@@ -7564,7 +7589,7 @@ mod tests {
     #[test]
     fn resolve_imports_inline_code_emits_p017() {
         let use_decl = ast::Decl::Use {
-            path: "something.ilo".into(),
+            path: "something.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7590,7 +7615,7 @@ mod tests {
     #[test]
     fn resolve_imports_file_not_found_emits_p017() {
         let use_decl = ast::Decl::Use {
-            path: "nonexistent_xyz_99999.ilo".into(),
+            path: "nonexistent_xyz_99999.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7644,35 +7669,31 @@ mod tests {
 
     #[test]
     fn print_value_plain_number_no_json() {
-        print_value(&interpreter::Value::Number(42.0), false, false);
+        print_value(&runtime::Value::Number(42.0), false, false);
     }
 
     #[test]
     fn print_value_ok_as_json() {
-        let val = interpreter::Value::Ok(Box::new(interpreter::Value::Number(42.0)));
+        let val = runtime::Value::Ok(Box::new(runtime::Value::Number(42.0)));
         print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_as_json() {
-        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text(Arc::new(
-            "oops".to_string(),
-        ))));
+        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new("oops".to_string()))));
         print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_no_json() {
-        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text(Arc::new(
-            "fail".to_string(),
-        ))));
+        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new("fail".to_string()))));
         print_value(&val, false, false);
     }
 
     #[test]
     fn print_value_text_as_json() {
         print_value(
-            &interpreter::Value::Text(Arc::new("hello".to_string())),
+            &runtime::Value::Text(Arc::new("hello".to_string())),
             true,
             false,
         );
@@ -7680,19 +7701,19 @@ mod tests {
 
     #[test]
     fn print_value_bool_as_json() {
-        print_value(&interpreter::Value::Bool(true), true, false);
+        print_value(&runtime::Value::Bool(true), true, false);
     }
 
     #[test]
     fn print_value_nil_as_json() {
-        print_value(&interpreter::Value::Nil, true, false);
+        print_value(&runtime::Value::Nil, true, false);
     }
 
     #[test]
     fn print_value_list_as_json() {
-        let val = interpreter::Value::List(Arc::new(vec![
-            interpreter::Value::Number(1.0),
-            interpreter::Value::Number(2.0),
+        let val = runtime::Value::List(Arc::new(vec![
+            runtime::Value::Number(1.0),
+            runtime::Value::Number(2.0),
         ]));
         print_value(&val, true, false);
     }
@@ -7714,11 +7735,11 @@ mod tests {
 
     #[test]
     fn resolve_imports_parse_error_in_imported_file() {
-        let bad_path = "/tmp/ilo_unit_bad_parse_imports.ilo";
+        let bad_path = "/tmp/ilo_unit_bad_parse_imports.@";
         std::fs::write(bad_path, "f x:>n;x").expect("write bad file");
 
         let decls = vec![ast::Decl::Use {
-            path: "ilo_unit_bad_parse_imports.ilo".into(),
+            path: "ilo_unit_bad_parse_imports.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7748,18 +7769,18 @@ mod tests {
 
     #[test]
     fn resolve_imports_transitive() {
-        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.ilo";
-        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.ilo";
+        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.@";
+        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.@";
 
         std::fs::write(file_b, "triple x:n>n;*x 3").expect("write B");
         std::fs::write(
             file_a,
-            "use \"ilo_unit_trans_b_Q3R8.ilo\"\nsextuple x:n>n;t=triple x;*t 2",
+            "use \"ilo_unit_trans_b_Q3R8.@\"\nsextuple x:n>n;t=triple x;*t 2",
         )
         .expect("write A");
 
         let decls = vec![ast::Decl::Use {
-            path: "ilo_unit_trans_a_Q3R8.ilo".into(),
+            path: "ilo_unit_trans_a_Q3R8.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -8170,6 +8191,7 @@ mod tests {
             body: vec![ast::Spanned::unknown(ast::Stmt::Return(
                 ast::Expr::Literal(ast::Literal::Number(42.0)),
             ))],
+            effect_set: None,
             span: ast::Span::UNKNOWN,
         };
 
@@ -8225,6 +8247,7 @@ mod tests {
                 args: vec![],
                 unwrap: ast::UnwrapMode::None,
             }))],
+            effect_set: None,
             span: ast::Span::UNKNOWN,
         };
 
@@ -8377,18 +8400,18 @@ mod tests {
         // NaN is not finite, so it should fall through to text
         assert_eq!(
             parse_cli_arg("NaN"),
-            interpreter::Value::Text(Arc::new("NaN".to_string()))
+            runtime::Value::Text(Arc::new("NaN".to_string()))
         );
     }
 
     #[test]
     fn cli_arg_negative_number() {
-        assert_eq!(parse_cli_arg("-5"), interpreter::Value::Number(-5.0));
+        assert_eq!(parse_cli_arg("-5"), runtime::Value::Number(-5.0));
     }
 
     #[test]
     fn cli_arg_nil() {
-        assert_eq!(parse_cli_arg("nil"), interpreter::Value::Nil);
+        assert_eq!(parse_cli_arg("nil"), runtime::Value::Nil);
     }
 
     #[test]
@@ -8396,7 +8419,7 @@ mod tests {
         // "nil" should parse as Nil, not Text("nil")
         assert_ne!(
             parse_cli_arg("nil"),
-            interpreter::Value::Text(Arc::new("nil".to_string()))
+            runtime::Value::Text(Arc::new("nil".to_string()))
         );
     }
 
@@ -8419,12 +8442,12 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::Number(10.0)];
+        let args = vec![runtime::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args);
         assert_eq!(
             coerced,
-            vec![interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(10.0)
+            vec![runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(10.0)
             ]))]
         );
     }
@@ -8446,9 +8469,9 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::List(Arc::new(vec![
-            interpreter::Value::Number(1.0),
-            interpreter::Value::Number(2.0),
+        let args = vec![runtime::Value::List(Arc::new(vec![
+            runtime::Value::Number(1.0),
+            runtime::Value::Number(2.0),
         ]))];
         let coerced = coerce_cli_args(&program, Some("f"), args.clone());
         assert_eq!(coerced, args);
@@ -8471,7 +8494,7 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::Number(10.0)];
+        let args = vec![runtime::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args.clone());
         assert_eq!(coerced, args);
     }
@@ -8493,17 +8516,14 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![
-            interpreter::Value::Number(5.0),
-            interpreter::Value::Number(3.0),
-        ];
+        let args = vec![runtime::Value::Number(5.0), runtime::Value::Number(3.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args);
         // xs should be wrapped, v should stay
         assert_eq!(
             coerced,
             vec![
-                interpreter::Value::List(Arc::new(vec![interpreter::Value::Number(5.0)])),
-                interpreter::Value::Number(3.0),
+                runtime::Value::List(Arc::new(vec![runtime::Value::Number(5.0)])),
+                runtime::Value::Number(3.0),
             ]
         );
     }
@@ -8521,7 +8541,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("2".to_string()))]
+            vec![runtime::Value::Text(Arc::new("2".to_string()))]
         );
     }
 
@@ -8532,7 +8552,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("true".to_string()))]
+            vec![runtime::Value::Text(Arc::new("true".to_string()))]
         );
     }
 
@@ -8543,7 +8563,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("nil".to_string()))]
+            vec![runtime::Value::Text(Arc::new("nil".to_string()))]
         );
     }
 
@@ -8555,7 +8575,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("[1,2]".to_string()))]
+            vec![runtime::Value::Text(Arc::new("[1,2]".to_string()))]
         );
     }
 
@@ -8565,7 +8585,7 @@ mod tests {
         let program = make_program("f x:n>n;x");
         let raw = vec!["42".to_string()];
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Number(42.0)]);
+        assert_eq!(parsed, vec![runtime::Value::Number(42.0)]);
     }
 
     #[test]
@@ -8576,8 +8596,8 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(10.0)
+            vec![runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(10.0)
             ]))]
         );
     }
@@ -8592,8 +8612,8 @@ mod tests {
         assert_eq!(
             parsed,
             vec![
-                interpreter::Value::Text(Arc::new("2".to_string())),
-                interpreter::Value::Number(3.0),
+                runtime::Value::Text(Arc::new("2".to_string())),
+                runtime::Value::Number(3.0),
             ]
         );
     }
@@ -8605,7 +8625,7 @@ mod tests {
         let program = make_program("f arg:t>t;arg");
         let raw = vec!["2".to_string()];
         let parsed = parse_cli_args_typed(&program, None, &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Number(2.0)]);
+        assert_eq!(parsed, vec![runtime::Value::Number(2.0)]);
     }
 
     #[test]
@@ -8625,7 +8645,7 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::Number(10.0)];
+        let args = vec![runtime::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, None, args.clone());
         assert_eq!(coerced, args);
     }
@@ -8757,9 +8777,9 @@ mod tests {
 
     #[test]
     fn print_value_list_plain_not_json() {
-        let val = interpreter::Value::List(Arc::new(vec![
-            interpreter::Value::Number(1.0),
-            interpreter::Value::Text(Arc::new("x".to_string())),
+        let val = runtime::Value::List(Arc::new(vec![
+            runtime::Value::Number(1.0),
+            runtime::Value::Text(Arc::new("x".to_string())),
         ]));
         print_value(&val, false, false);
     }
@@ -8768,10 +8788,10 @@ mod tests {
     fn print_value_map_as_json() {
         let mut m = std::collections::HashMap::new();
         m.insert(
-            interpreter::MapKey::Text("k".to_string()),
-            interpreter::Value::Number(7.0),
+            runtime::MapKey::Text("k".to_string()),
+            runtime::Value::Number(7.0),
         );
-        let val = interpreter::Value::Map(std::sync::Arc::new(m));
+        let val = runtime::Value::Map(std::sync::Arc::new(m));
         print_value(&val, true, false);
     }
 
@@ -8779,10 +8799,10 @@ mod tests {
     fn print_value_map_plain_not_json() {
         let mut m = std::collections::HashMap::new();
         m.insert(
-            interpreter::MapKey::Text("key".to_string()),
-            interpreter::Value::Bool(true),
+            runtime::MapKey::Text("key".to_string()),
+            runtime::Value::Bool(true),
         );
-        let val = interpreter::Value::Map(std::sync::Arc::new(m));
+        let val = runtime::Value::Map(std::sync::Arc::new(m));
         print_value(&val, false, false);
     }
 
@@ -9058,21 +9078,23 @@ mod tests {
     // ── subprocess: --emit unknown target ─────────────────────────────────────
 
     #[test]
-    fn cli_emit_unknown_target_exits_nonzero() {
+    fn cli_emit_legacy_form_exits_with_migration_hint() {
+        // Stage 5c: `--emit <target>` is removed. Invoking it surfaces a
+        // migration hint pointing at the canonical `ilo build <file> --py`
+        // form, and exits with code 2 so scripts notice the breakage.
         let out = std::process::Command::new(ilo_bin())
             .args(["f>n;1", "--emit", "rust"])
             .output()
             .expect("failed to run ilo --emit rust");
-        assert!(
-            !out.status.success(),
-            "expected non-zero exit for unknown emit target"
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "expected exit code 2 for legacy --emit form"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains("Unknown emit")
-                || stderr.contains("Supported")
-                || stderr.contains("python"),
-            "expected unknown-emit error in stderr, got: {stderr}"
+            stderr.contains("ilo build") && stderr.contains("--py"),
+            "expected migration hint in stderr, got: {stderr}"
         );
     }
 
@@ -9349,7 +9371,7 @@ mod tests {
     #[test]
     fn resolve_imports_no_base_dir_emits_error() {
         // `use` without a file context → ILO-P017 error (lines 699-703)
-        let decls = vec![make_use_decl("math.ilo")];
+        let decls = vec![make_use_decl("math.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let result = resolve_imports(
@@ -9367,7 +9389,7 @@ mod tests {
     #[test]
     fn resolve_imports_file_not_found_emits_error() {
         // Import a non-existent file → ILO-P017 (lines 711-716)
-        let decls = vec![make_use_decl("nonexistent_file_xyz.ilo")];
+        let decls = vec![make_use_decl("nonexistent_file_xyz.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -9380,17 +9402,17 @@ mod tests {
         );
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
-        assert!(diagnostics[0].message.contains("nonexistent_file_xyz.ilo"));
+        assert!(diagnostics[0].message.contains("nonexistent_file_xyz.@"));
     }
 
     #[test]
     fn resolve_imports_circular_emits_error() {
         // Pre-populate visited with a file that we then try to import → ILO-P018 (lines 721-726)
-        let path = "/tmp/ilo_circ_test.ilo";
+        let path = "/tmp/ilo_circ_test.@";
         std::fs::write(path, "f>n;1").unwrap();
         let canonical = std::fs::canonicalize(path).unwrap();
 
-        let decls = vec![make_use_decl("ilo_circ_test.ilo")];
+        let decls = vec![make_use_decl("ilo_circ_test.@")];
         let mut visited = std::collections::HashSet::new();
         visited.insert(canonical);
         let mut diagnostics = Vec::new();
@@ -9411,9 +9433,9 @@ mod tests {
     #[test]
     fn resolve_imports_lex_error_in_imported_file() {
         // Import a file with invalid syntax → lex error pushed to diagnostics (lines 743-745)
-        let path = "/tmp/ilo_lex_err_test.ilo";
+        let path = "/tmp/ilo_lex_err_test.@";
         std::fs::write(path, "MyFunc invalid_UpperCase").unwrap();
-        let decls = vec![make_use_decl("ilo_lex_err_test.ilo")];
+        let decls = vec![make_use_decl("ilo_lex_err_test.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -9432,16 +9454,16 @@ mod tests {
     fn resolve_imports_read_error_after_canonicalize() {
         // Create a real file, canonicalize it, then delete it — when resolve_imports
         // tries to read_to_string after canonicalize, it gets Err → lines 731-737.
-        let path = "/tmp/ilo_read_err_test.ilo";
+        let path = "/tmp/ilo_read_err_test.@";
         std::fs::write(path, "f>n;1").unwrap();
-        // Create a symlink-like path that canonicalizes to /tmp/ilo_read_err_test_gone.ilo
+        // Create a symlink-like path that canonicalizes to /tmp/ilo_read_err_test_gone.@
         // Instead: just test file-not-found by giving a path whose parent exists but file doesn't.
         // Use a path that doesn't exist at all — canonicalize will Err → covers lines 711-716 again.
         // To hit the read_to_string Err path (731-737), we'd need canonicalize to succeed but
         // read to fail — which requires platform tricks. Skip that specific sub-path.
         std::fs::remove_file(path).ok();
         // Simple verification: non-existent path hits the canonical error (711-716)
-        let decls = vec![make_use_decl("ilo_read_err_test.ilo")];
+        let decls = vec![make_use_decl("ilo_read_err_test.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -9647,7 +9669,7 @@ mod tests {
     fn resolve_imports_directory_triggers_read_error() {
         // Importing a path that resolves to a directory: canonicalize succeeds,
         // but read_to_string fails ("Is a directory") → covers lines 731-737.
-        let dir_name = "ilo_test_dir_import_Z9.ilo";
+        let dir_name = "ilo_test_dir_import_Z9.@";
         let dir_path = format!("/tmp/{dir_name}");
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -10201,7 +10223,9 @@ mod tests {
     // ── dispatch_bare_args: --emit flag ───────────────────────────────────────
 
     #[test]
-    fn dispatch_bare_args_emit_python_exits_zero() {
+    fn dispatch_bare_args_emit_python_migration_error() {
+        // Stage 5c removed `--emit python`. The legacy form now exits 2 with
+        // a migration hint pointing at `ilo build <file> --py`.
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -10221,11 +10245,11 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 0);
+        assert_eq!(code, 2);
     }
 
     #[test]
-    fn dispatch_bare_args_emit_unknown_target_exits_one() {
+    fn dispatch_bare_args_emit_unknown_target_migration_error() {
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -10245,7 +10269,8 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 1);
+        // Stage 5c: any `--emit <target>` form exits 2 with a migration hint.
+        assert_eq!(code, 2);
     }
 
     #[test]
@@ -10974,7 +10999,7 @@ mod tests {
     #[test]
     fn graph_cmd_fn_flag_missing_name_returns_one() {
         // Create a temp file for graph_cmd to parse
-        let path = "/tmp/ilo_graph_test_fn_missing.ilo";
+        let path = "/tmp/ilo_graph_test_fn_missing.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--fn".to_string()]);
         assert_eq!(code, 1);
@@ -10983,7 +11008,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_budget_flag_missing_number_returns_one() {
-        let path = "/tmp/ilo_graph_test_budget_missing.ilo";
+        let path = "/tmp/ilo_graph_test_budget_missing.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--budget".to_string()]);
         assert_eq!(code, 1);
@@ -10992,7 +11017,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_budget_invalid_value_returns_one() {
-        let path = "/tmp/ilo_graph_test_budget_invalid.ilo";
+        let path = "/tmp/ilo_graph_test_budget_invalid.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11005,7 +11030,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_unknown_flag_returns_one() {
-        let path = "/tmp/ilo_graph_test_unknown_flag.ilo";
+        let path = "/tmp/ilo_graph_test_unknown_flag.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--nonexistent-flag".to_string()]);
         assert_eq!(code, 1);
@@ -11014,13 +11039,13 @@ mod tests {
 
     #[test]
     fn graph_cmd_file_not_found_returns_one() {
-        let code = graph_cmd(&["/tmp/ilo_no_such_file_99999.ilo".to_string()]);
+        let code = graph_cmd(&["/tmp/ilo_no_such_file_99999.@".to_string()]);
         assert_eq!(code, 1);
     }
 
     #[test]
     fn graph_cmd_fn_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_fn_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_fn_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11033,7 +11058,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_reverse_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_rev_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_rev_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11047,7 +11072,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_subgraph_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_sub_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_sub_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11061,7 +11086,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_budget_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_bud_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_bud_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11081,8 +11106,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11112,8 +11135,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f>n;1".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11147,8 +11168,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f>n;42".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11179,8 +11198,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f x:n>b;==x 1".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11209,8 +11226,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f x:n>b;==x 1".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11241,8 +11256,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "MyFunc INVALID_UPPER".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11273,8 +11286,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f x:n>t;x".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11420,7 +11431,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_dot_output_exits_zero() {
-        let path = "/tmp/ilo_graph_dot_test_unit.ilo";
+        let path = "/tmp/ilo_graph_dot_test_unit.@";
         std::fs::write(path, "f x:n>n;+x 1 g x:n>n;f x").unwrap();
         let code = graph_cmd(&[path.to_string(), "--dot".to_string()]);
         assert_eq!(code, 0);
@@ -11429,7 +11440,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_success_exits_zero() {
-        let path = "/tmp/ilo_graph_fn_success.ilo";
+        let path = "/tmp/ilo_graph_fn_success.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--fn".to_string(), "f".to_string()]);
         assert_eq!(code, 0);
@@ -11438,7 +11449,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_reverse_success_exits_zero() {
-        let path = "/tmp/ilo_graph_rev_success.ilo";
+        let path = "/tmp/ilo_graph_rev_success.@";
         std::fs::write(path, "helper x:n>n;*x 2 main x:n>n;helper x").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11452,7 +11463,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_subgraph_success_exits_zero() {
-        let path = "/tmp/ilo_graph_sub_success.ilo";
+        let path = "/tmp/ilo_graph_sub_success.@";
         std::fs::write(path, "helper x:n>n;*x 2 main x:n>n;helper x").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11466,7 +11477,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_budget_success_exits_zero() {
-        let path = "/tmp/ilo_graph_bud_success.ilo";
+        let path = "/tmp/ilo_graph_bud_success.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11481,7 +11492,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_full_json_success_exits_zero() {
-        let path = "/tmp/ilo_graph_full_json.ilo";
+        let path = "/tmp/ilo_graph_full_json.@";
         std::fs::write(path, "f x:n>n;+x 1 g x:n>n;f x").unwrap();
         let code = graph_cmd(&[path.to_string()]);
         assert_eq!(code, 0);
@@ -11586,7 +11597,7 @@ mod tests {
         let code = run_default(
             &program,
             Some("f"),
-            vec![interpreter::Value::Number(5.0)],
+            vec![runtime::Value::Number(5.0)],
             "",
             OutputMode::Text,
             false,
@@ -11674,29 +11685,7 @@ mod tests {
         assert_eq!(code, 1);
     }
 
-    // ── run_interp_with_provider: runtime error path ──────────────────────────
-
-    #[test]
-    fn run_interp_with_provider_runtime_error_returns_one() {
-        let program = make_program("f>n;/1 0");
-        let code = run_interp_with_provider(
-            &program,
-            Some("f"),
-            vec![],
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            "f>n;/1 0",
-            OutputMode::Text,
-            false,
-            Arc::new(Caps::default()),
-        );
-        assert_eq!(code, 1);
-    }
-
-    // ── run_default: interpreter error path ──────────────────────────────────
+    // ── run_default: runtime error path ──────────────────────────────────────
 
     #[test]
     fn run_default_runtime_error_returns_one() {
@@ -11828,8 +11817,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f k:t>R t t;env k".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11862,8 +11849,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f k:t>R t t;env k".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -11894,8 +11879,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f k:t>R t t;env k".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,

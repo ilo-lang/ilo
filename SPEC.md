@@ -37,7 +37,6 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - Zero-arg call: `make-id()`
 - Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
 - Labelled args (ILO-71): `dtfmt epoch:e fmt:"%Y"` — optional `label:value` form for any callable with declared parameter names. Labels resolve to positional by name; order is free. Mixed positional + labelled is allowed (positional fill from left; labels fill remaining slots by name). Unknown or duplicate labels surface `ILO-P019` at parse time. Works in both postfix and paren form: `f(b:2, a:1)` ≡ `f a:1 b:2`.
-
 **Two body forms — both fully supported:**
 
 ```
@@ -364,8 +363,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `band`, `bxor`, `bnot`, `bshl`, `bshr`, `brot`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `ones`, `linspace`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `matvec`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `ones`, `linspace`, `band`, `bxor`, `bnot`, `bshl`, `bshr`, `brot`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -1978,6 +1976,24 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 
 ---
 
+## Source File Extension
+
+The canonical source file extension is `.@`. `foo.@` tokenises as `['foo', '.@']` on both cl100k and o200k - one token fewer per filename vs `.ilo`. The saving compounds: a typical agent session with 30 filename mentions saves ~30 tokens, and the gain is proportional to how often the agent reads error messages, imports, and CLI invocations that include the filename.
+
+`.ilo` is still accepted for backward compatibility and emits a deprecation hint on stderr at load time:
+
+```
+hint: .ilo extension is deprecated; rename to .@
+```
+
+Rename your files with:
+
+```bash
+find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;
+```
+
+---
+
 ## Imports
 
 Split programs across files with `use`:
@@ -1994,7 +2010,6 @@ use re:"path/to/file.ilo" [name1 name2] -- re-export: import AND expose those na
 **Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
 
 **Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
-
 **Re-export** (`re:"path" [names]`) imports the listed names and also adds them to this module's public surface so consumers can import them from this module directly. Requires a `[...]` list; `re:` without a list is an error.
 
 ```
@@ -2007,7 +2022,6 @@ half n:n>n; /n 2
 use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
 use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
 run n:n>n; m-dbl! half n
-
 -- facade.ilo
 use re:"math-lib.ilo" [dbl half] -- re-export: dbl and half are part of facade's public API
 extra n:n>n; +n 100
@@ -2029,7 +2043,7 @@ Declaring a private function: `_helper-name params:type > return-type; body`
 ### Rules
 
 - Path is relative to the importing file's directory
-- Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
+- Transitive: if `a.@` uses `b.@`, `b.@`'s declarations are visible to `main.@` when it uses `a.@`
 - Circular imports are an error (`ILO-P018`)
 - Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
 - Re-export form (`re:"path"`) requires a `[...]` list
@@ -2398,7 +2412,7 @@ In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / 
 
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) - only the top-level program-return print path is split.
 
-The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
+The contract applies uniformly to in-process runners (`ilo prog.@`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
 
 **Auto-echo suppression for `prnt` + status sentinel.** When the entry function has at least one *unconditional top-level* `prnt` call AND the tail expression is a bare wrapped string literal (`~"text"` or `^"text"`), the top-level auto-echo is suppressed. The wrapped literal is treated as a status sentinel rather than a value the caller wants captured. Without this rule, a function shaped like `m>R t t;prnt "report";~"ok"` emits `report\nok\n` on stdout and shell callers piping the output have to strip the trailing `ok`. The rule does NOT fire when (a) there is no `prnt` in the body — `m>R t t;~"ok"` still prints `ok` because the wrapped literal IS the program's output (the `cli-tasks-save-ok.ilo` pattern); (b) the `prnt` is nested inside a guard, loop, or match arm — those are conditional and the `prnt` may never run; (c) the tail is `~v` where `v` is a binding or call — that's a real return value. `^"text"` errors still go to stderr with exit 1; the suppression rule never silently swallows an Err. Pinned by `tests/regression_tilde_str_noecho.rs` and `examples/tilde-str-noecho.ilo`.
 
@@ -2417,7 +2431,7 @@ Builtin alias hints appear at most once per program (the first long-form name fo
 
 ```
 ilo 'code' [args...]            -- inline program; default-runs the entry function
-ilo program.ilo [func] [args]   -- if `func` is omitted and the file declares exactly
+ilo program.@ [func] [args]     -- if `func` is omitted and the file declares exactly
                                    one function, that function runs automatically
 ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positional
 ilo check program.ilo [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
@@ -2486,15 +2500,15 @@ Use `req:_` (wildcard) for the request param type — the `Request` record is cr
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
-**AOT entry-pick.** `ilo compile file.ilo -o out` (alias `ilo build`) follows the same entry-pick rules as the in-process engines: a single user-defined function is used directly; on multi-function files the entry is `main` if defined, otherwise the explicit positional `func` arg (`ilo compile file.ilo -o out run`); otherwise the compile fails with `ILO-E801` and exits 1 without writing a binary. AOT does not fall back to "first declared function" - that historical default produced binaries that called the wrong entry symbol and SIGSEGV'd at runtime.
+**AOT entry-pick.** `ilo compile file.@ -o out` (alias `ilo build`) follows the same entry-pick rules as the in-process engines: a single user-defined function is used directly; on multi-function files the entry is `main` if defined, otherwise the explicit positional `func` arg (`ilo compile file.@ -o out run`); otherwise the compile fails with `ILO-E801` and exits 1 without writing a binary. AOT does not fall back to "first declared function" - that historical default produced binaries that called the wrong entry symbol and SIGSEGV'd at runtime.
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures with Phase 2 capture, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. Phase 2 captures run natively on every public backend - VM, JIT, and AOT (`ilo compile`); AOT embeds the postcard `CompiledProgram` blob into the binary's `.rodata` so dispatch helpers can re-enter the VM on user-fn callbacks the same way the in-process runners do. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
-**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `for-line`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `fsize`, `mtime`, `isfile`, `isdir`, `run`, `env-all`, `jkeys`, `tz-offset`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
+**Two engines.** As of 0.13.0 ilo ships with two execution engines: the bytecode register VM (default) and the Cranelift JIT (opt-in via `--jit`, with AOT compilation via `ilo compile`). The tree-walking interpreter was removed as a user-selectable engine; `Engine::Tree`, `--run-tree`, and `--run` no longer exist. The shared runtime module (`src/runtime/`, formerly `src/interpreter/`) survives as the in-process dispatch target for the ~30 builtins routed through the VM/Cranelift tree-bridge — HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx / crypto / calendar shapes that the VM and Cranelift haven't lifted natively. The VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `fsize`, `mtime`, `isfile`, `isdir`, `run`, `env-all`, `jkeys`, `tz-offset`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Per the ILO-234 measurement, bridge dispatch round-trip cost is negligible, which is why the bridge stays. Cross-engine parity is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`.
 
-**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
+**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.@ list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 
-**Unknown `--flag` guard.** Any token in the positional tail matching the clean long-flag shape `--word` or `--word-with-dashes` that isn't a recognised flag is rejected upfront with `error: unrecognised flag '--<name>'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first.` and exit 1. This prevents `ilo main.ilo --engine tree` from silently consuming `--engine` as a positional arg (which used to surface as misleading `ILO-R012 no functions defined` or `ILO-R004 main: expected N args, got N+1`). To pass a hyphen-prefixed token through as literal data, place the `--` separator first: `ilo main.ilo -- --foo`. Anything after the first `--` is data. Tokens with `=` (`--key=val`), trailing or doubled dashes (`--foo-`, `--foo--bar`), and negative numbers (`-1`) are not clean flag shapes and pass through unchanged.
+**Unknown `--flag` guard.** Any token in the positional tail matching the clean long-flag shape `--word` or `--word-with-dashes` that isn't a recognised flag is rejected upfront with `error: unrecognised flag '--<name>'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first.` and exit 1. This prevents `ilo main.@ --engine tree` from silently consuming `--engine` as a positional arg (which used to surface as misleading `ILO-R012 no functions defined` or `ILO-R004 main: expected N args, got N+1`). To pass a hyphen-prefixed token through as literal data, place the `--` separator first: `ilo main.@ -- --foo`. Anything after the first `--` is data. Tokens with `=` (`--key=val`), trailing or doubled dashes (`--foo-`, `--foo--bar`), and negative numbers (`-1`) are not clean flag shapes and pass through unchanged.
 
 **Text-typed params.** When the entry function declares a parameter of type `t`, the CLI passes the raw arg through without numeric coercion. `ilo 'f x:t>t;x' 42` returns the string `"42"`, not the number 42.
 

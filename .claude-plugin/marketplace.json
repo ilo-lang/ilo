@@ -11,7 +11,7 @@
       "name": "ilo",
       "source": "./",
       "description": "Write, run, debug, and explain programs in ilo — a token-optimised programming language for AI agents",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "author": {
         "name": "Daniel Morris"
       },
@@ -19,7 +19,7 @@
       "license": "MIT",
       "keywords": ["ilo", "programming-language", "token-optimised", "ai-agents"],
       "skills": [
-        { "name": "ilo-language", "description": "Use this when writing or reviewing .ilo source.", "path": "skills/ilo/ilo-language.md" },
+        { "name": "ilo-language", "description": "Use this when writing or reviewing .@ source (.ilo also accepted with deprecation warning).", "path": "skills/ilo/ilo-language.md" },
         { "name": "ilo-language-records", "description": "Use this when writing ilo code that declares or uses record types.", "path": "skills/ilo/ilo-language-records.md" },
         { "name": "ilo-builtins-core", "description": "Use this when calling core builtins: type coercions, list ops, HOFs, and map ops.", "path": "skills/ilo/ilo-builtins-core.md" },
         { "name": "ilo-builtins-math", "description": "Use this when calling math builtins: arithmetic, trig, constants, random, and statistics.", "path": "skills/ilo/ilo-builtins-math.md" },

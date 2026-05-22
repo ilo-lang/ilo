@@ -188,6 +188,7 @@ struct HelperFuncs {
     // `uniqby 2` lifts. Each takes (keys, vals, span_bits) and returns
     // the assembled result list / map.
     srt_by_key: FuncId,
+    rsrt_by_key: FuncId,
     grp_by_key: FuncId,
     uniq_by_key: FuncId,
     frq: FuncId,
@@ -407,6 +408,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_uniqby", jit_uniqby as *const u8),
         ("jit_partition", jit_partition as *const u8),
         ("jit_srt_by_key", jit_srt_by_key as *const u8),
+        ("jit_rsrt_by_key", jit_rsrt_by_key as *const u8),
         ("jit_grp_by_key", jit_grp_by_key as *const u8),
         ("jit_uniq_by_key", jit_uniq_by_key as *const u8),
         ("jit_frq", jit_frq as *const u8),
@@ -603,6 +605,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         uniqby: declare_helper(module, "jit_uniqby", 2, 1),
         partition: declare_helper(module, "jit_partition", 2, 1),
         srt_by_key: declare_helper(module, "jit_srt_by_key", 3, 1),
+        rsrt_by_key: declare_helper(module, "jit_rsrt_by_key", 3, 1),
         grp_by_key: declare_helper(module, "jit_grp_by_key", 3, 1),
         uniq_by_key: declare_helper(module, "jit_uniq_by_key", 3, 1),
         frq: declare_helper(module, "jit_frq", 2, 1),
@@ -1233,7 +1236,7 @@ fn compile_function_body(
                 | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
+                | OP_SRT_BY_KEY | OP_RSRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
                 | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
                     non_num_write[a] = true;
@@ -3300,9 +3303,7 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 // Get field name from chunk constants as a null-terminated C string
                 let cstring = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => {
-                        std::ffi::CString::new(s.as_bytes()).ok()?
-                    }
+                    crate::runtime::Value::Text(s) => std::ffi::CString::new(s.as_bytes()).ok()?,
                     _ => return None,
                 };
                 let leaked = Box::leak(Box::new(cstring));
@@ -3346,9 +3347,7 @@ fn compile_function_body(
                 let c_idx = (inst & 0xFF) as usize;
                 let bv = builder.use_var(vars[b_idx]);
                 let cstring = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => {
-                        std::ffi::CString::new(s.as_bytes()).ok()?
-                    }
+                    crate::runtime::Value::Text(s) => std::ffi::CString::new(s.as_bytes()).ok()?,
                     _ => return None,
                 };
                 let leaked = Box::leak(Box::new(cstring));
@@ -4946,6 +4945,16 @@ fn compile_function_body(
                 let span_bits = pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.srt_by_key);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RSRT_BY_KEY => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.rsrt_by_key);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

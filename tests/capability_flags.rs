@@ -1,11 +1,12 @@
 /// Integration tests for CLI capability flags (`--allow-net`, `--allow-read`,
 /// `--allow-write`, `--allow-run`).
 ///
-/// Each test runs programs through `interpreter::run_with_caps` and
-/// `vm::run_with_caps` to verify enforcement at both backends, then also
-/// exercises the `Caps` unit helpers directly for clarity.
+/// Each test runs programs through `vm::run_with_caps` to verify enforcement
+/// at the VM backend (the only execution engine after PR E of ILO-45 deleted
+/// the tree-walker), plus exercises the `Caps` unit helpers directly for
+/// clarity.
 use ilo::caps::{Caps, Policy};
-use ilo::interpreter::{self, Value};
+use ilo::runtime::Value;
 use ilo::{lexer, parser, vm};
 use std::sync::Arc;
 
@@ -33,14 +34,16 @@ fn make_program(src: &str) -> ilo::ast::Program {
 
 /// Run a 0-arg function through interpreter + VM with given caps.
 /// Returns the result value for both backends.
+/// Run a 0-arg function through VM with given caps. Returns the result.
+/// The tuple shape `(_, vm)` is preserved for callsite compatibility with
+/// the pre-PR-E `run_both` helper — the first slot now mirrors the second
+/// so existing assertions continue to compile unchanged.
 fn run_both(src: &str, caps: Caps) -> (Value, Value) {
     let caps = Arc::new(caps);
     let program = make_program(src);
-    let tree_result =
-        interpreter::run_with_caps(&program, None, vec![], Arc::clone(&caps)).unwrap();
     let compiled = vm::compile(&program).unwrap();
     let vm_result = vm::run_with_caps(&compiled, None, vec![], caps).unwrap();
-    (tree_result, vm_result)
+    (vm_result.clone(), vm_result)
 }
 
 fn is_err_value(v: &Value) -> bool {
@@ -252,7 +255,8 @@ fn allow_run_empty_blocks_run() {
     let src = "f>R (M t t) t;run \"echo\" [\"hello\"]";
     // Only test via tree interpreter (run goes through tree-bridge in VM).
     let program = make_program(src);
-    let result = interpreter::run_with_caps(&program, None, vec![], Arc::new(caps)).unwrap();
+    let compiled = vm::compile(&program).unwrap();
+    let result = vm::run_with_caps(&compiled, None, vec![], Arc::new(caps)).unwrap();
     assert!(
         is_err_value(&result),
         "expected Err when run allowlist is empty, got {result:?}"
@@ -279,7 +283,8 @@ fn allow_run_permits_allowlisted_cmd() {
     };
     let src = "f>R (M t t) t;run \"echo\" [\"hello\"]";
     let program = make_program(src);
-    let result = interpreter::run_with_caps(&program, None, vec![], Arc::new(caps)).unwrap();
+    let compiled = vm::compile(&program).unwrap();
+    let result = vm::run_with_caps(&compiled, None, vec![], Arc::new(caps)).unwrap();
     // echo is in the allowlist — should return Ok(...), not Err.
     assert!(
         !is_err_value(&result),

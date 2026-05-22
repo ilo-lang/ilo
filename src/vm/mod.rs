@@ -207,6 +207,10 @@ pub(crate) const OP_DEFER_DRAIN: u8 = 192;
 //        collect {name: value} bindings without storing a symbol table in
 //        the hot path.
 pub(crate) const OP_STMT: u8 = 193;
+
+// OP_RSRT_BY_KEY: descending finalizer for `rsrt 2 / rsrt 3` native lift.
+// Mirrors OP_SRT_BY_KEY but reverses ordering. Added in PR B of ILO-45 (sync from next).
+pub(crate) const OP_RSRT_BY_KEY: u8 = 194;
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
@@ -20627,6 +20631,50 @@ pub(crate) extern "C" fn jit_srt_by_key(keys_val: u64, vals_val: u64, span_bits:
     let keys = slice_of(unsafe { vk.as_heap_ref() });
     let vals = slice_of(unsafe { vv.as_heap_ref() });
     srt_by_key_finalize(keys, vals).0
+}
+
+/// Cranelift helper for `OP_RSRT_BY_KEY` (descending sort).
+/// Mirror of `jit_srt_by_key` but reverses the result. Added in PR B of
+/// ILO-45 (next→main sync). Pending native descending compare; currently
+/// uses ascending finalize then `.reverse()` on the heap list.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rsrt_by_key(keys_val: u64, vals_val: u64, span_bits: u64) -> u64 {
+    let vk = NanVal(keys_val);
+    let vv = NanVal(vals_val);
+    if !vk.is_heap() || (vk.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("rsrt: internal keys reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !vv.is_heap() || (vv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("rsrt: internal values reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    let keys = slice_of(unsafe { vk.as_heap_ref() });
+    let vals = slice_of(unsafe { vv.as_heap_ref() });
+    // Compute ascending finalize over (keys, vals), then build a fresh
+    // descending list by iterating its slice in reverse and cloning RCs.
+    let asc = srt_by_key_finalize(keys, vals);
+    if !asc.is_heap() {
+        return asc.0;
+    }
+    let items_slice = slice_of(unsafe { asc.as_heap_ref() });
+    let out: Vec<NanVal> = items_slice
+        .iter()
+        .rev()
+        .map(|v| {
+            v.clone_rc();
+            *v
+        })
+        .collect();
+    asc.drop_rc();
+    NanVal::heap_list(out).0
 }
 
 /// Cranelift helper for `OP_GRP_BY_KEY` (Phase 2 PR3c grp 2 native lift).

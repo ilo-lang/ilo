@@ -1,11 +1,11 @@
 #!/bin/bash
 # Benchmark: Graph vs Non-Graph approach for agent context loading
-# Scenario: An agent needs to modify the `build-order` function in ecommerce.ilo
+# Scenario: An agent needs to modify the `build-order` function in ecommerce.@
 
 set -e
 
 ILO="cargo run --quiet --"
-FILE="examples/ecommerce.ilo"
+FILE="examples/ecommerce.@"
 
 echo "================================================================="
 echo "BENCHMARK: Graph vs Non-Graph Context Loading"

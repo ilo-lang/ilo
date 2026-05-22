@@ -1,7 +1,7 @@
 //! CLI argument parsing shared between the `ilo` binary and the AOT runtime.
 //!
 //! The binary entry (`src/main.rs`) calls `parse_cli_arg_for_param` per arg to
-//! coerce raw shell strings into typed `interpreter::Value`s before handing
+//! coerce raw shell strings into typed `runtime::Value`s before handing
 //! them to the tree-walker / VM / JIT. The AOT runtime (`src/vm/mod.rs`)
 //! re-uses the same logic via the C-callable helper `ilo_aot_parse_arg_list`
 //! so that `main args:L t` binds the argv list the same way across engines.
@@ -15,7 +15,7 @@
 //! `tests/regression_aot_main_argv.rs` for the cross-engine coverage.
 
 use crate::ast;
-use crate::interpreter;
+use crate::runtime;
 
 /// Split a string on top-level commas, respecting `[]` nesting.
 /// Used by `parse_cli_arg` so that nested-list literals like
@@ -45,42 +45,42 @@ pub fn split_top_level_commas(s: &str) -> Vec<&str> {
 /// Recognises bracketed list literals (`[1,2,3]`), quoted strings, bare
 /// comma lists, `nil`, numeric literals, and `true`/`false`. Everything
 /// else becomes `Text`.
-pub fn parse_cli_arg(s: &str) -> interpreter::Value {
+pub fn parse_cli_arg(s: &str) -> runtime::Value {
     if s.starts_with('[') && s.ends_with(']') {
         let inner = s[1..s.len() - 1].trim();
         if inner.is_empty() {
-            return interpreter::Value::List(std::sync::Arc::new(vec![]));
+            return runtime::Value::List(std::sync::Arc::new(vec![]));
         }
-        let items: Vec<interpreter::Value> = split_top_level_commas(inner)
+        let items: Vec<runtime::Value> = split_top_level_commas(inner)
             .into_iter()
             .map(|part| parse_cli_arg(part.trim()))
             .collect();
-        return interpreter::Value::List(std::sync::Arc::new(items));
+        return runtime::Value::List(std::sync::Arc::new(items));
     }
     if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        return interpreter::Value::Text(std::sync::Arc::new(s[1..s.len() - 1].to_string()));
+        return runtime::Value::Text(std::sync::Arc::new(s[1..s.len() - 1].to_string()));
     }
     if s.contains(',') {
-        let items: Vec<interpreter::Value> = split_top_level_commas(s)
+        let items: Vec<runtime::Value> = split_top_level_commas(s)
             .into_iter()
             .map(|part| parse_cli_arg(part.trim()))
             .collect();
-        return interpreter::Value::List(std::sync::Arc::new(items));
+        return runtime::Value::List(std::sync::Arc::new(items));
     }
     if s == "nil" {
-        return interpreter::Value::Nil;
+        return runtime::Value::Nil;
     }
     if let Ok(n) = s.parse::<f64>()
         && n.is_finite()
     {
-        return interpreter::Value::Number(n);
+        return runtime::Value::Number(n);
     }
     if s == "true" {
-        interpreter::Value::Bool(true)
+        runtime::Value::Bool(true)
     } else if s == "false" {
-        interpreter::Value::Bool(false)
+        runtime::Value::Bool(false)
     } else {
-        interpreter::Value::Text(std::sync::Arc::new(s.to_string()))
+        runtime::Value::Text(std::sync::Arc::new(s.to_string()))
     }
 }
 
@@ -95,14 +95,14 @@ pub fn parse_cli_arg(s: &str) -> interpreter::Value {
 ///
 /// For every other declared type (or when no type is known), behaviour is
 /// identical to `parse_cli_arg`.
-pub fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> interpreter::Value {
+pub fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> runtime::Value {
     if matches!(expected, Some(ast::Type::Text)) {
         let stripped = if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
             &s[1..s.len() - 1]
         } else {
             s
         };
-        return interpreter::Value::Text(std::sync::Arc::new(stripped.to_string()));
+        return runtime::Value::Text(std::sync::Arc::new(stripped.to_string()));
     }
     parse_cli_arg(s)
 }
@@ -112,19 +112,19 @@ pub fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> interpr
 /// Mirrors the binary-side coercion in `parse_cli_args_typed`: if the parsed
 /// value isn't already a `List`, wrap it as `[value]`. This is the canonical
 /// path for `main args:L t` across every engine.
-pub fn parse_cli_arg_as_list(s: &str) -> interpreter::Value {
+pub fn parse_cli_arg_as_list(s: &str) -> runtime::Value {
     let v = parse_cli_arg(s);
-    if matches!(v, interpreter::Value::List(_)) {
+    if matches!(v, runtime::Value::List(_)) {
         v
     } else {
-        interpreter::Value::List(std::sync::Arc::new(vec![v]))
+        runtime::Value::List(std::sync::Arc::new(vec![v]))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interpreter::Value;
+    use crate::runtime::Value;
 
     fn n(v: &Value) -> f64 {
         if let Value::Number(x) = v {

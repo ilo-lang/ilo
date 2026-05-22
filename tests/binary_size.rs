@@ -35,7 +35,7 @@ fn ilo() -> Command {
 fn tmp_paths(tag: &str) -> (PathBuf, PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let src = std::env::temp_dir().join(format!("ilo-binsize-{tag}-{pid}-{n}.ilo"));
+    let src = std::env::temp_dir().join(format!("ilo-binsize-{tag}-{pid}-{n}.@"));
     let bin = std::env::temp_dir().join(format!("ilo-binsize-{tag}-{pid}-{n}.bin"));
     (src, bin)
 }

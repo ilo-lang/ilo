@@ -2,20 +2,20 @@
 //
 // These verbs were added in 0.12.0 alongside the modular skills work to
 // match the `cargo` / `zero` / `go` toolchain conventions. They sit
-// alongside the existing positional forms (`ilo file.ilo`, `ilo compile
+// alongside the existing positional forms (`ilo file.@`, `ilo compile
 // ...`) which remain fully supported for backwards compatibility.
 //
 // Tests:
-//   - `ilo run file.ilo` matches `ilo file.ilo` (file + inline + args).
-//   - `ilo check file.ilo` runs the verifier without executing, exit 0 on
+//   - `ilo run file.@` matches `ilo file.@` (file + inline + args).
+//   - `ilo check file.@` runs the verifier without executing, exit 0 on
 //     clean, exit 1 on type/parse errors, supports `--json` diagnostics.
-//   - `ilo build file.ilo -o out` matches `ilo compile file.ilo -o out`.
+//   - `ilo build file.@ -o out` matches `ilo compile file.@ -o out`.
 //   - `ilo run` / `ilo check` / `ilo build` with no source arg print
 //     friendly usage to stderr instead of the previous "treat `run` as
 //     ilo source" parser blowup.
 //   - Existing positional forms (regression) still work after the dispatch
-//     refactor: `ilo file.ilo`, `ilo file.ilo arg`, `ilo file.ilo func`,
-//     `ilo compile file.ilo -o out`.
+//     refactor: `ilo file.@`, `ilo file.@ arg`, `ilo file.@ func`,
+//     `ilo compile file.@ -o out`.
 
 use std::process::Command;
 
@@ -35,7 +35,7 @@ fn run_args(args: &[&str]) -> (bool, String, String) {
 
 fn write_temp_ilo(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("test.ilo");
+    let path = dir.path().join("test.@");
     std::fs::write(&path, content).expect("write temp ilo");
     (dir, path)
 }
@@ -333,20 +333,23 @@ fn build_verb_produces_binary() {
     assert!(out_path.exists(), "binary should exist at {out_path:?}");
 }
 
-/// `ilo build` with no source arg prints friendly usage.
+/// `ilo build` with no source arg prints the manifesto-strict five-form help
+/// and exits non-zero (since the user asked for `build` without a target).
+/// Stage 5f: the help text lives on stdout; we accept it on either stream.
 #[test]
 fn build_verb_no_args_prints_usage() {
-    let (ok, _stdout, stderr) = run_args(&["build"]);
+    let (ok, stdout, stderr) = run_args(&["build"]);
     assert!(!ok);
+    let combined = format!("{stdout}{stderr}");
     assert!(
-        stderr.contains("Usage: ilo build"),
-        "stderr should contain usage line; got: {stderr}"
+        combined.contains("ilo build") && combined.contains("--wasm"),
+        "build help should mention `ilo build` and the five forms; got stdout={stdout:?} stderr={stderr:?}"
     );
 }
 
 // ── Backwards-compat regression: positional forms still work ─────────────────
 
-/// `ilo <file.ilo>` (no verb) still runs.
+/// `ilo <file.@>` (no verb) still runs.
 #[test]
 fn positional_file_still_runs() {
     let (_dir, path) = write_temp_ilo("main>n;7");
@@ -355,7 +358,7 @@ fn positional_file_still_runs() {
     assert!(stdout.contains("7"));
 }
 
-/// `ilo <file.ilo> arg1 arg2` (no verb) still forwards args.
+/// `ilo <file.@> arg1 arg2` (no verb) still forwards args.
 #[test]
 fn positional_file_with_args_still_runs() {
     let (_dir, path) = write_temp_ilo("main x:n y:n>n;+x y");
@@ -367,7 +370,7 @@ fn positional_file_with_args_still_runs() {
     assert!(stdout.contains("7"));
 }
 
-/// `ilo <file.ilo> func` (no verb) still selects a function.
+/// `ilo <file.@> func` (no verb) still selects a function.
 #[test]
 fn positional_file_with_func_still_runs() {
     let (_dir, path) = write_temp_ilo("dbl x:n>n;+*x 2 0 main>n;dbl 21");

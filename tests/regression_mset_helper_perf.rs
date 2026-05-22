@@ -39,7 +39,7 @@
 // These tests are correctness-only (no timing assertions): they verify
 // the helper-fn pattern produces the right output across every engine
 // (tree, VM, JIT, AOT). Performance is verified manually with
-// /tmp/mset_bench.ilo and tracked in the In-Progress entry.
+// /tmp/mset_bench.@ and tracked in the In-Progress entry.
 //
 // All tests cross-engine to catch divergence.
 

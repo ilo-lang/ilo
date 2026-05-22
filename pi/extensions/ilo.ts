@@ -226,13 +226,13 @@ export default function (pi: ExtensionAPI) {
 		name: "ilo_run",
 		label: "Run ilo",
 		description:
-			"Run an ilo program. Pass `code` for an inline source string, or `file` for a .ilo path. `func` runs a specific function; `args` are forwarded to it. Returns stdout, stderr, and the exit code. Prefer this over shelling out to `ilo` from inside pi: it is faster, structured, and skips the per-call permission prompt.",
+			"Run an ilo program. Pass `code` for an inline source string, or `file` for a .@ path (canonical; .ilo also accepted). `func` runs a specific function; `args` are forwarded to it. Returns stdout, stderr, and the exit code. Prefer this over shelling out to `ilo` from inside pi: it is faster, structured, and skips the per-call permission prompt.",
 		parameters: Type.Object({
 			code: Type.Optional(Type.String({
 				description: "Inline ilo source. Mutually exclusive with `file`.",
 			})),
 			file: Type.Optional(Type.String({
-				description: "Path to a .ilo file. Mutually exclusive with `code`.",
+				description: "Path to a .@ file (canonical extension; .ilo also accepted). Mutually exclusive with `code`.",
 			})),
 			func: Type.Optional(Type.String({
 				description: "Name of a function to invoke instead of running top-level code.",

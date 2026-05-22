@@ -451,8 +451,8 @@ impl From<&crate::verify::VerifyError> for Diagnostic {
     }
 }
 
-impl From<&crate::interpreter::RuntimeError> for Diagnostic {
-    fn from(e: &crate::interpreter::RuntimeError) -> Self {
+impl From<&crate::runtime::RuntimeError> for Diagnostic {
+    fn from(e: &crate::runtime::RuntimeError) -> Self {
         let mut d = Diagnostic::error(&e.message).with_code(e.code);
         if let Some(span) = e.span {
             d = d.with_span(span, "here");
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn from_runtime_error() {
-        let e = crate::interpreter::RuntimeError {
+        let e = crate::runtime::RuntimeError {
             code: "ILO-R003",
             message: "division by zero".to_string(),
             span: None,
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn from_runtime_error_with_span() {
         use crate::ast::Span;
-        let e = crate::interpreter::RuntimeError {
+        let e = crate::runtime::RuntimeError {
             code: "ILO-R003",
             message: "division by zero".to_string(),
             span: Some(Span { start: 5, end: 10 }),

@@ -22,6 +22,9 @@ research/*
 research/closed-loop-bench/results/raw/
 research/closed-loop-bench/.zero/
 research/closed-loop-bench/**/__pycache__/
+# Zero compiler local cache (created when `zero check`/`zero build` runs
+# from the repo root, e.g. via Stage 5e tests). Reproducible; never tracked.
+/.zero/
 site/
 .DS_Store
 .astro/

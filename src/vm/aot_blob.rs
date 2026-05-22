@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Chunk, CompiledProgram, TypeRegistry};
 use crate::ast::{Program, Span};
-use crate::interpreter::Value;
+use crate::runtime::Value;
 use std::sync::Arc;
 
 /// Bump whenever the on-disk shape changes in a way old runtimes cannot read.

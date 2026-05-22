@@ -21,9 +21,9 @@
 
 use super::args::TraceArgs;
 use crate::ast;
-use crate::interpreter::{TraceEvent, Value};
 use crate::lexer;
 use crate::parser;
+use ilo::interpreter::{TraceEvent, Value};
 
 /// Entry point for `ilo trace <file.ilo> [func] [args...]`.
 /// Returns the process exit code (0 = success).
@@ -119,7 +119,7 @@ fn trace_run(t: TraceArgs) -> i32 {
             // ── Tree-walker fallback ─────────────────────────────────────────
             // Use the original ILO-72 tree-walker path.
             let result =
-                crate::interpreter::run_with_trace(&program, func_name, call_args, emit_event);
+                ilo::interpreter::run_with_trace(&program, func_name, call_args, emit_event);
             match result {
                 Ok(_) => 0,
                 Err(e) => {

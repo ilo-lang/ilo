@@ -1,8 +1,17 @@
 # Changelog
 
+## 0.13.0
+
+### Breaking
+
+- **Tree-walker engine removed.** ilo now ships two execution engines (bytecode register VM, default; Cranelift JIT/AOT, opt-in via `--jit`), down from three. Six-PR ILO-45 series lifted every remaining HOF off the `OP_CALL_BUILTIN_TREE` bridge to native VM dispatch (map/flt/fld closure-bind ctx via OP_CALL_DYN argc=2/3 in PR A #619; srt/rsrt closure-bind ctx via new `OP_RSRT_BY_KEY=191` finalizer + ctx-threading `emit_hof_keyed_finalize_ctx` in PR B #699; ct/ct-ctx via inline counter loop in PR C #707), then deleted the now-unreachable HOF impls in PR D #712, then deleted the eval loop itself in PR E #721 (`eval_body`, `eval_stmt`, `eval_expr`, the trampoline, `BodyResult`, self-rebind peepholes, pattern + binop helpers, the public `runtime::run*` entry points, the user-fn dispatch tail of `call_function`). `call_function` is now a builtin-only dispatcher; `Env` is two fields (`functions`, `caps`). `ilo trace` and its `run_with_trace` library API are gone (fired from `eval_body`; VM/JIT trace path tracked at ILO-343). `ilo --bench` drops the "Rust interpreter" row; VM is the interpreter baseline. `ilo serv` and `ilo repl` migrated to `vm::compile` + `vm::run`. Per ILO-234 the ~30 non-HOF bridge entries (regex, fmt, fs metadata, crypto, calendar, sleep, run, env-all, math constants, jkeys, etc.) stay routed through the bridge code in `src/runtime/`. Side-effect fix: VM/Cranelift bridge previously bypassed CLI capability flags because `Env::new()` defaulted to permissive caps; fixed via new `ACTIVE_CAPS` thread-local installed by `call_builtin_for_bridge_with_caps` / `call_builtin_for_bridge_with_program_and_caps`. ~7900 lines deleted net. Closes ILO-45.
+
 ## Unreleased
 
-### Added
+The codegen layer. A typed HIR sits between the verified AST and code
+emission, and four backends now live behind a single `Backend` trait:
+Cranelift (native, default), Python source, WASM Component Model, and Zero
+source / binary. The CLI is locked to exactly five forms.
 
 - **run-family overhaul (ILO-35).** Three new process-spawn shapes for 0.13.0:
   - `run cmd argv stdin:t > R (M t t) t` — arity-3 extension of `run` that pipes a text string into the child's stdin. Same no-shell-no-glob security model, same 10 MiB output cap, same `code`/`stdout`/`stderr` result Map as the 2-arg form. Unblocks any persona that needs to pass data to a filter command (`jq`, `awk`, `cat`, `wc`, `python -c`, etc.) without writing a temp file.
@@ -10,23 +19,253 @@
   - `run-bg cmd argv > R n t` — fire-and-forget background spawn. Returns `Ok(pid:n)` immediately without waiting for the child; child inherits the parent's stdout/stderr and reads `/dev/null` on stdin. Use when you want to start a long-running server or worker and continue executing ilo code. Err only on spawn failure (cmd not found, permission denied, etc.). The returned pid is a positive integer.
   All three are tree-bridge eligible so VM and Cranelift JIT/AOT backends inherit them through `OP_CALL_BUILTIN_TREE` without new opcodes. All three are `experimental` stability.
 
+- CLI build surface lock (Phase 5 Stage 5f). The five canonical forms for `ilo build`:
+```
+ilo build file.ilo            # native binary (Cranelift; default)
+ilo build file.ilo --wasm     # WebAssembly Component Model binary
+ilo build file.ilo --0        # Zero source (.0)
+ilo build file.ilo --0bin     # native binary via the Zero compiler
+ilo build file.ilo --py       # Python source (.py)
+```
+
+### Added (from main)
+
+- `<-` use-chain bind operator (ILO-409). Inside a function body, `x <- expr ; rest` desugars to `?expr{~x: rest; ^e: ^e}`, flattening multi-step Result-returning chains. Eliminates the nested `?` match staircase that builds up when threading several `R`-returning calls (`parse`, `num`, `jpar`, ...) — each step gets its own line, the error arm propagates automatically, and the desugared AST is the existing `Stmt::Match` so the verifier, VM, and Cranelift JIT inherit it for free. Adapted from Gleam's `use` statement. Parser/lexer only; no AST changes, no runtime changes.
 - `ILO-P102` diagnostic for top-level `name=expr` bindings outside any function declaration. Catches the "forgot the `main>_;` wrapper" misparse that k-means and linear-regression personas hit when chaining imperative bindings at the top level. Without the wrapper the parser used to either die on the bare `=` (a bare `ILO-P003`) or, when a prior `name>type;body` decl was in scope, slurp the whole chain into that fn's body and emit a wall of misleading `ILO-T005` cascades anchored on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the `main>_;` wrapper. Parser-only change; identical output across VM and JIT.
-### Fixed
+
+### Fixed (from main)
 
 - New `ILO-W002` warning when the foreach collection is a direct `jpar!` or `jpar!!` call. Surfaces the hint pointing at `jpar-list!`, which asserts the top-level JSON is an array and returns `R (L _) t` so the unwrap composes cleanly into `@`. Catches the `mempool-fee-estimator` failure mode where the polymorphic `jpar` Ok type forced the wrapping function's return type to `R t t` and threaded `?` through downstream code. The `@x (jpar-list! body){...}` form continues to type-check silently; `xs = jpar! body; @x xs{...}` (the explicit-bind form) is unchanged. Diagnostic-only; no behaviour change in the runtime engines. Closes pending.md item #5f.
 - Cascading `ILO-T005 undefined function 'X'` errors from a single parse failure now collapse to one diagnostic per parse-failed function with a cross-reference back to the originating parse error. Previously, ONE broken function body produced N undefined-function errors (one per call site), burying the root cause; the cron-explainer persona logged 286 ILO-T005, 107 ILO-P009, and 47 ILO-P001 from roughly 10 root causes in a single run. The parser now records function names whose return-type or body failed to parse on `Program.parse_failed_fns`, and the verifier (1) skips type-checking those functions' bodies (their AST is poison) and (2) emits one collapsed `ILO-T005` per parse-failed name with a hint pointing at the root parse error code. Real undefined-function errors (typos, missing imports) still surface normally with the usual suggestion text.
 
-### Changed
+### Changed (from main)
 
 - `find_libilo_a` (AOT linker helper in `src/vm/compile_cranelift.rs`) now honours `CARGO_TARGET_DIR` and `.cargo/config.toml`'s `build.target-dir` before falling back to `$CARGO_MANIFEST_DIR/target`. Fix worktrees that redirect cargo's target dir out of the tree (e.g. `[build] target-dir = "/tmp/ilo-targets/..."`) no longer need a `ln -sf .../release/libilo.a target/release/libilo.a` workaround for the AOT tests to find the staticlib. Test-infrastructure only; no user-visible change to `ilo compile`.
 - Versioning scheme: semver → CalVer. Releases are `YY.M` (e.g. `26.5`), patches `YY.M.P` (e.g. `26.5.1`). The version string carries recency so an agent loading `ilo spec --json ai` knows which spec applies without a changelog lookup. Last semver release is `0.12.1`; first CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. Branching model splits: `main` carries stable + RC tags (`26.5`, `26.5.1`, `26.5.2-rc.1`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
 
+### Cross-backend conformance (`tests/conformance.rs`)
+
+Runs every `examples/*.ilo` with `-- run:` + `-- out:` headers through every
+available backend and reports honest per-backend numbers. 218 conformance
+cases at the CalVer cut (26.X).
+
+| backend | pass | unsupported | fail |
+| --- | ---: | ---: | ---: |
+| cranelift | 87 | 0 | 131 |
+| python | 0 | 0 | 218 |
+| wasm | 0 | 213 | 5 |
+| zero | 0 | 209 | 9 |
+
+Reading the numbers honestly:
+
+- **Cranelift native**: the production backend. The 131 fails are a mix of
+  pre-existing AOT bugs surfaced by the dispatch log baselines (duplicate
+  `ilo_strconst_*`, unsupported opcode 176, `nil` from `zip`) and entry-point
+  mismatches between `ilo run` (which picks `main` or the named function
+  cleanly) and `ilo build` (which currently uses the auto-main-pick path).
+  None of these are 26.X regressions; all carry over from 0.12.x and are
+  follow-up work.
+- **Python**: emits library code with no `if __name__ == "__main__"`
+  dispatcher, so the subprocess runner can't pick the entry function. The
+  emit itself is byte-identical to the pre-refactor Python output (covered
+  by `tests/python_emit_byte_identical.rs`). Wrapping the emit with a CLI
+  dispatcher is follow-up work.
+- **WASM**: the narrow Stage 5d walker only lowers the hello-world subset.
+  Anything richer surfaces `ILO-B201` and is counted as `unsupported`. The
+  walker grows in subsequent releases.
+- **Zero**: same shape as WASM. The narrow Stage 5e walker covers
+  hello-world; everything else surfaces `ILO-B302`. Walker widens release
+  by release.
+
+The brief frames this stage as "honest reporting, not artificial
+completeness". The numbers above are exactly that. Each follow-up is filed
+against Phase 6.
+
+### Added (since 0.12.x)
+
+- **Typed HIR module (`src/hir/`).** Phase 5 Stage 5a. A thin high-level
+  intermediate representation that sits between the verified AST and concrete
+  code emission. Every Phase 5 backend (Cranelift refactor, Python refactor,
+  WASM Component Model, Zero transpile) will consume `hir::Program`. Includes:
+  - `hir::lower(ast, verify_out)` — AST → HIR lowering pass.
+  - Documented departures from the AST: function body tail-expression split,
+    guard polarity folded into `UnaryOp(Not)`, `Ternary` → value-level `If`,
+    `Alias`/`Use`/`Error` decls dropped.
+  - `src/hir/DESIGN.md` documents the shape, the departures, the deferrals,
+    and the open questions Stage 5b picked up.
 ### Added
 
 - `_=expr` explicit discard bind. Evaluates `expr` for side effects and drops the result without allocating a binding. The `_` sigil is not a real local — it cannot be read back after the statement. Primary uses: (a) silencing ILO-T033 when discarding the return value of `mset`/`+=`/`mdel` is genuinely intentional, (b) calling a side-effecting function at non-tail position when the return value is irrelevant. All three engines (tree-interpreter, VM, Cranelift JIT/AOT) produce the same behaviour: the RHS expression is fully evaluated, its result is discarded with no register/slot allocation. The verifier still checks the RHS for type errors and T005 undefined-function; it does not insert `_` into scope so a subsequent `_` reference still resolves to the wildcard/nil sentinel. (ILO-36)
 
 - `idxof s sub > O n` builtin. Returns the first Unicode code-point index of `sub` in `s`, or nil when not found. Index is in code-point units (same convention as `at`), not raw byte offsets. Empty `sub` returns 0 (Python / JS semantics). Closes the verbose `flt`+`len` workaround scrapingbee-chain and tui-client personas reached for when locating substrings. Tree-bridge eligible: pure 2-arg text-in / option-n-out, no FnRef args, no I/O. VM and Cranelift inherit through the bridge without new opcodes. Part of the 0.13.0 text-utility batch (ILO-39).
 - `\xNN` hex escape in string literals. Two hex digits after `\x` encode a single Unicode code point in U+0000..=U+00FF. Case-insensitive (`\x1b` and `\x1B` both produce ESC). Non-hex digits after `\x` are passed through literally (lexer stays infallible). Closes the ANSI-escape friction that tui-client personas hit when embedding colour codes (`"\x1b[31m"` is now legal). Part of the 0.13.0 text-utility batch (ILO-39).
+- `.@` is the new canonical source file extension. `.@` tokenises as two tokens (`foo`, `.@`) on cl100k and o200k vs three for `foo.ilo` - one token saved per filename mention. All `examples/` and `tests/` source files in this repo have been renamed to `.@`. `.ilo` continues to be accepted but emits a deprecation hint on stderr at load time: `hint: .ilo extension is deprecated; rename to .@`. Rename your files with: `find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;`
+- **Typed HIR module (`src/hir/`).** Phase 5 Stage 5a. A thin high-level
+  intermediate representation that sits between the verified AST and concrete
+  code emission. Every Phase 5 backend (Cranelift refactor, Python refactor,
+  WASM Component Model, Zero transpile) will consume `hir::Program`. Includes:
+  - `hir::lower(ast, verify_out)` — AST → HIR lowering pass.
+  - Documented departures from the AST: function body tail-expression split,
+    guard polarity folded into `UnaryOp(Not)`, `Ternary` → value-level `If`,
+    `Alias`/`Use`/`Error` decls dropped.
+  - Note: the throwaway `hir::walker` + `hir::raise` scaffolding and the
+    `tests/hir_roundtrip.rs` corpus check existed during Stage 5a-5e
+    development to prove the lowering pass was information-preserving.
+    Stage 5f deletes them; the cross-backend conformance suite supersedes.
+- **`Backend` trait and Cranelift refactor (`src/backend/`).** Phase 5
+  Stage 5b. Pluggable codegen surface. Future backends (Python, WASM
+  Component Model, Zero) drop in as additional impls without touching
+  the CLI dispatch.
+  - `backend::Backend` — associated `NAME`, associated `Config`, single
+    `emit(&hir, config) -> Result<Artefact, BackendError>` method.
+  - `backend::Artefact { path, kind, metadata }` and
+    `backend::ArtefactKind::{NativeBinary, Wasm, SourceFile { ext }}`.
+  - `backend::BackendError::{Io, CodegenFailed, UnsupportedFeature}`
+    with `to_json()` for `ilo build --json` (JSON shape documented on
+    the method).
+  - `backend::cranelift::CraneliftBackend` — first concrete impl. Wraps
+    the existing `vm::compile_cranelift::compile_to_binary` so codegen
+    is preserved exactly. `CraneliftConfig` carries the bytecode
+    `CompiledProgram` as a documented side-channel until Cranelift is
+    lowered to consume HIR directly (deferred).
+  - `ilo build file.ilo` dispatches through the trait. No CLI change,
+    no user-visible behaviour change.
+  - `ILO_KEEP_OBJ=1` env var preserves the Cranelift `.o` file after
+    linking, for object-level byte-identical regression testing.
+  - `tests/aot_byte_identical.rs` — object-level byte-identical regression
+    against 136 baseline `.o` sha256s captured at Stage 5a tip. The
+    linked-binary level is not suitable because `libilo.a` content
+    changes with every Rust code addition; the `.o` isolates Cranelift
+    codegen output.
+  - `tests/aot-baselines/` — `obj-baselines.tsv` + `MANIFEST.md`
+    documenting capture point, determinism notes, and regeneration
+    procedure.
+- **Python backend refactor (`src/backend/python/`).** Phase 5 Stage 5c.
+  The existing Python transpile (was `src/codegen/python.rs`) now lives
+  behind the `Backend` trait. Validates the trait against a transpile-style
+  backend, complementing Cranelift's direct codegen shape.
+  - `backend::python::PythonBackend` — second concrete impl. Consumes the
+    verified AST via `PythonConfig::program`; HIR is taken as input on the
+    trait surface but currently ignored (HIR does not yet carry the full
+    surface the Python emit needs; lowering it is a later concern).
+  - `ilo build file.ilo --py [-o out.py]` is the canonical CLI form.
+  - `tests/python_emit_byte_identical.rs` + `tests/python-baselines/` —
+    10 baseline `.py` files captured pre-refactor; the test asserts the
+    post-refactor `ilo build --py` output matches byte-for-byte.
+
+- **WASM Component Model backend (`src/backend/wasm/`).** Phase 5
+  Stage 5d. The first genuinely new backend: emits `.wasm` (and a
+  sibling `.wit`) via the `wasm-encoder` crate. One backend, many
+  edge runtimes (Wasmtime, Cloudflare Workers, Fastly Compute,
+  Vercel Edge, Wasmer).
+  - `ilo build file.ilo --wasm` — defaults to `--target wasm32-component`
+    (Component Model wrapper via `wasm-tools component new` + the
+    bundled WASI preview1 adapter).
+  - `--target wasm32-wasip1` — plain WASI preview1 core module.
+  - `--target wasm32-wasip2` — placeholder for preview2; same encoder
+    output as wasip1 today.
+  - `--target wasm32-unknown-unknown` (alias `wasm32-web`) — browser
+    target with no host imports.
+  - Stage 5d covers the hello-world subset of HIR: top-level `prnt`
+    calls with string, number, or bool literal arguments, plus `Ok` /
+    literal tail expressions. Richer HIR constructs surface as
+    `BackendError::UnsupportedFeature` pointing at the native Cranelift
+    backend; capacity to lower them lands in subsequent stages.
+  - Capability mismatches surface at emit time as
+    `BackendError::CodegenFailed { code: "ILO-B201", .. }` with a hint
+    naming the supported targets. The full per-target builtin matrix
+    lives in `docs/wasm-capabilities.md`.
+  - WASI preview1 adapter bundled in-tree at
+    `assets/wasi-adapter/wasi_snapshot_preview1.reactor.wasm` (~52KB,
+    pinned to Wasmtime v25). Offline builds work; no fetch on first
+    `--wasm` invocation.
+  - New deps: `wasm-encoder = "0.249"` (runtime, MIT / Apache-2.0),
+    `wasmparser = "0.249"` (dev-only validator). `wasm-tools` is invoked
+    as a subprocess for the Component Model wrap, not a library dep.
+  - `tests/wasm_emit.rs` — encoder round-trip + capability matrix +
+    JSON error shape (6 tests).
+  - `tests/wasm_runtime.rs` — Wasmtime-subprocess execution of a WASI
+    hello-world and a 3-line print sequence (2 tests, skipped when
+    `wasmtime` is not on PATH).
+  - Error code namespace `ILO-B2##` reserved for the WASM backend.
+    Cranelift uses `ILO-B1##`, Zero will use `ILO-B3##`, Python `ILO-B4##`.
+
+- **Zero transpile backend (`src/backend/zero/`).** Phase 5 Stage 5e.
+  Real ilo to Zero bridge: the two-layer-stack thesis now has a working
+  source-level handoff plus a chained `--0bin` path for native binaries
+  built by Zero's own toolchain.
+  - `ilo build file.ilo --0 [-o out.0]` — emit idiomatic Zero source.
+    The generated `main` matches Zero's canonical entry shape:
+    `pub fun main(world: World) -> Void raises { check world.out.write("...\n") }`.
+  - `ilo build file.ilo --0bin [-o bin]` — emit `.0` source then invoke
+    the pinned `zero` compiler (0.1.2) to produce a native binary. Both
+    paths produce identical source; `--0bin` adds the build step.
+  - Stage 5e v1 covers the same hello-world subset as the WASM backend:
+    top-level `prnt` calls with text/number/bool literal arguments, plus
+    `Ok` / literal tail expressions. Richer constructs surface as
+    `BackendError::CodegenFailed { code: "ILO-B3##", .. }` with hints
+    pointing at the Cranelift native backend.
+  - Pinned toolchain: `zero 0.1.2`. Recorded in `.zero-version` at the
+    repo root and as `PINNED_ZERO_VERSION` in
+    `src/backend/zero/mod.rs`. Subprocess invocation prefers
+    `/Users/dan/.zero/bin/zero` and falls back to `zero` on PATH; a
+    missing compiler surfaces `ILO-B303` with the install one-liner
+    (`curl https://zerolang.ai/install.sh | sh`).
+  - `zero build --json` flag passed by default; both stdout and stderr
+    captured because Zero 0.1.2 prints diagnostics to stdout.
+  - Error code namespace `ILO-B3##`: `ILO-B301` (zero rejected source),
+    `ILO-B302` (HIR construct unsupported), `ILO-B303` (`zero` missing),
+    `ILO-B304` (IO), `ILO-B305` (entry not found).
+  - `tests/zero_emit.rs` — source emit + `zero check` validation
+    (4 tests, subprocess tests skipped when `zero` is not on PATH).
+  - `tests/zero_binary.rs` — `--0bin` round-trip: ilo source to Zero
+    source to native binary to expected stdout (2 tests, skipped when
+    `zero` is not on PATH).
+  - `tests/zero_capability.rs` — asserts unsupported features surface
+    with the documented `ILO-B3##` codes (5 tests).
+  - `examples/zero-bridge/hello.ilo` + README demonstrate the chain.
+  - Capability matrix at `docs/zero-transpile-capabilities.md` mirrors
+    the prep doc; covers clean / shim / unsupported constructs, error
+    codes, and the Zero upgrade procedure.
+  - No new runtime deps. `zero` is subprocess-only for `--0bin`; not
+    linked into `libilo.a`.
+
+- **CLI surface lock + conformance + walker delete.** Phase 5 Stage 5f.
+  - `ilo build --help` (new) prints the manifesto-strict surface: exactly
+    five forms, one per backend, with one-line descriptions. Same five
+    forms listed in `ilo --help`.
+  - Throwaway HIR scaffolding (`src/hir/walker.rs`, `src/hir/raise.rs`,
+    `tests/hir_roundtrip.rs`) deleted. The cross-backend conformance suite
+    supersedes the round-trip check.
+  - `tests/conformance.rs` walks every conformance-headered example in
+    `examples/` and exercises Cranelift, Python, WASM, and Zero
+    end-to-end. Marked `#[ignore]` because of cost (~70s, 218 cases × 4
+    backends); run with `cargo test --release --features cranelift
+    --test conformance -- --ignored --nocapture`. Reports per-backend
+    pass / skip / unsupported / fail counts at the end. Honest numbers
+    above.
+  - Per-example skip markers: `-- conformance-skip-<backend>: <reason>`.
+
+### Changed (breaking)
+
+- **`--emit python` removed.** The legacy `ilo <file-or-code> --emit python`
+  form no longer transpiles. Per the manifesto-strict CLI (one canonical
+  form per backend), it now prints a migration hint and exits with code 2:
+  `ilo build <file.ilo> --py`. Pre-1.0 we break this cleanly; the migration
+  hint stays in 26.X and goes away in the next release.
+
+### Not changed in 26.X
+
+- The internal engine-selector flags (`--run-tree`, `--run-vm`, `--run-llvm`,
+  `--jit`) remain on the `ilo run` / positional surface. The Phase 5 brief
+  scoped CLI cleanup to `ilo build`'s output flags; sweeping the engine
+  selectors touches 170+ test files and is a separate cleanup. Engine choice
+  is internal in spirit (the `Backend` trait now owns codegen); making it
+  fully internal in the CLI is Phase 6 work.
+
+No public API changes (other than `--emit python` removal). No other CLI changes. No behaviour changes.
+
+### Added (more from main, builtins)
 
 - `matvec xm ys > L n` builtin. Native matrix-vector product as a flat vector. Replaces the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony every linear-regression-style persona was paying (three lines / ~10 tokens per use). Errors as `ILO-R009` on dim mismatch, empty matrix, or ragged rows. Tree-bridge eligible -- VM and Cranelift inherit through the bridge without new opcodes. Closes pending.md #5an.
 - `lstsq xm ys > L n` builtin. Ordinary least squares via the normal equations: returns the coefficient vector `b` minimising `||xm·b - ys||²`. Closed-form OLS as a thin wrapper around `solve (Xᵀ X) (Xᵀ y)` - collapses the 5-line recipe (`transpose` + `matmul` + `matmul` + `solve` + index-fiddling) into a single call, saving ~30 tokens per OLS use. Errors as ILO-R009 on rank-deficient design, underdetermined system (cols > rows), row/length mismatch, or empty input. Same precision tier as `solve`/`inv`/`det` (LU with partial pivoting); numerically inferior to QR/SVD for ill-conditioned designs. Tree-bridge eligible - VM and Cranelift inherit through the bridge with no new opcodes. Motivated by the linear-regression persona.
@@ -55,7 +294,7 @@
 
 ### Renamed
 
-- `--run-vm` renamed to `--vm`, symmetric in shape with `--jit` and `--run-llvm` (where the flag names the engine, not the action). `--run-vm` is retained as a hidden alias for one release; every invocation emits a one-shot stderr hint `hint: --run-vm → --vm (canonical form). The --run-vm alias will be removed in 0.13.0.`. Carry-forward scripts and personas that hard-coded `--run-vm` keep working through 0.12.x and pick up the nudge to update. Hard removal lands in 0.13.0 with the tree-walker drop.
+- `--run-vm` renamed to `--vm`, symmetric in shape with `--jit` and `--run-llvm` (where the flag names the engine, not the action). `--run-vm` is retained as a hidden alias for one release; every invocation emits a one-shot stderr hint `hint: --run-vm → --vm (canonical form). The --run-vm alias will be removed in 26.X.`. Carry-forward scripts and personas that hard-coded `--run-vm` keep working through 0.12.x and pick up the nudge to update. Hard removal lands in 26.X with the tree-walker drop.
 
 ### Diagnostics
 
@@ -74,7 +313,7 @@
 - `ilo check --strict` flag. Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset`/`+=`/`mdel`, future warning codes) as a hard exit-code failure so CI harnesses can fail-on-warning. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, only the exit code is elevated. Surfaced by rerun11 ci-gating personas that ran `ilo check src/*.ilo` in CI and missed mset / fmt traps because the verifier exited 0 on warnings.
 - `mget-or m k default > v` and `lget-or xs i default > a`. Defaulted lookups for Map and List that return the element type directly, no `O v` to coalesce, no OOB error for `lget-or`. The verifier enforces that the default matches the container's element/value type so the return shape is `v` / `a`, never `O v`. Both lower through the tree-bridge, so every engine inherits semantics without new opcodes. Closes the manifesto-friction `(mget m k) ?? d` and `i<len?at xs i:d` ceremony agents kept reaching for.
 - `argmax xs > n`, `argmin xs > n`, `argsort xs > L n`. Index-returning aggregates with numpy naming. `argmax` returns the 0-based index of the maximum element (first occurrence wins on ties); `argmin` the same for minimum; `argsort` returns the stable sorted-index permutation ascending (smallest to largest, empty list returns `[]`). All three error on empty input except `argsort`. All lower through the tree-bridge, so VM and Cranelift inherit them without new opcodes. Closes the `srt fn (enumerate xs)` + extract-first pattern agents converged on for argmax/argmin-style queries.
-- `dirname path > t`, `basename path > t`, `pathjoin parts:L t > t` path-manipulation builtins. POSIX semantics with Unix forward-slash separator (Windows backslash handling deferred to 0.13.0). `dirname` returns `""` (not `"."`) for plain filenames so `pathjoin [dirname p basename p]` round-trips without injecting a phantom `./` prefix. `pathjoin` is list-form (not variadic) to avoid the ILO-P101 arity-inference trap. Pure text ops, no I/O, no Result wrapper, tree-bridge eligible so VM and Cranelift inherit cross-engine parity for free. Closes the four-builtin `cat (slc (spl p "/") 0 -1) "/"` dance every filesystem persona was paying.
+- `dirname path > t`, `basename path > t`, `pathjoin parts:L t > t` path-manipulation builtins. POSIX semantics with Unix forward-slash separator (Windows backslash handling deferred to a future release). `dirname` returns `""` (not `"."`) for plain filenames so `pathjoin [dirname p basename p]` round-trips without injecting a phantom `./` prefix. `pathjoin` is list-form (not variadic) to avoid the ILO-P101 arity-inference trap. Pure text ops, no I/O, no Result wrapper, tree-bridge eligible so VM and Cranelift inherit cross-engine parity for free. Closes the four-builtin `cat (slc (spl p "/") 0 -1) "/"` dance every filesystem persona was paying.
 - `rdin > R t t` and `rdinl > R (L t) t`. Stdin read primitives. `rdin` reads all of stdin as text; `rdinl` reads it line by line with newlines stripped. Both return Err on I/O failure and on WASM targets (where stdin is unavailable). Both are 0-arg and lower through the tree-bridge so VM and Cranelift inherit them without new opcodes. Unblocks the Unix-pipeline persona class: programs can now receive piped input directly instead of reading a file or embedding data in argv. Closes the gap surfaced in the rerun12 lang-surface proposal (#5 rdin/rdinl ADOPT).
 - Math constants `pi` (3.141592653589793), `tau` (6.283185307179586), `e` (2.718281828459045). Zero-arg builtins returning the canonical IEEE-754 `f64` value. Tree-bridge-eligible, so VM and Cranelift JIT/AOT inherit with no new opcodes; Python codegen emits `math.pi` / `math.tau` / `math.e`. Stops agents hardcoding `3.14159...` or reconstructing pi via `* 2 (atan2 0 -1)` - both shapes surfaced in fft-peak rerun12. Note: because `e` is now a builtin name, any existing code using `e` as a local binding will get an ILO-P011 diagnostic on upgrade; rename to `ev`, `er`, or similar.
 - `default-on-err r d > T` builtin. Unwraps `R T E` to `T`, returning `d` if the result is Err. The Result mirror of `??` (nil-coalesce for `O T`). Kills the common `?r{~v:v;^_:default}` pattern when the error payload is unused. Lowers through the tree-bridge (2-arg, pure), so VM and Cranelift JIT inherit semantics without a new opcode. Verifier emits ILO-T040 when the first arg is not `R T E` (hint steers at `??` only when the first arg is Optional, avoiding misleading steers for plain `n`/`t`/`b` first args); ILO-T042 when the default's type doesn't match the Ok type (split from T040 so the agent can target the right arg); ILO-T041 when `??` is used on a Result value (steering to `default-on-err`). T041 is intentionally suppressed when the lhs type is `Unknown` (e.g. type-variable params, `_`-typed values) to avoid false positives on generic code; regression-tested.

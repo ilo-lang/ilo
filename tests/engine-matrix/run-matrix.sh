@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every *.ilo in this dir through every public engine (vm/jit/aot) and
+# Run every *.@ in this dir through every public engine (vm/jit/aot) and
 # print a Markdown matrix. The tree-walker column was dropped when --run-tree
 # was removed from the public CLI in the 0.12.x soft-deprecation; the
 # tree-walker stays in-tree as the runtime for HOF callbacks that VM/Cranelift
@@ -27,7 +27,7 @@ run_vm()   { "$ILO" --vm   "$1" 2>&1; }
 run_jit()  { "$ILO" --jit      "$1" 2>&1; }
 run_aot()  {
   local src="$1"
-  local out="$TMP/aot_$(basename "$src" .ilo)"
+  local out="$TMP/aot_$(basename "$src" .@)"
   # AOT picks the FIRST function as entry by default which is rarely `main`;
   # explicitly pass `main` so we test the obvious user-facing path.
   "$ILO" compile "$src" -o "$out" main >/dev/null 2>"$TMP/aot.err"
@@ -52,7 +52,7 @@ cell() {
 printf "| File | Feature | VM | JIT | AOT |\n"
 printf "|---|---|---|---|---|\n"
 
-for f in "$DIR"/*.ilo; do
+for f in "$DIR"/*.@; do
   fname=$(basename "$f")
   feature=$(grep -m1 '^-- feature:' "$f" | sed 's/^-- feature: //')
   # Join all `-- expected:` lines with newlines.

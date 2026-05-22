@@ -196,7 +196,7 @@ fn skill_show_known_json() {
 #[test]
 fn build_json_success() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let src = dir.path().join("hello.ilo");
+    let src = dir.path().join("hello.@");
     let out = dir.path().join("hello-bin");
     std::fs::write(&src, "main >n;42\n").expect("write src");
 
@@ -226,7 +226,7 @@ fn build_json_success() {
 #[test]
 fn graph_legacy_json_still_works() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let src = dir.path().join("g.ilo");
+    let src = dir.path().join("g.@");
     std::fs::write(&src, "main >n;42\n").expect("write src");
 
     let out = ilo()

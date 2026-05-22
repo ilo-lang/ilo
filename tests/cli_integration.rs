@@ -35,10 +35,10 @@ fn run_args(args: &[&str]) -> (bool, String, String) {
     (out.status.success(), stdout, stderr)
 }
 
-/// Write a small .ilo file into a temp directory and return the file path.
+/// Write a small .@ file into a temp directory and return the file path.
 fn write_temp_ilo(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("test.ilo");
+    let path = dir.path().join("test.@");
     std::fs::write(&path, content).expect("write temp ilo");
     (dir, path)
 }
@@ -121,10 +121,10 @@ fn graph_fn_not_found() {
     );
 }
 
-/// `ilo graph nonexistent_file.ilo` should fail with a read-error message.
+/// `ilo graph nonexistent_file.@` should fail with a read-error message.
 #[test]
 fn graph_file_not_found() {
-    let (ok, _stdout, stderr) = run_args(&["graph", "/tmp/ilo_test_nonexistent_12345.ilo"]);
+    let (ok, _stdout, stderr) = run_args(&["graph", "/tmp/ilo_test_nonexistent_12345.@"]);
     assert!(!ok, "graph on missing file should fail");
     assert!(
         stderr.contains("Error reading") || stderr.contains("No such"),
@@ -148,7 +148,7 @@ fn compile_no_args_exits_nonzero() {
 fn compile_attempts_compilation() {
     let (_dir, path) = write_temp_ilo("double x:n>n;*x 2");
     let file = path.to_str().unwrap();
-    // Strip the .ilo extension to derive a custom output path so we don't
+    // Strip the .@ extension to derive a custom output path so we don't
     // pollute the test directory.
     let out_path = path.with_extension("").to_string_lossy().to_string();
     let (ok, _stdout, stderr) = run_args(&["compile", file, "-o", &out_path]);

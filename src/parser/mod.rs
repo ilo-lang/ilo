@@ -874,7 +874,7 @@ statement boundary; bind the chain to a local first. For example, split \
         }
     }
 
-    /// `use "path/to/file.ilo"` or `use "path/to/file.ilo" [name1 name2]`
+    /// `use "path/to/file.@"` or `use "path/to/file.@" [name1 name2]`
     fn parse_use_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Use)?;
@@ -2167,6 +2167,12 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_body_with(&mut self, top_level: bool) -> Result<Vec<Spanned<Stmt>>> {
         let mut stmts = Vec::new();
         if !self.at_body_end() {
+            // Check for use-chain `x <- expr` at the first statement position.
+            if self.is_use_chain_start() {
+                let s = self.parse_use_chain_stmt(top_level)?;
+                stmts.push(s);
+                return Ok(stmts);
+            }
             let span_start = self.peek_span();
             let stmt = self.parse_stmt()?;
             stmts.push(Spanned {
@@ -2181,6 +2187,12 @@ statement boundary; bind the chain to a local first. For example, split \
                 if top_level && self.is_fn_decl_start_strict(self.pos) {
                     break;
                 }
+                // Check for use-chain `x <- expr` at statement position after `;`.
+                if self.is_use_chain_start() {
+                    let s = self.parse_use_chain_stmt(top_level)?;
+                    stmts.push(s);
+                    return Ok(stmts);
+                }
                 let span_start = self.peek_span();
                 let stmt = self.parse_stmt()?;
                 stmts.push(Spanned {
@@ -2190,6 +2202,75 @@ statement boundary; bind the chain to a local first. For example, split \
             }
         }
         Ok(stmts)
+    }
+
+    /// Returns true when the current position is `Ident ArrowLeft`, indicating
+    /// the start of a use-chain binding `x <- expr`.
+    fn is_use_chain_start(&self) -> bool {
+        matches!(self.peek(), Some(Token::Ident(_)))
+            && self.token_at(self.pos + 1) == Some(&Token::ArrowLeft)
+    }
+
+    /// Parse a use-chain binding `x <- expr` and desugar it together with all
+    /// remaining sibling statements into:
+    ///
+    /// ```text
+    /// ?expr{~x: <rest>; ^e: ^e}
+    /// ```
+    ///
+    /// This is called when `is_use_chain_start()` is true. After consuming the
+    /// `ident` and `<-` tokens and the RHS expression, any remaining `;`-separated
+    /// statements in the current body scope become the ok arm. If there are no
+    /// remaining statements the ok arm is empty (the ok value `x` is the implicit
+    /// return). The error arm always propagates via `^e`.
+    fn parse_use_chain_stmt(&mut self, top_level: bool) -> Result<Spanned<Stmt>> {
+        let span_start = self.peek_span();
+
+        // Consume the binding name
+        let binding = self.expect_ident()?;
+        // Consume `<-`
+        self.expect(&Token::ArrowLeft)?;
+        // Parse the RHS call-expression
+        let subject = self.parse_expr()?;
+
+        // Parse remaining statements (after the optional trailing `;`) as the ok arm body.
+        // Recursively handles chained `<-` operators naturally.
+        let ok_body = if self.peek() == Some(&Token::Semi) {
+            self.advance(); // consume `;`
+            if self.at_body_end() || (top_level && self.is_fn_decl_start_strict(self.pos)) {
+                Vec::new()
+            } else {
+                self.parse_body_with(top_level)?
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Build the err arm: `^e: ^e` — propagate
+        let err_binding = "e".to_string();
+        let err_arm = MatchArm {
+            pattern: Pattern::Err(err_binding.clone()),
+            body: vec![Spanned::unknown(Stmt::Expr(Expr::Err(Box::new(
+                Expr::Ref(err_binding),
+            ))))],
+        };
+
+        // Build the ok arm: `~x: <ok_body>`
+        let ok_arm = MatchArm {
+            pattern: Pattern::Ok(binding),
+            body: ok_body,
+        };
+
+        let match_stmt = Stmt::Match {
+            subject: Some(subject),
+            arms: vec![ok_arm, err_arm],
+        };
+
+        let span_end = self.prev_span();
+        Ok(Spanned {
+            node: match_stmt,
+            span: span_start.merge(span_end),
+        })
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
@@ -8121,7 +8202,7 @@ mod tests {
 
     #[test]
     fn parse_example_01_simple_function() {
-        let prog = parse_file("examples/01-simple-function.ilo");
+        let prog = parse_file("examples/01-simple-function.@");
         assert_eq!(prog.declarations.len(), 1);
         let Decl::Function {
             name,
@@ -8141,7 +8222,7 @@ mod tests {
 
     #[test]
     fn parse_example_02_with_dependencies() {
-        let prog = parse_file("examples/02-with-dependencies.ilo");
+        let prog = parse_file("examples/02-with-dependencies.@");
         assert_eq!(prog.declarations.len(), 1);
         let Decl::Function {
             name, return_type, ..
@@ -9694,21 +9775,21 @@ mod tests {
 
     #[test]
     fn parse_use_basic() {
-        let prog = parse_str(r#"use "lib.ilo""#);
+        let prog = parse_str(r#"use "lib.@""#);
         let Decl::Use { path, only, .. } = &prog.declarations[0] else {
             panic!("expected Use")
         };
-        assert_eq!(path, "lib.ilo");
+        assert_eq!(path, "lib.@");
         assert!(only.is_none());
     }
 
     #[test]
     fn parse_use_with_scoped_imports() {
-        let prog = parse_str(r#"use "lib.ilo" [foo bar]"#);
+        let prog = parse_str(r#"use "lib.@" [foo bar]"#);
         let Decl::Use { path, only, .. } = &prog.declarations[0] else {
             panic!("expected Use")
         };
-        assert_eq!(path, "lib.ilo");
+        assert_eq!(path, "lib.@");
         let names = only.as_ref().unwrap();
         assert_eq!(names, &["foo", "bar"]);
     }
@@ -9726,7 +9807,7 @@ mod tests {
 
     #[test]
     fn parse_use_empty_bracket_list_error() {
-        let (_, errors) = parse_str_errors(r#"use "lib.ilo" []"#);
+        let (_, errors) = parse_str_errors(r#"use "lib.@" []"#);
         assert!(!errors.is_empty());
         assert!(
             errors
@@ -10641,8 +10722,8 @@ mod tests {
 
     #[test]
     fn use_unclosed_bracket_list_error() {
-        // `use "file.ilo" [foo` — unclosed `[` without closing `]`
-        let (_, errors) = parse_str_errors(r#"use "file.ilo" [foo"#);
+        // `use "file.@" [foo` — unclosed `[` without closing `]`
+        let (_, errors) = parse_str_errors(r#"use "file.@" [foo"#);
         assert!(!errors.is_empty(), "expected parse error for unclosed [");
         assert!(
             errors
@@ -10655,10 +10736,10 @@ mod tests {
 
     #[test]
     fn use_bracket_list_with_reserved_word_errors() {
-        // `use "file.ilo" [if]` — `if` inside `[...]` triggers expect_ident → ILO-P011
+        // `use "file.@" [if]` — `if` inside `[...]` triggers expect_ident → ILO-P011
         let tokens = vec![
             (Token::Use, Span::UNKNOWN),
-            (Token::Text("file.ilo".into()), Span::UNKNOWN),
+            (Token::Text("file.@".into()), Span::UNKNOWN),
             (Token::LBracket, Span::UNKNOWN),
             (Token::KwIf, Span::UNKNOWN),
             (Token::RBracket, Span::UNKNOWN),

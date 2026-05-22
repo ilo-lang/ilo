@@ -39,7 +39,7 @@ fn run_err_json_file(path: &str) -> String {
 
 fn write_tmp(name: &str, src: &str) -> String {
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("ilo-multiline-span-{name}.ilo"));
+    let path = dir.join(format!("ilo-multiline-span-{name}.@"));
     std::fs::write(&path, src).expect("write tmp file");
     path.to_string_lossy().into_owned()
 }

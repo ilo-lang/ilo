@@ -148,19 +148,6 @@ pub struct RunArgs {
     pub engine: Engine,
 
     // ── Engine selection flags ─────────────────────────────────────────────
-    /// Tree-walking interpreter. SOFT-DEPRECATED: no longer selectable on the
-    /// CLI. The tree-walker stays in-tree as the runtime for HOF callbacks
-    /// that VM/JIT bail to, but `--run-tree` / `--run` are no longer
-    /// recognised flags - they fall through to the unknown-flag guard and
-    /// suggest `--run-vm` or `--jit`. The field is kept with `#[arg(skip)]`
-    /// so internal construction sites (REPL, tests, dispatcher) compile.
-    /// Real removal deferred to 0.13.0+ once PR3d/PR3e/runtime extraction
-    /// land.
-    #[arg(skip = false)]
-    pub run_tree: bool,
-    /// Was an alias for --run-tree; now also rejected by the unknown-flag guard.
-    #[arg(skip = false)]
-    pub run: bool,
     /// Register VM (canonical form, symmetric with --jit). `--run-vm` is
     /// retained as a hidden alias for one release; it emits a one-shot
     /// deprecation hint on stderr. Removal planned for 0.13.0.
@@ -238,7 +225,6 @@ pub struct RunArgs {
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     Default,
-    Tree,
     Vm,
     Cranelift,
     Llvm,
@@ -247,9 +233,7 @@ pub enum Engine {
 impl RunArgs {
     /// Resolve the effective engine from --engine flag and convenience bool flags.
     pub fn effective_engine(&self) -> Engine {
-        if self.run || self.run_tree {
-            Engine::Tree
-        } else if self.run_vm {
+        if self.run_vm {
             Engine::Vm
         } else if self.jit {
             Engine::Cranelift
@@ -389,13 +373,41 @@ pub struct CompileArgs {
     #[arg(long)]
     pub bench: bool,
 
-    /// Cross-compilation target triple.
-    /// Supported: aarch64-apple-darwin, x86_64-apple-darwin,
+    /// Cross-compilation target triple (native build) OR WASM target.
+    /// Native: aarch64-apple-darwin, x86_64-apple-darwin,
     /// x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
-    /// x86_64-pc-windows-msvc, wasm32-wasip1.
-    /// Requires the target to be installed via `rustup target add <triple>`.
+    /// x86_64-pc-windows-msvc, wasm32-wasip1
+    /// (requires `rustup target add <triple>`).
+    /// WASM (only meaningful with `--wasm`): `wasm32-wasip1`,
+    /// `wasm32-wasip2`, `wasm32-component`, `wasm32-unknown-unknown`,
+    /// plus aliases `wasm32-wasi` and `wasm32-web`.
     #[arg(long, value_name = "TRIPLE")]
     pub target: Option<String>,
+
+    /// Transpile to Python source (`.py`) via the Python backend.
+    ///
+    /// Manifesto-strict: this is the canonical replacement for the removed
+    /// `--emit python` flag. Use `ilo build file.ilo --py [-o out.py]`.
+    #[arg(long)]
+    pub py: bool,
+
+    /// Compile to WebAssembly via the WASM backend (Phase 5 Stage 5d).
+    ///
+    /// Default target is `wasm32-component`. Pick a different target with
+    /// `--target` (e.g. `--target wasm32-wasip1` for plain WASI preview1).
+    #[arg(long)]
+    pub wasm: bool,
+
+    /// Transpile to Zero source (`.0`) via the Zero backend
+    /// (Phase 5 Stage 5e). Pinned to `zero 0.1.2`.
+    #[arg(long = "0")]
+    pub zero: bool,
+
+    /// Transpile to Zero source then chain through the pinned `zero`
+    /// compiler to produce a native binary. Requires `zero` on PATH or
+    /// at `~/.zero/bin/zero`.
+    #[arg(long = "0bin")]
+    pub zero_bin: bool,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
@@ -497,6 +509,7 @@ pub struct UpdateArgs {
 }
 
 // ── Trace ──────────────────────────────────────────────────────────────────────
+
 /// Granularity of trace events.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TraceDepth {
@@ -506,6 +519,7 @@ pub enum TraceDepth {
     /// Emit one event per sub-expression in addition to per-statement events.
     Expr,
 }
+
 #[derive(Args, Debug, Clone)]
 pub struct TraceArgs {
     /// Source file to trace.
@@ -524,6 +538,7 @@ pub struct TraceArgs {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 }
+
 // ── OutputMode resolution ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -564,6 +579,174 @@ impl Global {
         self.json
     }
 }
+
+// ── CLI flag stability registry ────────────────────────────────────────────────
+
+/// A CLI flag entry with its long-form name and stability tier.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+pub struct CliFlag {
+    /// Long flag name as it appears on the CLI (e.g. `--json`).
+    pub name: &'static str,
+    /// Stability tier: `"stable"`, `"provisional"`, or `"experimental"`.
+    pub stability: &'static str,
+}
+
+/// All public CLI flags with their stability annotations.
+///
+/// Stability tiers follow `STABILITY.md`:
+/// - `"stable"` — committed, will not be removed or renamed pre-1.0.
+/// - `"provisional"` — shipped and usable, but the exact spelling may change.
+/// - `"experimental"` — unreleased or subject to removal without notice.
+///
+/// Used by `ilo spec --json ai` to emit per-flag stability annotations.
+#[allow(dead_code)]
+pub const CLI_FLAGS: &[CliFlag] = &[
+    // ── Global output-mode flags ───────────────────────────────────────────────
+    CliFlag {
+        name: "--ansi",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--text",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--json",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--no-hints",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--silent",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--max-ast-depth",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--max-runtime",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--max-output-bytes",
+        stability: "provisional",
+    },
+    // ── run: engine flags ─────────────────────────────────────────────────────
+    CliFlag {
+        name: "--vm",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--jit",
+        stability: "experimental",
+    },
+    CliFlag {
+        name: "--run-llvm",
+        stability: "experimental",
+    },
+    // ── run: execution flags ──────────────────────────────────────────────────
+    CliFlag {
+        name: "--bench",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--emit",
+        stability: "experimental",
+    },
+    CliFlag {
+        name: "--explain",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--dense",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--expanded",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--ast",
+        stability: "experimental",
+    },
+    CliFlag {
+        name: "--tools",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--mcp",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--allow-net",
+        stability: "experimental",
+    },
+    CliFlag {
+        name: "--allow-read",
+        stability: "experimental",
+    },
+    CliFlag {
+        name: "--allow-write",
+        stability: "experimental",
+    },
+    CliFlag {
+        name: "--allow-run",
+        stability: "experimental",
+    },
+    // ── check flags ───────────────────────────────────────────────────────────
+    CliFlag {
+        name: "--strict",
+        stability: "provisional",
+    },
+    // ── compile/build flags ───────────────────────────────────────────────────
+    // -o is a short flag; skip (spec focuses on long flags)
+    // ── graph flags ───────────────────────────────────────────────────────────
+    CliFlag {
+        name: "--fn",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--reverse",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--subgraph",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--budget",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--dot",
+        stability: "provisional",
+    },
+    // ── tools flags ───────────────────────────────────────────────────────────
+    CliFlag {
+        name: "--format",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--human",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--ilo",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--full",
+        stability: "provisional",
+    },
+    CliFlag {
+        name: "--graph",
+        stability: "provisional",
+    },
+];
 
 // ── Unknown-flag guard ─────────────────────────────────────────────────────────
 
@@ -1044,8 +1227,6 @@ mod tests {
         let r = RunArgs {
             source: "code".to_string(),
             engine: Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -1311,6 +1492,44 @@ mod tests {
     fn empty_args_ok() {
         let args: Vec<String> = vec![];
         assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    // ── CLI_FLAGS registry ────────────────────────────────────────────────────
+
+    #[test]
+    fn cli_flags_all_have_valid_stability() {
+        for f in CLI_FLAGS {
+            assert!(
+                f.stability == "stable"
+                    || f.stability == "provisional"
+                    || f.stability == "experimental",
+                "flag {} has unknown stability tier '{}'",
+                f.name,
+                f.stability
+            );
+            assert!(
+                f.name.starts_with("--"),
+                "flag name '{}' must start with '--'",
+                f.name
+            );
+        }
+    }
+
+    #[test]
+    fn cli_flags_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for f in CLI_FLAGS {
+            assert!(
+                seen.insert(f.name),
+                "duplicate CLI flag '{}' in CLI_FLAGS",
+                f.name
+            );
+        }
+    }
+
+    #[test]
+    fn cli_flags_is_non_empty() {
+        assert!(!CLI_FLAGS.is_empty());
     }
 
     #[test]

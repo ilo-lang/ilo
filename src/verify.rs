@@ -557,7 +557,9 @@ fn kebab_subtract_hint<'a>(
 ///
 /// Triggers on the classic ambiguity in assignment-RHS:
 ///
-///     dx=xj 0-xi
+/// ```text
+/// dx=xj 0-xi
+/// ```
 ///
 /// which parses as `dx=(xj 0) - xi` — a call `xj(0)` whose result is then
 /// fed into the outer Subtract. The agent almost certainly meant
@@ -5700,7 +5702,7 @@ impl VerifyContext {
                                     // literal, so we say nothing here.
                                     continue;
                                 }
-                                match crate::interpreter::parse_fmt_spec(&spec) {
+                                match crate::runtime::parse_fmt_spec(&spec) {
                                     Some(_) => slot_count += 1,
                                     None => {
                                         bad = Some(spec);
@@ -10808,7 +10810,7 @@ mod tests {
             .collect();
         let (mut program, _) = crate::parser::parse(token_spans);
         program.declarations.push(Decl::Use {
-            path: "x.ilo".into(),
+            path: "x.@".into(),
             only: None,
             alias: None,
             predicate: None,
