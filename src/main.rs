@@ -2736,6 +2736,18 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                                 })
                             })
                             .collect();
+                        // Build per-item error_codes array from the diagnostic registry.
+                        let error_codes_list: Vec<serde_json::Value> =
+                            diagnostic::registry::REGISTRY
+                                .iter()
+                                .map(|e| {
+                                    serde_json::json!({
+                                        "code": e.code,
+                                        "short": e.short,
+                                        "stability": e.stability,
+                                    })
+                                })
+                                .collect();
                         let v = serde_json::json!({
                             "schemaVersion": 1,
                             "format": "ai-txt",
@@ -2749,6 +2761,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                             },
                             "builtins": builtins_list,
                             "flags": flags_list,
+                            "error_codes": error_codes_list,
                         });
                         println!("{}", v);
                     } else {
@@ -10266,6 +10279,79 @@ mod tests {
         // Verify that --json flag is present (it's a core global flag).
         let has_json_flag = flags.iter().any(|f| f["name"].as_str() == Some("--json"));
         assert!(has_json_flag, "flags array must include --json");
+    }
+
+    // ── spec --json ai: per-item error code stability annotations (ILO-351) ──────
+
+    #[test]
+    fn spec_json_ai_error_codes_array_has_stability_fields() {
+        // Run `ilo spec --json ai` and verify the error_codes array is present
+        // with code+short+stability on every entry, and all stabilities are known tiers.
+        let output = std::process::Command::new(
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("ilo"),
+        )
+        .args(["spec", "--json", "ai"])
+        .output();
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(output.status.success());
+        let v: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("spec --json ai must be valid JSON");
+        let codes = v["error_codes"]
+            .as_array()
+            .expect("error_codes must be an array");
+        assert!(!codes.is_empty(), "error_codes array must contain at least one entry");
+        for entry in codes {
+            let code = entry["code"]
+                .as_str()
+                .expect("each error_codes entry must have a code");
+            let stability = entry["stability"]
+                .as_str()
+                .expect("each error_codes entry must have a stability");
+            assert!(
+                stability == "stable" || stability == "provisional" || stability == "experimental",
+                "error code {code} has unknown stability tier '{stability}'"
+            );
+            let _short = entry["short"]
+                .as_str()
+                .expect("each error_codes entry must have a short description");
+            assert!(
+                code.starts_with("ILO-"),
+                "error code '{code}' must start with 'ILO-'"
+            );
+        }
+        // Historical stable codes must be present and marked stable.
+        for expected_stable in &["ILO-L001", "ILO-T001", "ILO-R001"] {
+            let entry = codes
+                .iter()
+                .find(|e| e["code"].as_str() == Some(expected_stable))
+                .unwrap_or_else(|| panic!("{expected_stable} must be in error_codes"));
+            assert_eq!(
+                entry["stability"].as_str(),
+                Some("stable"),
+                "{expected_stable} must have stability=stable"
+            );
+        }
+        // Engine-specific codes must be experimental.
+        for expected_exp in &["ILO-E801", "ILO-E802"] {
+            let entry = codes
+                .iter()
+                .find(|e| e["code"].as_str() == Some(expected_exp))
+                .unwrap_or_else(|| panic!("{expected_exp} must be in error_codes"));
+            assert_eq!(
+                entry["stability"].as_str(),
+                Some("experimental"),
+                "{expected_exp} must have stability=experimental"
+            );
+        }
     }
 
     // ── dispatch_bare_args: no-op case with func in rest matching func_names ──

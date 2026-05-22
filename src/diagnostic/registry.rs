@@ -80,8 +80,9 @@
 #[allow(dead_code)] // `short` is used by tooling; `long` is used by --explain
 pub struct ErrorEntry {
     pub code: &'static str,
-    pub short: &'static str, // brief description for tooling / --list-errors
-    pub long: &'static str,  // full explanation for --explain
+    pub short: &'static str,       // brief description for tooling / --list-errors
+    pub long: &'static str,        // full explanation for --explain
+    pub stability: &'static str,   // "stable" | "provisional" | "experimental"
 }
 
 /// Documented namespace ranges. Used by the cross-engine regression test in
@@ -149,6 +150,7 @@ A character was encountered that is not part of the ilo language.
 The `$` character is not valid in ilo source. Remove it or replace it
 with a valid operator or identifier.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-L002",
@@ -165,6 +167,7 @@ ilo uses hyphens as word separators in identifiers, not underscores.
 
     my-func x:n>n;x
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-L003",
@@ -182,6 +185,7 @@ are reserved for the built-in `List` and `Result` type constructors.
 
     my-func x:n>n;x
 "#,
+        stability: "stable",
     },
     // ── Parser ───────────────────────────────────────────────────────────────
     ErrorEntry {
@@ -200,6 +204,7 @@ start with a function name followed by parameters, or with `type`/`tool`.
 
     f x:n>n; = x   -- stray `=` before expression
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-P002",
@@ -213,6 +218,7 @@ An incomplete function definition is a common cause.
 
     f x:n>n;    -- body missing
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-P003",
@@ -234,6 +240,7 @@ The fix is to use `>` between the parameter list and the return type:
 
     f x:n>n;x
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-P004",
@@ -242,6 +249,7 @@ The fix is to use `>` between the parameter list and the return type:
 
 The file ended before a required token was found.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-P005",
@@ -251,6 +259,7 @@ The file ended before a required token was found.
 An identifier (function name, variable name, parameter name) was
 expected but a different token was found.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-P006",
@@ -259,6 +268,7 @@ expected but a different token was found.
 
 The file ended before a required identifier was found.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P007",
@@ -272,6 +282,7 @@ was expected but a different token was found.
 
     f x: >n;x   -- type missing after `:`
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P008",
@@ -280,6 +291,7 @@ was expected but a different token was found.
 
 The file ended before a required type annotation was found.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P009",
@@ -294,6 +306,7 @@ token was found.
     f x:n>n;   -- body is empty; a semicolon ends a statement but
                -- the function body expression is missing
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P010",
@@ -302,6 +315,7 @@ token was found.
 
 The file ended before a required expression was found.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P011",
@@ -312,6 +326,7 @@ A match pattern was expected but a different token was found.
 Patterns include literals, `_` wildcard, type constructors (`Ok x`,
 `Err e`, `true`, `false`), and record patterns.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P012",
@@ -320,6 +335,7 @@ Patterns include literals, `_` wildcard, type constructors (`Ok x`,
 
 The file ended inside a match expression before a pattern was found.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P013",
@@ -329,6 +345,7 @@ The file ended inside a match expression before a pattern was found.
 A numeric literal was required (e.g., for a list index `x.0`) but
 a different token was found.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P014",
@@ -337,6 +354,7 @@ a different token was found.
 
 The file ended before a required number literal was found.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P015",
@@ -350,6 +368,7 @@ A `tool` declaration requires a string literal as its description.
     tool my-tool with { ... }       -- missing description
     tool my-tool "does things" with { ... }  -- correct
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P016",
@@ -377,6 +396,7 @@ do not need braces:
 
     cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P017",
@@ -397,6 +417,7 @@ the enclosing scope. Closure capture now works on every engine (tree, VM,
 Cranelift JIT/AOT) so that path no longer errors; the code was repurposed
 for `use`-import resolution.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P018",
@@ -426,6 +447,7 @@ whether `fmt` consumes `"tmpl {}" 1` or `"tmpl {}" 1 z`.
 The parens make the `fmt` call self-contained, so the outer's arg counter
 treats it as a single operand.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P019",
@@ -439,6 +461,7 @@ imported; only the missing ones produce this diagnostic.
 **Fix:** correct the spelling, or remove the missing name from the
 import list.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P020",
@@ -479,6 +502,7 @@ line break ends a declaration.
 This diagnostic exists so the error span lands on the function whose
 header is incomplete, not on the next function in the file.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P101",
@@ -517,6 +541,7 @@ The parens group the call as one element. Works for any builtin.
 Use this when the same value is needed in more than one place, or when the
 inline form gets unreadable.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P102",
@@ -562,6 +587,7 @@ diagnostic, not a cascade. ILO-P102 collapses what used to be 5-50
 ILO-T005 lines (one per slurped binding) into a single pointer at the
 shape fix.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P021",
@@ -606,6 +632,7 @@ This diagnostic exists to catch a specific silent-miscompile shape;
 single-atom variants like `- -a b` (negate of subtract over atoms) are
 unambiguous and remain accepted.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-P103",
@@ -630,6 +657,7 @@ genuinely needs more, raise the cap with `--max-ast-depth N` on `ilo`,
 **Fix:** flatten the expression by binding intermediates, or override the cap
 deliberately if the depth is real.
 "#,
+        stability: "provisional",
     },
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
@@ -641,6 +669,7 @@ A `type` declaration uses a name that was already defined.
 
 **Fix:** rename one of the types or remove the duplicate.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T002",
@@ -651,6 +680,7 @@ A function or tool uses a name that was already defined in this file.
 
 **Fix:** rename one of the functions or remove the duplicate.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T003",
@@ -665,6 +695,7 @@ A type name used in a signature or record literal is not defined.
 
 **Fix:** add a `type Point { ... }` declaration, or correct the spelling.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T004",
@@ -700,6 +731,7 @@ the fix is to bind it from the outer list and index with `at`:
       xs=[1 2 3];ys=[10 20 30];zs=zip xs ys;
       map (pair:L n>n;+at pair 0 at pair 1) zs
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T005",
@@ -736,6 +768,7 @@ In ilo's prefix-operator world there is no ambiguity once the operator
 leads the expression. The "looks like infix" shape `name expr` is
 always a call.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T006",
@@ -751,6 +784,7 @@ A function was called with the wrong number of arguments.
 
 **Fix:** pass the correct number of arguments.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T007",
@@ -767,6 +801,7 @@ An argument passed to a function has the wrong type.
 **Fix:** pass a value of the correct type, or use a conversion builtin
 such as `num` to convert text to a number.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T008",
@@ -781,6 +816,7 @@ The type of the return expression does not match the declared return type.
 
 **Fix:** change the return expression or correct the return type annotation.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T009",
@@ -793,6 +829,7 @@ of mismatched or wrong types.
 `+` works on `n + n`, `t + t`, or `L T + L T`.
 `-`, `*`, `/` require `n` operands.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-T010",
@@ -804,6 +841,7 @@ to operands of mismatched or non-comparable types.
 
 Comparisons require both operands to be the same type (`n` or `t`).
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T011",
@@ -817,6 +855,7 @@ appended must match the list's element type.
 
     f xs:n>L n;+=xs 1   -- 'xs' is 'n', not a list
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T012",
@@ -829,6 +868,7 @@ Unary negation (`-x`) requires a numeric argument.
 
     f s:t>n;-s   -- cannot negate a text value
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T013",
@@ -844,6 +884,7 @@ Common builtins and their required types:
 - `abs`, `flr`, `cel` — `n`
 - `min`, `max` — `n`, `n`
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T014",
@@ -856,6 +897,7 @@ The `foreach` builtin requires a list as its first argument.
 
     f s:t>n;foreach s x;x   -- 's' is 't', not a list
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T015",
@@ -871,6 +913,7 @@ A record literal is missing one or more fields required by the type.
 
 **Fix:** include all required fields.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T016",
@@ -882,6 +925,7 @@ does not exist on the type.
 
 **Fix:** remove the extra field or correct the spelling.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T017",
@@ -892,6 +936,7 @@ A field in a record literal was given a value of the wrong type.
 
 **Fix:** ensure the value matches the field's declared type.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T018",
@@ -905,6 +950,7 @@ value that is not a record type. Field access (including the safe
 **Fix:** if the receiver is a map (`M _ _`), use `mget m "key"`, which
 returns an Option you can match on or default with `??`.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T019",
@@ -916,6 +962,7 @@ not exist on the record type.
 
 **Fix:** correct the field name spelling.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T020",
@@ -924,6 +971,7 @@ not exist on the record type.
 
 The `with` expression for updating record fields requires a record value.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T021",
@@ -932,6 +980,7 @@ The `with` expression for updating record fields requires a record value.
 
 A field name used in a `with` expression does not exist on the record type.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T022",
@@ -940,6 +989,7 @@ A field name used in a `with` expression does not exist on the record type.
 
 A value provided in a `with` expression has the wrong type for the field.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T023",
@@ -948,6 +998,7 @@ A value provided in a `with` expression has the wrong type for the field.
 
 A list index access (`value.0`) was attempted on a non-list value.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T024",
@@ -962,6 +1013,7 @@ arms for each missing case.
 
     f r:R n t>n;match r{Ok v->v}   -- missing Err arm and wildcard
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T025",
@@ -979,6 +1031,7 @@ different type.
 
 **Fix:** Remove `!` or change the called function to return `R`.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T026",
@@ -996,6 +1049,7 @@ function, so the enclosing function must return a Result type
 
 **Fix:** Change the enclosing function's return type to `R`.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T027",
@@ -1018,6 +1072,7 @@ but forgot to wrap it in braces.
 
 Use braces when the guard body is a function call.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T028",
@@ -1035,6 +1090,7 @@ body (`@` foreach or `wh` while).
 
     f xs:L n>n;@ xs x{brk x}
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T029",
@@ -1050,6 +1106,7 @@ never be executed.
 
 **Fix:** remove the unreachable code or move it before the `ret`/`brk`.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T030",
@@ -1068,6 +1125,7 @@ verifier can resolve them to concrete types.
 **Fix:** break the cycle by introducing a named record type, or
 remove one side of the cycle.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T031",
@@ -1080,6 +1138,7 @@ be redefined.
 
 **Fix:** choose a different name for the alias.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T032",
@@ -1111,6 +1170,7 @@ The common mistake is treating `fmt` like Rust's `println!` or Python's
 string to the caller, which is the documented idiom (`say-x>t;fmt "x={}" 42`).
 This warning only fires when `fmt` is followed by another statement.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T033",
@@ -1157,6 +1217,7 @@ value is discarded:
 Tail position in a function body, `if` arm, or `?{}` arm is fine — the
 value flows out as the function/branch result.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T043",
@@ -1220,6 +1281,7 @@ The warning fires only when caller and callee names match (a self-call).
 Bare non-recursive user-fn calls at non-tail position do not warn — they
 may be legitimately side-effecting (logging, file I/O).
 "#,
+        stability: "experimental",
     },
     ErrorEntry {
         code: "ILO-T034",
@@ -1255,6 +1317,7 @@ This error fires only when the bang is adjacent to the ident (`x!`,
 `y!!`). Bang inside a call argument (`f !x`) is the logical-NOT prefix
 and is unaffected.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T035",
@@ -1288,6 +1351,7 @@ instead of being chased through wrong outputs.
 `~v:` / `^e:` arms remain correct on Result (`R T E`) subjects and are
 unaffected.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-T036",
@@ -1305,6 +1369,7 @@ This is a VM-specific limit; the tree interpreter and Cranelift JIT
 have higher caps. See also ILO-T035 (function exceeds the 256-register
 VM cap).
 "#,
+        stability: "provisional",
     },
     // ── Engine-specific ──────────────────────────────────────────────────────
     ErrorEntry {
@@ -1348,6 +1413,7 @@ The other engines (tree / VM / Cranelift JIT) raise the same kind of
 error at the CLI dispatch layer; ILO-E801 is the AOT-side equivalent so
 the failure mode is the same across every engine.
 "#,
+        stability: "experimental",
     },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
@@ -1360,6 +1426,7 @@ conditional execution (no early return), making them safe inside loops.
 Use braceless guards `cond expr` for early return, or `ret` inside
 braced guards for explicit early return from loops.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-W002",
@@ -1389,6 +1456,7 @@ Use plain `jpar` when the JSON shape is unknown and you want to
 inspect it with `?`; use `jpar-list` when you know (or expect) the
 response to be an array.
 "#,
+        stability: "provisional",
     },
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
@@ -1401,6 +1469,7 @@ This should normally be caught by the verifier (ILO-T004). Seeing
 this at runtime indicates the program was run without verification,
 or a dynamic path was taken.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-R002",
@@ -1410,6 +1479,7 @@ or a dynamic path was taken.
 A function was called that is not defined. This should normally be
 caught by the verifier (ILO-T005).
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-R003",
@@ -1420,6 +1490,7 @@ A division operation (`/`) was performed with a zero divisor.
 
 **Fix:** check that the divisor is non-zero before dividing.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-R004",
@@ -1429,6 +1500,7 @@ A division operation (`/`) was performed with a zero divisor.
 An operation was applied to a value of the wrong type at runtime.
 This may indicate a verifier gap for a dynamic code path.
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-R005",
@@ -1438,6 +1510,7 @@ This may indicate a verifier gap for a dynamic code path.
 A field access was performed on a record that does not have the
 requested field. Normally caught statically (ILO-T019).
 "#,
+        stability: "stable",
     },
     ErrorEntry {
         code: "ILO-R006",
@@ -1449,6 +1522,7 @@ ilo lists are zero-indexed.
 
 **Fix:** check `len` before indexing into the list.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R007",
@@ -1458,6 +1532,7 @@ ilo lists are zero-indexed.
 The `foreach` builtin was given a non-list value at runtime.
 Normally caught statically (ILO-T014).
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R008",
@@ -1467,6 +1542,7 @@ Normally caught statically (ILO-T014).
 The `with` expression was applied to a non-record value at runtime.
 Normally caught statically (ILO-T020).
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R009",
@@ -1476,6 +1552,7 @@ Normally caught statically (ILO-T020).
 A builtin function received the wrong type of argument at runtime.
 Normally caught statically (ILO-T013).
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R010",
@@ -1485,6 +1562,7 @@ Normally caught statically (ILO-T013).
 The VM compiler encountered an undefined variable while compiling a function.
 Normally caught statically (ILO-T004) before compilation.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R011",
@@ -1494,6 +1572,7 @@ Normally caught statically (ILO-T004) before compilation.
 The VM compiler encountered an undefined function reference.
 Normally caught statically (ILO-T005) before compilation.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R012",
@@ -1503,6 +1582,7 @@ Normally caught statically (ILO-T005) before compilation.
 The program has no callable functions. At least one function
 must be defined to run a program.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R013",
@@ -1515,6 +1595,7 @@ not a user error.
 
 If you see this, please file a bug report.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R014",
@@ -1531,6 +1612,7 @@ identifies the propagation point for diagnostic purposes.
 - ILO-R026 — `!!` panic-unwrap aborts the program instead of propagating.
 - ILO-T025 / ILO-T026 — static checks that `!` is applied correctly.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R015",
@@ -1555,6 +1637,7 @@ either a codegen issue in the Cranelift AOT backend, or a missing
 runtime check that the other engines apply. Please file an issue
 with the source program and the JSON diagnostic.
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R016",
@@ -1581,6 +1664,7 @@ ilo --max-runtime 300 main.ilo    -- allow 5 minutes
 ilo --max-runtime 0   main.ilo    -- disable the cap
 ```
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R017",
@@ -1608,6 +1692,7 @@ ilo --max-output-bytes 1073741824 main.ilo    -- raise to 1 GB
 ilo --max-output-bytes 0 main.ilo              -- disable the cap
 ```
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R026",
@@ -1630,6 +1715,7 @@ main>t;rdl!! "input.txt"    -- aborts with panic-unwrap if file missing
 main>n;num!! "abc"          -- aborts with panic-unwrap: abc
 ```
 "#,
+        stability: "provisional",
     },
     ErrorEntry {
         code: "ILO-R099",
@@ -1642,6 +1728,7 @@ specific code. The diagnostic message carries the inner cause.
 If you encounter this, it usually indicates a verifier gap or a bug
 in a builtin — please file an issue with the source that triggers it.
 "#,
+        stability: "provisional",
     },
     // ── Engine-specific limitations ────────────────────────────────────────
     ErrorEntry {
@@ -1662,6 +1749,7 @@ Phase 2 closure capture is otherwise fully supported across every
 in-process engine (tree, VM, Cranelift JIT). This diagnostic only
 fires on the pathological wide-capture case.
 "#,
+        stability: "experimental",
     },
 ];
 
@@ -1709,6 +1797,39 @@ mod tests {
                 !entry.long.is_empty(),
                 "{} missing long description",
                 entry.code
+            );
+        }
+    }
+
+    #[test]
+    fn all_codes_have_valid_stability() {
+        const VALID: &[&str] = &["stable", "provisional", "experimental"];
+        for entry in REGISTRY {
+            assert!(
+                VALID.contains(&entry.stability),
+                "{} has invalid stability '{}'; must be one of {:?}",
+                entry.code,
+                entry.stability,
+                VALID
+            );
+        }
+    }
+
+    #[test]
+    fn historical_codes_are_stable() {
+        // L001-L003, P001-P005, T001-T009, R001-R005 are the canonical stable set.
+        let must_be_stable = [
+            "ILO-L001", "ILO-L002", "ILO-L003",
+            "ILO-P001", "ILO-P002", "ILO-P003", "ILO-P004", "ILO-P005",
+            "ILO-T001", "ILO-T002", "ILO-T003", "ILO-T004", "ILO-T005",
+            "ILO-T006", "ILO-T007", "ILO-T008", "ILO-T009",
+            "ILO-R001", "ILO-R002", "ILO-R003", "ILO-R004", "ILO-R005",
+        ];
+        for code in must_be_stable {
+            let entry = lookup(code).unwrap_or_else(|| panic!("{code} must be in registry"));
+            assert_eq!(
+                entry.stability, "stable",
+                "{code} must have stability=stable (historical code)"
             );
         }
     }
