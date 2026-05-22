@@ -4390,6 +4390,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     || name == "world-no-net"
                 {
                 if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" {
+                if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" || name == "world-no-net" {
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],

@@ -33,6 +33,7 @@ pub enum Ty {
         net_known: Option<bool>,
     },
     World,
+    World { net_known: Option<bool> },
     Unknown,
     /// 32-bit unsigned integer — stored as f64 in tree-walker; exact up to 2^32.
     U32,
@@ -397,7 +398,7 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
         (Ty::World, Ty::World) => true,
         // Named("World") and Ty::World unify — user writes `w:World` in
         // function signatures which parses as Type::Named("World") → Ty::Named("World").
-        (Ty::Named(n), Ty::World) | (Ty::World, Ty::Named(n)) if n == "World" => true,
+        (Ty::Named(n), Ty::World { .. }) | (Ty::World { .. }, Ty::Named(n)) if n == "World" => true,
         _ => false,
     }
 }
@@ -4057,6 +4058,7 @@ fn builtin_check_args(
             )
             // proof-of-authority parameter.
             (Ty::World, errors)
+            (Ty::World { net_known: Some(false) }, errors)
         }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t
@@ -5715,6 +5717,12 @@ impl VerifyContext {
                                         net_known: Some(false)
                                     }
                                 ) {
+                        "get" | "pst" | "put" | "pat" | "del" | "hed" | "opt"
+                            | "getx" | "pstx" | "get-many" | "get-to" | "pst-to"
+                    ) {
+                        let net_denied_var = scope.iter().rev().find_map(|frame| {
+                            frame.iter().find_map(|(name, ty)| {
+                                if matches!(ty, Ty::World { net_known: Some(false) }) {
                                     Some(name.clone())
                                 } else {
                                     None
