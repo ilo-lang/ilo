@@ -2074,6 +2074,58 @@ fn sha256_impl(arg: &Value) -> Result<Value> {
     Ok(Value::Text(Arc::new(hex::encode(digest))))
 }
 
+/// Shared helper: validate and hex-decode a text value for sha256-hex / sha256d.
+/// Returns ILO-T013 on odd-length or non-hex input.
+fn hex_decode_arg(arg: &Value, caller: &str) -> Result<Vec<u8>> {
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{caller} requires text, got {:?}", other),
+            ));
+        }
+    };
+    if s.len() % 2 != 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "{caller}: hex input must have even length, got {} chars",
+                s.len()
+            ),
+        ));
+    }
+    hex::decode(s.as_ref()).map_err(|e| {
+        RuntimeError::new(
+            "ILO-R009",
+            format!("{caller}: invalid hex input: {e}"),
+        )
+    })
+}
+
+#[inline(never)]
+fn sha256_hex_impl(arg: &Value) -> Result<Value> {
+    // sha256-hex hex:t > t — SHA-256 of hex-decoded bytes, returned as a
+    // lowercase hex string. Errors (ILO-T013) on odd-length or non-hex input.
+    use sha2::{Digest, Sha256};
+    let bytes = hex_decode_arg(arg, "sha256-hex")?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    Ok(Value::Text(Arc::new(hex::encode(h.finalize()))))
+}
+
+#[inline(never)]
+fn sha256d_impl(arg: &Value) -> Result<Value> {
+    // sha256d hex:t > t — double-SHA256 of hex-decoded bytes (Bitcoin Merkle
+    // protocol: sha256(sha256(x))). Returns lowercase hex of the outer digest.
+    // Errors (ILO-T013) on odd-length or non-hex input.
+    use sha2::{Digest, Sha256};
+    let bytes = hex_decode_arg(arg, "sha256d")?;
+    let inner = Sha256::digest(&bytes);
+    let outer = Sha256::digest(inner);
+    Ok(Value::Text(Arc::new(hex::encode(outer))))
+}
+
 #[inline(never)]
 fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
     // hmac-sha256 key:t msg:t > t — HMAC-SHA256 of msg under key. Returns the
@@ -3466,6 +3518,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::CtEq) && args.len() == 2 {
         return ct_eq_impl(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Sha256Hex) && args.len() == 1 {
+        return sha256_hex_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Sha256d) && args.len() == 1 {
+        return sha256d_impl(&args[0]);
     }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
