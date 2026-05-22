@@ -250,8 +250,6 @@ fn add_recursive(spec: &str, visited: &mut HashSet<String>, stack: &mut Vec<Stri
         return 0;
     }
 
-    let git_ref = git_ref.unwrap_or("HEAD");
-
     let url = format!("https://github.com/{owner}/{repo}.git");
 
     // Resolve semver constraints to a concrete tag before cloning.
