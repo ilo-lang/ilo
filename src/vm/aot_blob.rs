@@ -195,6 +195,38 @@ pub fn deserialize_program(bytes: &[u8]) -> Result<CompiledProgram, String> {
             blob.schema_version, BLOB_SCHEMA_VERSION
         ));
     }
+    // ── All fallible / early-return work MUST happen before any NanVal
+    // allocation.  NanVal has no Drop impl; its RC is managed manually.
+    // The only cleanup path is CompiledProgram::drop → drop_rc on each
+    // nan_constants element.  If we return Err after nan_constants is built
+    // but before a CompiledProgram is constructed, all those Rc-wrapped
+    // HeapObjs leak.  Structural invariant checks and the (fallible)
+    // serde_json decode therefore come first. ────────────────────────────
+
+    // 1. Structural invariants (cheap, no allocation).
+    let n_wire_chunks = blob.chunks.len();
+    let n_func_names = blob.func_names.len();
+    let n_is_tool = blob.is_tool.len();
+    if n_wire_chunks != n_func_names {
+        return Err(format!(
+            "AOT blob invariant violated: chunks.len()={} != func_names.len()={}",
+            n_wire_chunks, n_func_names
+        ));
+    }
+    if n_wire_chunks != n_is_tool {
+        return Err(format!(
+            "AOT blob invariant violated: chunks.len()={} != is_tool.len()={}",
+            n_wire_chunks, n_is_tool
+        ));
+    }
+
+    // 2. Fallible AST deserialisation (allocates Strings/Vecs but no NanVals;
+    //    those types have proper Drop impls so an early return here is safe).
+    let ast: Program = serde_json::from_str(&blob.ast_json)
+        .map_err(|e| format!("serde_json deserialize ast: {}", e))?;
+
+    // 3. From here on, no more early returns — NanVals are being allocated and
+    //    must be cleaned up by CompiledProgram::drop.
     let chunks: Vec<Chunk> = blob.chunks.into_iter().map(WireChunk::into_chunk).collect();
     let nan_constants: Vec<Vec<super::NanVal>> = chunks
         .iter()
@@ -204,8 +236,6 @@ pub fn deserialize_program(bytes: &[u8]) -> Result<CompiledProgram, String> {
     for (name, fields, num_fields) in blob.type_registry_entries {
         type_registry.register(name, fields, num_fields);
     }
-    let ast: Program = serde_json::from_str(&blob.ast_json)
-        .map_err(|e| format!("serde_json deserialize ast: {}", e))?;
     // Reconstruct is_defer_fn from the AST (parallel to compile_program logic).
     let n_fns = blob.func_names.len();
     let mut is_defer_fn = vec![false; n_fns];

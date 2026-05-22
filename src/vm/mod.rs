@@ -700,6 +700,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // `run-bg cmd argv` — fire-and-forget spawn. Returns R n t (the pid).
         // Tree-bridge eligible: no FnRef args, returns Result.
         (Builtin::RunBg, 2) => true,
+        // `run-full-env cmd argv` — opt-in full-env variant of `run`.
+        // Same bridge contract; scrubs no env vars.
+        (Builtin::RunFullEnv, 2) => true,
+        // `run2-full-env cmd argv` — opt-in full-env variant of `run2`.
+        // Same bridge contract; scrubs no env vars.
+        (Builtin::Run2FullEnv, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -947,6 +953,17 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Hstack, 1) => true,
         (Builtin::ColumnStack, 1) => true,
         (Builtin::Hist, 2) => true,
+        // `for-line stdin > LazyStdinLines` (ILO-70). 1-arg, no FnRef.
+        // The return type (LazyStdinLines) is opaque to the register engines;
+        // the bridge lets VM and Cranelift produce the handle without a new
+        // opcode. ForEach in the tree interpreter drains it one line at a time.
+        (Builtin::ForLine, 1) => true,
+        // par-map fn xs / par-map fn xs n — general parallel fan-out.
+        // Takes a FnRef arg, so the tree interpreter handles the worker-thread
+        // dispatch and user-fn callbacks. VM and Cranelift bail to the tree
+        // bridge at zero opcode cost; native dispatch is a follow-up.
+        (Builtin::ParMap, 2) => true,
+        (Builtin::ParMap, 3) => true,
         _ => false,
     }
 }
@@ -970,6 +987,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Run
             | Builtin::Run2
             | Builtin::RunBg
+            | Builtin::RunFullEnv
+            | Builtin::Run2FullEnv
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl

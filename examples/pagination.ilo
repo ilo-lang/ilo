@@ -1,0 +1,88 @@
+-- Canonical pagination idiom (ILO-421, supersedes ILO-88).
+--
+-- Pattern: tail-recursive accumulator + empty-token termination + Result chain.
+--
+-- Shape:
+--   fetch-all url token acc
+--     token="" → ~acc              (done: wrap and return)
+--     page,next = fetch-page url token
+--     fetch-all url next (+acc page)  (tail position — no stack growth)
+--
+-- `fld` threads the accumulator for in-memory aggregation once all pages
+-- are collected.  The Result chain (`!` propagation) means any HTTP or
+-- parse Err bubbles up from `fetch-page` without explicit match arms.
+
+-- ---------------------------------------------------------------------------
+-- Simulated paged data source.
+-- Real code would call `get!` / `pst!` here; we return hardcoded pages so
+-- the example runs without network access and passes on every engine.
+-- Tokens: "0"→page0 (next "1"), "1"→page1 (next "2"), "2"→page2 (next ""),
+-- where "" signals end-of-pages.  In a real API the server supplies tokens.
+-- ---------------------------------------------------------------------------
+
+-- page-data: returns [items, next-token] for a given 0-based page index n.
+page-data idx:n>L _
+  ?idx{
+    0:[[1 2] "1"]
+    1:[[3 4] "2"]
+    2:[[5 6] ""]
+    _:[[]]
+  }
+
+-- fetch-page: simulates a network call returning a Result-wrapped record.
+-- Returns ~[items next-token] (Ok) or ^"out of range" (Err).
+-- In a real program: b=get! url; items=jpar-list! b; nxt=default-on-err (jpth b "next") ""; ~[items nxt]
+fetch-page url:t token:t>R (L _) t
+  idx=default-on-err (num token) 0
+  r=page-data idx
+  =len r 0 ^"out of range"
+  items=at r 0
+  nxt=at r 1
+  ~[items nxt]
+
+-- ---------------------------------------------------------------------------
+-- Core idiom: tail-recursive paginator.
+-- Empty string token signals the last page has been consumed.
+-- ---------------------------------------------------------------------------
+
+fetch-all url:t token:t acc:L n>R (L n) t
+  -- termination: empty next-token means we have collected all pages
+  =token "" ~acc
+  -- fetch this page (! propagates Err out of fetch-all)
+  r=fetch-page! url token
+  page=at r 0
+  nxt=at r 1
+  -- tail call with extended accumulator (no stack frame consumed)
+  fetch-all url nxt +acc page
+
+-- Entry points -----------------------------------------------------------
+
+-- all-items: collect every item across pages, return as list.
+all-items>R (L n) t
+  fetch-all "https://api.example.com/items" "0" []
+
+-- sum-pages: collect then fold to a sum (fld threads accumulator over result).
+sum-pages>R n t
+  xs=fetch-all! "https://api.example.com/items" "0" []
+  ~fld (a:n x:n>n;+a x) xs 0
+
+-- count-pages: count total items without keeping them all in memory.
+-- Uses a dedicated tail-recursive counter to show the streaming variant.
+count-all url:t token:t n:n>R n t
+  =token "" ~n
+  r=fetch-page! url token
+  page=at r 0
+  nxt=at r 1
+  count-all url nxt +n len page
+
+total-count>R n t
+  count-all "https://api.example.com/items" "0" 0
+
+-- run: all-items
+-- out: [1, 2, 3, 4, 5, 6]
+
+-- run: sum-pages
+-- out: 21
+
+-- run: total-count
+-- out: 6

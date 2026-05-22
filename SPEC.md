@@ -766,9 +766,11 @@ Called like functions, compiled to dedicated opcodes.
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
 | `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
-| `tokcount s` | approximate cl100k_base token count of string `s` (bytes/3.4 stub; within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. ILO-47 tracks replacing the stub with a real BPE tokeniser. *Experimental.* | `n` |
-| `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
-| `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
+| `tokcount s` | approximate cl100k_base token count of string `s`. On native targets uses tiktoken-rs cl100k_base BPE (exact OpenAI tokenisation); on WASM falls back to bytes/3.4 stub (within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. *Experimental* (PR #716, ILO-413). | `n` |
+| `run cmd argv` | spawn `cmd` with argv list — secrets scrubbed from child env by default; see [Process spawn](#process-spawn) | `R (M t t) t` |
+| `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`); secrets scrubbed from child env by default | `R RunResult t` |
+| `run-full-env cmd argv` | like `run` but inherits the full parent env (opt-in; use when child legitimately needs secrets) | `R (M t t) t` |
+| `run2-full-env cmd argv` | like `run2` but inherits the full parent env (opt-in) | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `world` | return the current capability World token (see [Capability World](#capability-world)) | `W` |
@@ -805,6 +807,7 @@ Called like functions, compiled to dedicated opcodes.
 | `fmt tmpl args…` | format string - supports `{}` (Display), `{.Nf}` / `{:.Nf}` (N decimals), `{:N}` (right-align width), `{:Nd}` (integer width), `{:<N}` (left-align width). Filled left-to-right; placeholder count must equal arg count. Out-of-scope specs (zero-pad `{:06d}`, sign `{:+}`, hex `{:x}`) are rejected; compose `fmt2` / `padl` / `padr` for those. Literal-template mismatches surface at verify-time (`ILO-T013`); computed-template errors surface at runtime (`ILO-R009`). Lists are formatted as a single value, not splatted: `fmt "{} {}" [a, b]` is an error - use `fmt "{} {}" a b` instead | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
+| `idxof s sub` | Unicode code-point index of the first occurrence of `sub` in `s`; returns nil when not found (use `??` for a default). Index is in code-point units (same as `at`), not raw bytes. Tree-bridge eligible. (0.13.0) | `O n` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
 | `tl xs` | tail (all but first) of list or text | `L` / `t` |
 | `rev xs` | reverse list or text | same type |
@@ -904,6 +907,8 @@ Called like functions, compiled to dedicated opcodes.
 | `day-of-week dt` | day of week for epoch `dt`: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat | `n` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
+| `par-map fn xs` | apply `fn` to each element of `xs` in parallel (default concurrency = num_cpus; override with `ILO_PAR_MAP_CONCURRENCY`), order-preserving; per-item errors surface as `Err` in result list | `L (R b t)` |
+| `par-map fn xs n` | like `par-map fn xs` with explicit concurrency `n`; `n=0` falls back to num_cpus | `L (R b t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
 | `tz-offset tz epoch` | UTC offset in seconds for the named IANA timezone at the given Unix epoch. DST-aware (chrono-tz). Positive = east of UTC. `Err` on unknown timezone name | `R n t` |
 | `rou n` | round to nearest integer (banker's rounding) | `n` |
@@ -1202,7 +1207,19 @@ Prefer `run2` for new code. `run` is kept for compatibility.
 
 **`run2` exit on signal.** On Unix, a signal-killed process has no exit code. `run2` surfaces this as `exit: -1` so the caller can branch on `<0 r.exit`. `run` uses the string `"signal:<n>"` for the same case.
 
-**Inherits parent env + cwd.** Neither primitive provides env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
+**Env scrubbing (ILO-346).** `run` and `run2` scrub the following env vars from the child process by default so that secrets set in the agent's environment cannot leak to untrusted children:
+
+- `ANTHROPIC_*` and `CLAUDE_*` — Anthropic / Claude credentials
+- `GITHUB_TOKEN`, `GITHUB_PAT` — GitHub PATs
+- Any var whose name ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSWD`, `_CREDENTIAL`, or `_CREDENTIALS`
+
+All other vars (including `PATH`, `HOME`, `LANG`, `TZ`) are inherited normally. To opt in to passing the full environment — for example when a child script legitimately needs `ANTHROPIC_API_KEY` — use the `run-full-env` or `run2-full-env` builtins instead:
+
+```
+m = run-full-env "my-agent" ["--task" task]   -- full env passes through
+```
+
+**Inherits parent cwd.** Neither primitive provides a cwd override; set the parent cwd before invoking ilo if you need a different working directory.
 
 **Captured output is capped at 10 MiB per stream.** Either stream exceeding the cap returns an `Err` rather than partial capture so downstream JSON pipelines never see a truncated payload.
 
@@ -2428,6 +2445,8 @@ ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positio
 ilo check program.ilo [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
 ilo test [path] [--engine vm|jit|all]  -- run `-- run:` / `-- out:` / `-- err:` assertions in .ilo files (exit 0 on all-pass, 1 on any failure)
 ilo build program.ilo -o out     -- AOT compile to a standalone binary (alias for `compile`)
+ilo run program.ilo --emit js    -- transpile to JavaScript and print to stdout (PR #713, ILO-73)
+ilo run program.ilo --emit python -- transpile to Python and print to stdout
 ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)

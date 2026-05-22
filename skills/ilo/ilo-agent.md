@@ -70,6 +70,29 @@ Parser nesting is capped at 256 by default — guards `ilo serv` and any other c
 
 `ilo run`: wall-clock 60 s (`ILO-R016`), stdout ~100 MB (`ILO-R017`). Override: `--max-runtime SECS` / `--max-output-bytes BYTES` (0 disables). Hitting either = missing loop increment or no base case.
 
+## Packages
+
+GitHub-based registry; no central server.
+
+```
+ilo add ilo-lang/ilo-example-package        -- shallow-clone into ~/.ilo/pkgs/, write ilo.lock
+ilo add owner/repo@v1.2                     -- pin to tag / branch / SHA
+ilo update                                  -- re-fetch all locked packages
+```
+
+After `ilo add`, import with `use`:
+
+```
+use "ilo-lang/ilo-example-package"               -- all public symbols from index.ilo
+use "ilo-lang/ilo-example-package" [greet clamp] -- selective import
+
+main>_
+  prnt greet "agent"      -- hello, agent
+  prnt str clamp 15 0 10  -- 10
+```
+
+`ilo.lock` records slug, SHA, and URL — commit it to source control. A path whose first component has no `.` is always a package reference; use `"./local.ilo"` for local files.
+
 ## Branching
 
 Failures / repair: `ilo-edit-loop`. Runnable patterns: `ilo-examples`. Tools: `ilo-tools`. Engine pick: `ilo-engines`.

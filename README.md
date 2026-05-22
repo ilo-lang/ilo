@@ -193,6 +193,17 @@ proc rows:L ?>n;clean=flt pos rows;sum clean
 pos x:?>b;>x 0
 ```
 
+**Sum types** - discriminated unions with exhaustive matching:
+```
+type Shape = Circle n | Rect n n
+area s:Shape>n;Circle r=s;*r r  Rect w h=s;*w h
+```
+
+**defer / errdefer** - guaranteed cleanup regardless of exit path:
+```
+open-file path:t>R t;f=open! path;defer close f;read! f
+```
+
 **Auto-unwrap `!`** - eliminates Result matching:
 ```bash
 ilo 'inner x:n>R n t;~x  outer x:n>R n t;~(inner! x)' 42  # → 42
@@ -208,6 +219,31 @@ ilo 'inner x:n>R n t;~x  outer x:n>R n t;~(inner! x)' 42  # → 42
 - **Time**: `now`, `sleep`, `dtfmt`/`dtparse` (strftime, UTC)
 - **JSONL**: `rdjl` for line-by-line parsing
 - **Concurrent HTTP**: `get-many` (up to 10 parallel)
+- **Parallel**: `par-map` general fan-out with chunking; native VM opcode
+- **Tokens**: `tokcount` approximate cl100k_base token count
+
+## What shipped in 0.13
+
+Highlights from the 0.13 cycle:
+
+- **Sum types** — discriminated unions, generics, recursive, exhaustive matching ([examples/sum-types.ilo](examples/sum-types.ilo), [examples/generic-sum-types.ilo](examples/generic-sum-types.ilo))
+- **Generics** — bounded type parameters, multi-bound, VM/JIT dispatch ([examples/generics-bounded.ilo](examples/generics-bounded.ilo))
+- **Modules** — re-exports, conditional imports, lazy loading
+- **Effect sets** — declare and enforce side-effect budgets ([examples/effect-sets.ilo](examples/effect-sets.ilo))
+- **World / capability** — `world` / `world-no-net` builtins; static enforcement ([examples/capability-world.ilo](examples/capability-world.ilo))
+- **defer / errdefer** — structured cleanup ([examples/defer-basic.ilo](examples/defer-basic.ilo), [examples/errdefer.ilo](examples/errdefer.ilo))
+- **Gleam-style syntax** — `use<-` chain, `todo`/`panic`, match alternatives, multi-subject match
+- **ilo httpd** — embedded HTTP server ([examples/httpd-hello.ilo](examples/httpd-hello.ilo))
+- **run family** — `run-bg` (fire-and-forget), `run-full-env` (inherit env)
+- **Bitwise ops** — 32/64-bit; native `U32` / `U64` / `I64` types
+- **Package registry** — `ilo add` installs packages from the registry
+- **Fix plans + ilo apply** — structured agent-writable repair workflow
+- **ilo trace** — execution tracing for debugging and observability ([examples/trace-demo.ilo](examples/trace-demo.ilo))
+- **JS compile target MVP** — emit JavaScript from ilo source
+- **WASM HTTP fetch** — `$` / `get` builtins work in WASM via fetch ([examples/wasm-fetch.ilo](examples/wasm-fetch.ilo))
+- **Cranelift TCO** — tail calls via `return_call`; no stack overflow on deep recursion
+- **tokcount** — token counting builtin backed by tiktoken-rs
+- **Numeric / signal / text utility batches** — extended stdlib coverage
 
 ## Teaching agents
 

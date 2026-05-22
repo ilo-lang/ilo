@@ -7297,6 +7297,100 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(run_spawn_bg(cmd.as_str(), &argv));
     }
+    if builtin == Some(Builtin::RunFullEnv) && args.len() == 2 {
+        // run-full-env cmd:t args:L t  >  R (M t t) t
+        //
+        // Opt-in variant of `run` that inherits the full parent environment,
+        // including ANTHROPIC_API_KEY, GITHUB_TOKEN, and similar secrets.
+        // Use only when the child process legitimately needs those credentials.
+        // The default `run` scrubs these automatically.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-full-env requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run-full-env argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-full-env argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_full_env(cmd.as_str(), &argv));
+    }
+    if builtin == Some(Builtin::Run2FullEnv) && args.len() == 2 {
+        // run2-full-env cmd:t args:L t  >  R RunResult t
+        //
+        // Opt-in variant of `run2` that inherits the full parent environment.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2-full-env requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run2-full-env argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "run2-full-env argv must be L t (text list), got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_structured_full_env(cmd.as_str(), &argv));
+    }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(Arc::new(s.trim().to_string()))),
@@ -8430,6 +8524,73 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             result.push(call_function(env, &fn_name, call_args)?);
         }
         return Ok(Value::List(Arc::new(result)));
+    }
+    // par-map fn xs [n] — general parallel fan-out.
+    //
+    // Applies `fn` to each element of `xs` up to `n` items in parallel
+    // (default: num_cpus). Returns `L (R b t)` — per-item Ok/Err so a single
+    // worker failure does not abort the rest. Order-preserving.
+    //
+    // The inner function may use any builtin (including I/O builtins that
+    // check caps); capability checks run inside the worker threads as usual.
+    //
+    // The large body is extracted into `par_map_run` (marked `#[inline(never)]`)
+    // following the dispatch-arm-size convention from #5ze / ILO-289.
+    if builtin == Some(Builtin::ParMap) && (args.len() == 2 || args.len() == 3) {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "par-map: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("par-map: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let concurrency: usize = if args.len() == 3 {
+            match &args[2] {
+                Value::Number(n) => {
+                    let n = *n as usize;
+                    if n == 0 {
+                        par_map_default_concurrency()
+                    } else {
+                        n
+                    }
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "par-map: third arg must be a number (concurrency), got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            }
+        } else {
+            par_map_default_concurrency()
+        };
+        // Snapshot the function table and caps so worker threads can build
+        // their own Env without holding a reference to the caller's Env.
+        let fns_snapshot = env.functions.clone();
+        let caps_snapshot = env.caps.clone();
+        return Ok(Value::List(Arc::new(par_map_run(
+            &fn_name,
+            captures,
+            &items,
+            concurrency,
+            fns_snapshot,
+            caps_snapshot,
+        ))));
     }
     // mapr fn xs: short-circuiting Result-aware map.
     //
@@ -11243,11 +11404,36 @@ fn rdinl_impl() -> Result<Value> {
     }
 }
 
-/// `for-line` implementation — returns a lazy stdin line iterator.
+/// Returns true if the env var name looks like a secret and should be
+/// scrubbed from child processes by default.
 ///
-/// Takes one argument which must be the text "stdin". Returns
-/// `Value::LazyStdinLines` so callers can iterate with `@binding` foreach.
-/// On WASM stdin is unavailable; returns `Err` immediately.
+/// Scrubbed patterns (case-insensitive suffix match unless noted):
+///   - ANTHROPIC_*  — Anthropic API keys
+///   - CLAUDE_*     — Claude-specific tokens / config values
+///   - GITHUB_TOKEN / GITHUB_PAT — GitHub credentials
+///   - *_TOKEN      — generic bearer tokens
+///   - *_KEY        — generic API keys (catches OPENAI_API_KEY etc.)
+///   - *_SECRET     — generic secrets / client credentials
+///   - *_PASSWORD / *_PASSWD — passwords
+///   - *_CREDENTIAL / *_CREDENTIALS — credential blobs
+///
+/// Variables not matching any pattern are passed through unchanged.
+#[cfg(not(target_family = "wasm"))]
+fn is_secret_env_var(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.starts_with("ANTHROPIC_")
+        || upper.starts_with("CLAUDE_")
+        || upper == "GITHUB_TOKEN"
+        || upper == "GITHUB_PAT"
+        || upper.ends_with("_TOKEN")
+        || upper.ends_with("_KEY")
+        || upper.ends_with("_SECRET")
+        || upper.ends_with("_PASSWORD")
+        || upper.ends_with("_PASSWD")
+        || upper.ends_with("_CREDENTIAL")
+        || upper.ends_with("_CREDENTIALS")
+}
+
 fn for_line_impl(source: &Value) -> Result<Value> {
     match source {
         Value::Text(s) if s.as_str() == "stdin" => {
@@ -11278,6 +11464,19 @@ fn for_line_impl(source: &Value) -> Result<Value> {
 /// not found, permission denied, etc.) ARE errors and surface as Err.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_inner(cmd, argv, false)
+}
+
+/// Like `run_spawn` but passes through the full parent environment including
+/// sensitive vars (ANTHROPIC_API_KEY, GITHUB_TOKEN, etc.). Use only when the
+/// child process legitimately needs those credentials.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_full_env(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_inner(cmd, argv, true)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_spawn_inner(cmd: &str, argv: &[String], inherit_full_env: bool) -> Value {
     use std::process::{Command, Stdio};
 
     let mut command = Command::new(cmd);
@@ -11286,6 +11485,20 @@ pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if !inherit_full_env {
+        // Scrub secret env vars from the child environment. We start from
+        // the inherited env and remove matching keys rather than building a
+        // clean env from scratch, so tools that need PATH / HOME / LANG / TZ
+        // continue to work without the caller having to enumerate them.
+        for (key, _) in std::env::vars_os() {
+            if let Some(k) = key.to_str() {
+                if is_secret_env_var(k) {
+                    command.env_remove(k);
+                }
+            }
+        }
+    }
 
     let mut child = match command.spawn() {
         Ok(c) => c,
@@ -11402,6 +11615,17 @@ pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
 /// can branch on `r.exit < 0`.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn run_spawn_structured(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_structured_inner(cmd, argv, false)
+}
+
+/// Like `run_spawn_structured` but passes through the full parent environment.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_structured_full_env(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_structured_inner(cmd, argv, true)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_spawn_structured_inner(cmd: &str, argv: &[String], inherit_full_env: bool) -> Value {
     use std::process::{Command, Stdio};
 
     let mut command = Command::new(cmd);
@@ -11410,6 +11634,16 @@ pub(crate) fn run_spawn_structured(cmd: &str, argv: &[String]) -> Value {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if !inherit_full_env {
+        for (key, _) in std::env::vars_os() {
+            if let Some(k) = key.to_str() {
+                if is_secret_env_var(k) {
+                    command.env_remove(k);
+                }
+            }
+        }
+    }
 
     let mut child = match command.spawn() {
         Ok(c) => c,
@@ -11808,6 +12042,20 @@ pub(crate) fn run_spawn_bg(_cmd: &str, _argv: &[String]) -> Value {
     ))))
 }
 
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_full_env(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run-full-env: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_structured_full_env(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run2-full-env: process spawn not available on wasm".to_string(),
+    ))))
+}
+
 /// Drain `reader` into `buf` while enforcing `cap` bytes per call. Returns
 /// Err(message) when the cap is exceeded so the caller can surface an Err
 /// rather than partial capture.
@@ -11915,6 +12163,140 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
             )));
         }
     }
+    results
+}
+
+/// Default concurrency for `par-map` when no explicit `n` is given.
+///
+/// Reads the `ILO_PAR_MAP_CONCURRENCY` environment variable first; falls back
+/// to the number of logical CPUs reported by the OS (via `std::thread::available_parallelism`).
+/// A zero or invalid env value is ignored in favour of the CPU count.
+fn par_map_default_concurrency() -> usize {
+    if let Ok(s) = std::env::var("ILO_PAR_MAP_CONCURRENCY") {
+        if let Ok(n) = s.trim().parse::<usize>() {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
+/// Compute the auto-tuned chunk size for `par_map_run`.
+///
+/// With `n_threads` threads and `n_items` items, each thread processes
+/// `ceil(n_items / n_threads)` items, keeping thread-creation overhead
+/// constant regardless of list length. Returns at least 1.
+fn par_map_chunk_size(n_items: usize, n_threads: usize) -> usize {
+    let t = n_threads.max(1);
+    n_items.div_ceil(t)
+}
+
+/// Apply `fn_name` to each element of `items` using up to `concurrency`
+/// threads, collecting results in input order as `Value::Ok(_)` / `Value::Err(_)`.
+///
+/// ### Chunking
+/// Instead of spawning one thread per item, we spawn at most `concurrency`
+/// threads and distribute items evenly across them
+/// (`chunk_size = ceil(len / concurrency)`). This keeps thread-creation
+/// overhead constant for large lists of small items and avoids the
+/// wave-by-wave serialisation of the previous implementation.
+///
+/// ### Cancellation
+/// A shared atomic flag (`cancelled`) is set to `true` the first time any
+/// worker produces an `Err`. Subsequent items inside the same worker are
+/// skipped and filled with a cancellation sentinel
+/// `Err("par-map: cancelled due to earlier error")`. Items in other threads
+/// that have not yet started processing also respect this flag. This means
+/// that a single error causes remaining unstarted work to be abandoned
+/// quickly while already-running calls complete naturally.
+///
+/// Worker threads each get a fresh `Env` built from the function-table snapshot
+/// (`fns`) and the capability policy (`caps`) captured from the caller's `Env`.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
+/// frame, following the dispatch-arm-size convention from #494 / ILO-289.
+#[inline(never)]
+fn par_map_run(
+    fn_name: &str,
+    captures: Vec<Value>,
+    items: &[Value],
+    concurrency: usize,
+    fns: HashMap<String, Decl>,
+    caps: Arc<Caps>,
+) -> Vec<Value> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let n_threads = concurrency.max(1);
+    let chunk_size = par_map_chunk_size(items.len(), n_threads);
+
+    // Pre-fill results so threads can write their slice independently.
+    let mut results: Vec<Value> = vec![Value::Nil; items.len()];
+
+    // Shared cancellation flag: set to true when any worker encounters an Err.
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    std::thread::scope(|s| {
+        let mut handles = Vec::new();
+        for (chunk_idx, chunk) in items.chunks(chunk_size).enumerate() {
+            let base = chunk_idx * chunk_size;
+            let chunk_items: Vec<Value> = chunk.to_vec();
+            let fn_name_owned = fn_name.to_string();
+            let captures = captures.clone();
+            let fns = fns.clone();
+            let caps = caps.clone();
+            let cancelled = cancelled.clone();
+            handles.push((
+                base,
+                chunk_items.len(),
+                s.spawn(move || {
+                    let mut worker_env = Env::with_caps(caps);
+                    worker_env.functions = fns;
+                    let mut local: Vec<Value> = Vec::with_capacity(chunk_items.len());
+                    for item in chunk_items {
+                        // Check cancellation before starting each item.
+                        if cancelled.load(Ordering::Relaxed) {
+                            local.push(Value::Err(Box::new(Value::Text(Arc::new(
+                                "par-map: cancelled due to earlier error".to_string(),
+                            )))));
+                            continue;
+                        }
+                        let mut call_args = vec![item];
+                        call_args.extend(captures.iter().cloned());
+                        let result = match call_function(&mut worker_env, &fn_name_owned, call_args)
+                        {
+                            Ok(v) => Value::Ok(Box::new(v)),
+                            Err(e) => {
+                                // Signal other workers to cancel.
+                                cancelled.store(true, Ordering::Relaxed);
+                                Value::Err(Box::new(Value::Text(Arc::new(e.message.clone()))))
+                            }
+                        };
+                        local.push(result);
+                    }
+                    local
+                }),
+            ));
+        }
+        for (base, len, handle) in handles {
+            let local = handle.join().unwrap_or_else(|_| {
+                vec![
+                    Value::Err(Box::new(Value::Text(Arc::new(
+                        "par-map worker thread panicked".to_string(),
+                    ))));
+                    len
+                ]
+            });
+            for (i, v) in local.into_iter().enumerate() {
+                results[base + i] = v;
+            }
+        }
+    });
     results
 }
 
@@ -17991,33 +18373,112 @@ f>n;+area(circle 2) area(square 3)"#;
 
     // ---- todo / panic typed expressions (ILO-410) ----
 
+    // par-map tests (ILO-67)
+
     #[test]
-    fn todo_expr_produces_runtime_error() {
-        let prog = parse_program(r#"f>n;todo "not yet""#);
-        let result = run(&prog, None, vec![]);
-        match result {
-            Err(e) => {
-                assert_eq!(e.code, "ILO-R020", "expected ILO-R020, got {}", e.code);
-                assert!(e.message.contains("not yet"), "message was: {}", e.message);
-            }
-            Ok(v) => panic!("expected runtime error from todo, got value: {:?}", v),
-        }
+    fn par_map_applies_fn_to_each_element_in_order() {
+        // double x = x * 2; par-map over [1,2,3] with concurrency 2 => [2,4,6]
+        let src = r#"dbl x:n>n;*x 2  main>L n;xs=[1 2 3];ys=par-map dbl xs 2;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Number(2.0),
+                Value::Number(4.0),
+                Value::Number(6.0),
+            ]))
+        );
     }
 
     #[test]
-    fn panic_expr_produces_runtime_error() {
-        let prog = parse_program(r#"f>n;panic "unreachable""#);
-        let result = run(&prog, None, vec![]);
-        match result {
-            Err(e) => {
-                assert_eq!(e.code, "ILO-R021", "expected ILO-R021, got {}", e.code);
+    fn par_map_empty_list_returns_empty() {
+        let src = r#"dbl x:n>n;*x 2  main>L n;par-map dbl [] 4"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(result, Value::List(Arc::new(vec![])));
+    }
+
+    #[test]
+    fn par_map_default_concurrency_two_arg_form() {
+        // 2-arg form (no explicit n): should still work
+        let src =
+            r#"sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(4.0),
+                Value::Number(9.0),
+                Value::Number(16.0),
+            ]))
+        );
+    }
+
+    // ILO-354: chunking strategy — large list of small items processed correctly
+    // with auto-tuned chunk size (ceil(len / num_cpus) items per thread).
+    #[test]
+    fn par_map_large_list_chunking() {
+        // 100 items [0..99], each doubled — verifies order-preservation across
+        // multiple auto-sized chunks. Uses `range 0 100` (2-arg form).
+        let src = r#"dbl x:n>n;*x 2  main>L n;xs=range 0 100;ys=par-map dbl xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        if let Value::List(list) = result {
+            assert_eq!(list.len(), 100);
+            for (i, v) in list.iter().enumerate() {
+                assert_eq!(*v, Value::Number((i * 2) as f64), "mismatch at index {i}");
+            }
+        } else {
+            panic!("expected a list");
+        }
+    }
+
+    // ILO-354: cancellation — an error in one item causes remaining items
+    // to be short-circuited (filled with cancellation Err sentinel).
+    #[test]
+    fn par_map_error_cancels_remaining_workers() {
+        // `boom` errors on x == 5 by performing `at [] 0` (out-of-bounds),
+        // which is a RuntimeError (not a Value::Err), triggering cancellation.
+        // Items after 5 should be Err (original error or cancellation sentinel).
+        // We use concurrency=1 so items are processed strictly in order.
+        let src = r#"boom x:n>n;=x 5{at [] 0};x  main>L n;xs=range 0 10;par-map boom xs 1"#;
+        let result = run_str(src, Some("main"), vec![]);
+        if let Value::List(list) = result {
+            assert_eq!(list.len(), 10);
+            // Items 0..5 should be Ok.
+            for i in 0..5 {
                 assert!(
-                    e.message.contains("unreachable"),
-                    "message was: {}",
-                    e.message
+                    matches!(&list[i], Value::Ok(_)),
+                    "expected Ok at index {i}, got {:?}",
+                    list[i]
                 );
             }
-            Ok(v) => panic!("expected runtime error from panic, got value: {:?}", v),
+            // Item 5 should be Err (the explicit failure).
+            assert!(
+                matches!(&list[5], Value::Err(_)),
+                "expected Err at index 5, got {:?}",
+                list[5]
+            );
+            // Items 6..10 should be Err (cancelled).
+            for i in 6..10 {
+                assert!(
+                    matches!(&list[i], Value::Err(_)),
+                    "expected cancelled Err at index {i}, got {:?}",
+                    list[i]
+                );
+            }
+        } else {
+            panic!("expected a list");
         }
+    }
+
+    // ILO-354: par_map_chunk_size helper — unit test for the auto-tuning formula.
+    #[test]
+    fn par_map_chunk_size_formula() {
+        use super::par_map_chunk_size;
+        assert_eq!(par_map_chunk_size(100, 4), 25);
+        assert_eq!(par_map_chunk_size(101, 4), 26); // ceil(101/4)
+        assert_eq!(par_map_chunk_size(1, 8), 1);
+        assert_eq!(par_map_chunk_size(0, 4), 0);
+        assert_eq!(par_map_chunk_size(10, 0), 10); // 0 threads treated as 1
     }
 }

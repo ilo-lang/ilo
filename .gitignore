@@ -42,8 +42,9 @@ CLAUDE.md
 
 # Internal strategy and exploration (kept local, not public)
 zero-gap-specs/
-research/
-!research/finetune-comparison.md
+!research/sigil-ab-results.md
+!research/sigil-ab/
+!research/sigil-ab/**
 .claude/commands/
 .env.example
 .zero/
