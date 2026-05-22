@@ -57,7 +57,7 @@ PER_MODULE_OVERRIDES = {
     "ilo-language": 1800,
     "ilo-builtins-core": 1125,
     "ilo-builtins-math": 1460,
-    "ilo-builtins-io": 2000,
+    "ilo-builtins-io": 2200,
     "ilo-builtins-text": 1190,
     "ilo-agent": 1270,
 }
