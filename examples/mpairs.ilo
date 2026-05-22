@@ -14,7 +14,7 @@ nums>L (L _);m=mset (mset (mset mmap 10 "a") 2 "b") 5 "c";mpairs m
 -- Common pattern replacing: map (k:t>L _;[k (mget m k)]) (mkeys m)
 iter>_
   m=mset (mset (mset mmap "x" 10) "y" 20) "z" 30
-  fld (acc:L _; pair:L _;cat acc [[pair.0, pair.1]]) [] (mpairs m)
+  fld {acc pair > [acc, pair]} [] (mpairs m)
 
 -- run: pairs
 -- out: [[a, 1], [b, 2], [c, 3]]

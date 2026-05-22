@@ -1129,6 +1129,8 @@ impl Builtin {
         Builtin::B64Dec,
         Builtin::HexEnc,
         Builtin::CtEq,
+        Builtin::Sha256Hex,
+        Builtin::Sha256d,
         // getx / pstx — HTTP variants that surface response status, headers,
         // and body as a Map[Text, _] wrapped in Ok. Additive — the existing
         // `get` / `pst` body-only signatures stay intact for token-cheap GETs
