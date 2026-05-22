@@ -348,17 +348,29 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             binding,
             start,
             end,
+            step,
             body,
         } => {
             let s = emit_expr(out, level, start);
             let e = emit_expr(out, level, end);
             indent(out, level);
-            out.push_str(&format!(
-                "for {} in range(int({}), int({})):\n",
-                py_name(binding),
-                s,
-                e
-            ));
+            if let Some(step_expr) = step {
+                let st = emit_expr(out, level, step_expr);
+                out.push_str(&format!(
+                    "for {} in range(int({}), int({}), int({})):\n",
+                    py_name(binding),
+                    s,
+                    e,
+                    st
+                ));
+            } else {
+                out.push_str(&format!(
+                    "for {} in range(int({}), int({})):\n",
+                    py_name(binding),
+                    s,
+                    e
+                ));
+            }
             emit_body(out, body, level + 1, false);
         }
         Stmt::While { condition, body } => {
@@ -2217,6 +2229,7 @@ mod tests {
         prog.declarations.push(Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         });
         let py = emit(&prog);

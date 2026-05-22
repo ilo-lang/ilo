@@ -1,0 +1,1 @@
+bench n:n>n;xs=[];i=0;wh <i n{xs=+=xs i;i=+i 1};fld (a:n b:n>n;+a b) (flt (x:n>b;>x 0) (map (x:n>n;*x x) xs)) 0

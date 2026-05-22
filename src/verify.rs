@@ -570,6 +570,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rdinl", &[], "R (L t) t"),
     ("wr", &["t", "t"], "R t t"),
     ("wra", &["t", "t"], "R t t"),
+    ("wro", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
     ("upr", &["t"], "t"),
@@ -738,6 +739,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
+    // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
+    // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or
+    // non-hex input.
+    ("sha256-hex", &["t"], "t"),
+    ("sha256d", &["t"], "t"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.
@@ -2281,7 +2287,7 @@ fn builtin_check_args(
                 errors,
             )
         }
-        "wr" | "wra" | "wrl" => {
+        "wr" | "wra" | "wro" | "wrl" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -2322,6 +2328,19 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'wra' arg 2 expects t (content), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wro"
+                && let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wro' arg 2 expects t (content), got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -4636,6 +4655,7 @@ impl VerifyContext {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 let start_ty = self.infer_expr(func, scope, start, span);
@@ -4657,6 +4677,30 @@ impl VerifyContext {
                         None,
                         Some(span),
                     );
+                }
+                if let Some(step_expr) = step {
+                    let step_ty = self.infer_expr(func, scope, step_expr, span);
+                    if !compatible(&step_ty, &Ty::Number) {
+                        self.err(
+                            "ILO-T014",
+                            func,
+                            format!("range step must be n, got {step_ty}"),
+                            None,
+                            Some(span),
+                        );
+                    }
+                    // Reject literal zero or negative steps
+                    if let Expr::Literal(Literal::Number(n)) = step_expr {
+                        if *n <= 0.0 {
+                            self.err(
+                                "ILO-V001",
+                                func,
+                                format!("range step must be positive, got {n} — use a positive integer step (e.g. `by 2`)"),
+                                None,
+                                Some(span),
+                            );
+                        }
+                    }
                 }
                 scope.push(HashMap::new());
                 scope_insert(scope, binding.clone(), Ty::Number);
@@ -9418,6 +9462,7 @@ mod tests {
         program.declarations.push(Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         });
         let result = verify(&program);

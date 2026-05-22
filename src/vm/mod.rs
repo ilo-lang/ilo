@@ -734,6 +734,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // wra path s - append text to file. Same bridge contract as wr 2-arg:
         // no FnRef args, returns R t t, round-trips cleanly through NanVal.
         (Builtin::Wra, 2) => true,
+        // wro path s - truncate-write text to file. Same bridge contract as wra:
+        // no FnRef args, returns R t t, round-trips cleanly through NanVal.
+        (Builtin::Wro, 2) => true,
         // dtparse-rel s now -> R n t. Pure (no FnRef, no I/O), returns Result.
         // Tree-bridge gives VM + Cranelift cross-engine parity for free.
         (Builtin::DtparseRel, 2) => true,
@@ -813,6 +816,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::B64Dec, 1) => true,
         (Builtin::HexEnc, 1) => true,
         (Builtin::CtEq, 2) => true,
+        // Raw-bytes crypto (ILO-383). Pure text-in / text-out, no FnRef args,
+        // no I/O, no Result wrapper (errors propagate as ILO-R009 runtime errors
+        // through the standard tree-bridge error path). VM and Cranelift
+        // inherit cross-engine parity at zero opcode cost.
+        (Builtin::Sha256Hex, 1) => true,
+        (Builtin::Sha256d, 1) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
@@ -870,6 +879,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Rdin
             | Builtin::Rdinl
             | Builtin::Wra
+            | Builtin::Wro
             | Builtin::DtparseRel
             | Builtin::DurParse
             | Builtin::GetTo
@@ -2781,11 +2791,22 @@ impl RegCompiler {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 // Evaluate start and end once
                 let start_reg = self.compile_expr(start);
                 let end_reg = self.compile_expr(end);
+
+                // Evaluate step (or use constant 1)
+                let step_reg = if let Some(step_expr) = step {
+                    self.compile_expr(step_expr)
+                } else {
+                    let one_ki = self.current.add_const(Value::Number(1.0));
+                    let r = self.alloc_reg();
+                    self.emit_abx(OP_LOADK, r, one_ki);
+                    r
+                };
 
                 let last_reg = self.alloc_reg();
                 let nil_ki = self.current.add_const(Value::Nil);
@@ -2796,8 +2817,6 @@ impl RegCompiler {
                 let counter_reg = self.alloc_reg();
                 self.emit_abc(OP_MOVE, counter_reg, start_reg, 0);
                 self.add_local(binding, counter_reg);
-
-                let one_ki = self.current.add_const(Value::Number(1.0));
 
                 // Loop top: check counter < end
                 let loop_top = self.current.code.len();
@@ -2835,14 +2854,8 @@ impl RegCompiler {
                     }
                 }
 
-                // counter += 1 (use ADDK_N when counter is known numeric)
-                if self.reg_is_num[counter_reg as usize] && one_ki <= 255 {
-                    self.emit_abc(OP_ADDK_N, counter_reg, counter_reg, one_ki as u8);
-                } else {
-                    let one_reg = self.alloc_reg();
-                    self.emit_abx(OP_LOADK, one_reg, one_ki);
-                    self.emit_abc(OP_ADD, counter_reg, counter_reg, one_reg);
-                }
+                // counter += step
+                self.emit_abc(OP_ADD, counter_reg, counter_reg, step_reg);
 
                 // Jump back to loop top
                 self.emit_jump_to(loop_top);
@@ -11164,6 +11177,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_env(&key_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::env::var(&key_str) {
                         Ok(val) => NanVal::heap_ok(NanVal::heap_string(val)),
                         Err(_) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -17117,6 +17134,11 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Rsum
             | Builtin::Ravg
             | Builtin::Rmin
+            // Raw-bytes crypto (ILO-383). sha256-hex / sha256d raise ILO-R009
+            // on odd-length or non-hex input. Surface on Cranelift in lockstep
+            // rather than degenerating silently to nil.
+            | Builtin::Sha256Hex
+            | Builtin::Sha256d
     )
 }
 
@@ -19886,6 +19908,16 @@ pub extern "C" fn ilo_aot_arena_reset() {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_publish_program(ptr: u64, len: u64) -> u64 {
+    // SAFETY: The Cranelift AOT codegen emits the blob into a `.rodata` data
+    // section via `create_data_section`; the linker maps that section
+    // read-only for the entire process lifetime.  The call site (the
+    // cranelift-emitted `main` shim) passes the section's base address and
+    // byte length as literal constants baked into the binary — neither can
+    // be attacker-controlled without first compromising the binary on disk.
+    // Potential violation: if `ptr`/`len` were passed from an untrusted
+    // source (e.g. a future IPC or plugin mechanism) the guarantee would
+    // break; at that point this function must validate the pointer against a
+    // known-good range before constructing the slice.
     let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
     let program = match aot_blob::deserialize_program(bytes) {
         Ok(p) => p,
@@ -19933,6 +19965,14 @@ pub extern "C" fn jit_get_registry_ptr() -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is a compile-time `.rodata` address of a null-terminated
+    // C string emitted by the Cranelift AOT codegen (`data_section_counter`
+    // path in `compile_cranelift.rs`).  The codegen always appends a NUL
+    // byte and the data section lives for the process lifetime, so
+    // `CStr::from_ptr` will find the terminator within the mapped region.
+    // Potential violation: if a future codegen change forgets to NUL-
+    // terminate, or if `ptr` is zero/garbage, this is UB.  The
+    // `data_section_counter` path must maintain the NUL invariant.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("").to_string();
     NanVal::heap_string(s).0
@@ -19942,6 +19982,11 @@ pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is `argv[i]` forwarded by the cranelift-emitted `main`
+    // shim as a u64-cast C string pointer.  The OS guarantees each `argv`
+    // entry is a valid NUL-terminated string for the duration of `main`.
+    // Potential violation: if the AOT shim ever passes an arbitrary u64 that
+    // is not an `argv` pointer (e.g. a computed value), this becomes UB.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("");
     match s {

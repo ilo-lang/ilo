@@ -37,6 +37,22 @@ fn effective_max_ast_depth() -> usize {
     if v == 0 { DEFAULT_MAX_AST_DEPTH } else { v }
 }
 
+/// Transient parsing-mode flags that must be saved and restored whenever the
+/// parser descends into a syntactically isolated sub-expression (list elements,
+/// parenthesised groups, inline-lambda bodies, paren-form call argument lists).
+///
+/// All fields default to `false` / their "outermost scope" value.  Use
+/// `Parser::push_ctx` to snapshot the current context, mutate it for a
+/// sub-parse, and `Parser::pop_ctx` (or the return value of `push_ctx`) to
+/// restore the previous state.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ParseContext {
+    /// When true, an Ident followed by another whitespace-separated atom is
+    /// parsed as a bare Ref (list element) rather than a function call.
+    /// Set only inside list-literal element parsing.
+    pub no_whitespace_call: bool,
+}
+
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
@@ -65,10 +81,12 @@ pub struct Parser {
     /// For each known function, which parameter positions take a function
     /// reference (HOF positions).
     fn_param_is_fn: HashMap<String, Vec<bool>>,
-    /// When true, an Ident followed by another whitespace-separated atom is
-    /// parsed as a bare Ref (list element) rather than a function call.
-    /// Set only inside list-literal element parsing.
-    no_whitespace_call: bool,
+    /// For each known function, the ordered parameter names. Used to resolve
+    /// labelled args (`label:value`) to their positional index at parse time.
+    fn_param_names: HashMap<String, Vec<String>>,
+    /// Transient parsing-mode flags. Saved/restored via `push_ctx`/`pop_ctx`
+    /// whenever the parser enters a syntactically isolated sub-expression.
+    ctx: ParseContext,
     /// Synthetic top-level decls emitted by inline-lambda lifting. Appended to
     /// `Program.declarations` after the main parse. Each inline lambda
     /// `(p:t>r;body)` becomes a `Decl::Function { name: "__lit_N", ... }` here
@@ -134,6 +152,7 @@ impl Parser {
         decl_boundary.push(pending.take());
         debug_assert_eq!(decl_boundary.len(), filtered.len() + 1);
         let (fn_arity, fn_param_is_fn) = builtin_arity_tables();
+        let fn_param_names = builtin_param_names_table();
         Parser {
             tokens: filtered,
             pos: 0,
@@ -142,7 +161,8 @@ impl Parser {
             decl_boundary,
             fn_arity,
             fn_param_is_fn,
-            no_whitespace_call: false,
+            fn_param_names,
+            ctx: ParseContext::default(),
             lifted_decls: Vec::new(),
             lambda_counter: 0,
             parse_failed_fns: HashMap::new(),
@@ -178,6 +198,28 @@ impl Parser {
         if self.depth > 0 {
             self.depth -= 1;
         }
+    }
+
+    /// Snapshot the current [`ParseContext`], apply `f` to mutate it for a
+    /// sub-parse scope, and return the saved snapshot.  Restore it afterwards
+    /// with [`pop_ctx`][Self::pop_ctx].
+    ///
+    /// ```ignore
+    /// let saved = self.push_ctx(|c| c.no_whitespace_call = true);
+    /// let result = self.parse_something();
+    /// self.pop_ctx(saved);
+    /// ```
+    #[inline]
+    fn push_ctx(&mut self, f: impl FnOnce(&mut ParseContext)) -> ParseContext {
+        let saved = self.ctx;
+        f(&mut self.ctx);
+        saved
+    }
+
+    /// Restore a [`ParseContext`] previously saved by [`push_ctx`][Self::push_ctx].
+    #[inline]
+    fn pop_ctx(&mut self, saved: ParseContext) {
+        self.ctx = saved;
     }
 
     /// Returns `Some(span)` if an unindented newline (top-level declaration
@@ -336,6 +378,32 @@ impl Parser {
             }
             None => Err(self.error("ILO-P006", "expected identifier, got EOF".into())),
         }
+    }
+
+    /// Like `expect_ident` but also accepts `_ ident` (underscore immediately
+    /// followed by an identifier) as a single `"_name"` declaration name.
+    /// Used for function/type/tool names to support the module-private `_foo`
+    /// naming convention. Regular identifiers are accepted unchanged.
+    fn expect_decl_name(&mut self) -> Result<String> {
+        if self.peek() == Some(&Token::Underscore) {
+            // Peek ahead: `_` immediately adjacent to an Ident = module-private name.
+            if let Some(Token::Ident(name)) = self.token_at(self.pos + 1).cloned() {
+                let us_end = self.tokens[self.pos].1.end;
+                let id_start = self.tokens[self.pos + 1].1.start;
+                if us_end == id_start {
+                    self.advance(); // consume `_`
+                    self.advance(); // consume ident
+                    return Ok(format!("_{}", name));
+                }
+            }
+            return Err(self.error(
+                "ILO-P016",
+                "expected identifier after `_` in declaration name; \
+                 `_name` (no space) marks a module-private declaration"
+                    .into(),
+            ));
+        }
+        self.expect_ident()
     }
 
     fn error(&self, code: &'static str, message: String) -> ParseError {
@@ -664,6 +732,14 @@ impl Parser {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
             Some(Token::Use) => self.parse_use_decl(),
+            // `_ident` (adjacent, no whitespace) — module-private declaration name
+            Some(Token::Underscore)
+                if matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+                    && self.pos + 1 < self.tokens.len()
+                    && self.tokens[self.pos].1.end == self.tokens[self.pos + 1].1.start =>
+            {
+                self.parse_fn_decl()
+            }
             Some(Token::Ident(_)) => {
                 // Check for keywords from other languages before attempting fn parse
                 let ident_str = match self.peek() {
@@ -691,6 +767,40 @@ impl Parser {
                     );
                     err.hint = Some(hint_msg);
                     return Err(err);
+                }
+                // Detect an orphaned identifier at a statement boundary — the
+                // identifier is followed immediately by `;`, `}`, or EOF with no
+                // `>` or params, so it cannot possibly be a function declaration.
+                // This pattern occurs when a prefix-binop chain is mis-grouped:
+                // e.g. `*/dt 1 6 ref` parses as `*(/ dt 1) 6`, leaving `ref`
+                // orphaned at top-level where the parser tries and fails to read
+                // it as a new function.  The resulting ILO-P003 "expected '>', got
+                // ';'" anchors on the `;` which is far from the real problem.
+                // Surface a pointed hint here instead, anchored on the orphaned
+                // identifier itself (the closest correct position we have without
+                // threading the prefix-op span through the whole parse path).
+                // Only fire when there is at least one previously-consumed token
+                // (`self.pos > 0`).  A lone identifier at position 0 followed by
+                // EOF is a genuinely incomplete function declaration (no header at
+                // all) and must fall through to `parse_fn_decl` which emits the
+                // more informative ILO-P020 "incomplete function header".
+                if self.pos > 0
+                    && matches!(
+                        self.token_at(self.pos + 1),
+                        None | Some(Token::Semi) | Some(Token::Newline) | Some(Token::RBrace)
+                    )
+                {
+                    return Err(self.error_hint(
+                        "ILO-P003",
+                        format!(
+                            "`{ident_str}` appears at a statement boundary without a \
+function header — it looks like a prefix-binop chain consumed one too few operands"
+                        ),
+                        "this looks like a prefix-binop chain whose right operand is at \
+statement boundary; bind the chain to a local first. For example, split \
+`*/a b c d` into `t=/a b c;*t d`."
+                            .to_string(),
+                    ));
                 }
                 self.parse_fn_decl()
             }
@@ -737,10 +847,60 @@ impl Parser {
     fn parse_use_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Use)?;
-        let path = match self.peek().cloned() {
+
+        // Detect named-module form: `use alias:"path"` — ident immediately
+        // followed by `:` then a string literal.
+        // Distinguished from the plain form `use "path"` by the leading ident.
+        let (alias, path) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
+                // Plain form: `use "path"`
                 self.advance();
-                p
+                (None, p)
+            }
+            Some(Token::Ident(a)) => {
+                // Peek ahead: must be followed by Colon then Text.
+                self.advance(); // consume ident
+                match self.peek().cloned() {
+                    Some(Token::Colon) => {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Text(p)) => {
+                                self.advance();
+                                (Some(a), p)
+                            }
+                            Some(tok) => {
+                                return Err(self.error(
+                                    "ILO-P016",
+                                    format!(
+                                        "expected a string path after `use alias:`, got {}",
+                                        tok.user_facing_name()
+                                    ),
+                                ));
+                            }
+                            None => {
+                                return Err(self.error(
+                                    "ILO-P016",
+                                    "expected a string path after `use alias:`, got EOF".into(),
+                                ));
+                            }
+                        }
+                    }
+                    Some(tok) => {
+                        return Err(self.error(
+                            "ILO-P016",
+                            format!(
+                                "expected `:` after module alias in `use`, got {}",
+                                tok.user_facing_name()
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Err(self.error(
+                            "ILO-P016",
+                            "expected `:` after module alias in `use`, got EOF".into(),
+                        ));
+                    }
+                }
             }
             Some(tok) => {
                 return Err(self.error(
@@ -759,8 +919,16 @@ impl Parser {
             }
         };
 
-        // Optional `[name1 name2 ...]` scoped import list
+        // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
         let only = if self.peek() == Some(&Token::LBracket) {
+            if alias.is_some() {
+                return Err(self.error(
+                    "ILO-P016",
+                    "named-module import (`use alias:\"path\"`) cannot be combined with `[...]` \
+                     selective import — omit the alias or the bracket list"
+                        .into(),
+                ));
+            }
             self.advance(); // consume `[`
             let mut names = Vec::new();
             while self.peek() != Some(&Token::RBracket) {
@@ -787,6 +955,7 @@ impl Parser {
         Ok(Decl::Use {
             path,
             only,
+            alias,
             span: start.merge(end),
         })
     }
@@ -795,7 +964,7 @@ impl Parser {
     fn parse_type_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Type)?;
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -874,7 +1043,7 @@ impl Parser {
         let start = self.peek_span();
         // consume the `alias` identifier
         self.advance();
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         let target = self.parse_type()?;
         let end = self.prev_span();
         Ok(Decl::Alias {
@@ -887,7 +1056,7 @@ impl Parser {
     /// `name params>return;body`
     fn parse_fn_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         // Reject user functions whose name collides with a builtin. Without this
         // the verifier's call-dispatch (which checks `is_builtin` before user
         // `self.functions`) would silently shadow the user function and report
@@ -1112,17 +1281,58 @@ impl Parser {
     /// `spl(a, (b+1))` and nested paren-calls like `f(g(x), h(y))` work naturally.
     ///
     /// Returns a `Vec<Expr>` of the parsed arguments.
-    fn parse_paren_call_args(&mut self) -> Result<Vec<Expr>> {
+    /// Parse the argument list of a paren-form call with optional labelled-arg support.
+    /// When `fn_name` is `Some`, recognises `label:expr` form and resolves to positional.
+    fn parse_paren_call_args_for(&mut self, fn_name: Option<&str>) -> Result<Vec<Expr>> {
         self.expect(&Token::LParen)?;
         // Restore normal whitespace-call mode inside the parens so that
         // postfix calls inside args (`spl(row, ",")`) still parse correctly.
-        let prev_no_ws = self.no_whitespace_call;
-        self.no_whitespace_call = false;
-        let mut args = Vec::new();
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
+        let mut args: Vec<Expr> = Vec::new();
+        let mut has_labelled = false;
+        let mut labelled_pairs: Vec<(String, Expr)> = Vec::new();
         loop {
             // Allow trailing comma: `f(a, b,)` — skip the `)` check.
             if self.peek() == Some(&Token::RParen) {
                 break;
+            }
+            // Detect labelled arg: `ident:expr` when inside a known fn call
+            if let Some(fname) = fn_name
+                && let Some(label) = self.peek_labelled_arg_label()
+            {
+                let _ = fname; // used to gate labelled arg parsing
+                let label = label.to_string();
+                has_labelled = true;
+                self.advance(); // consume label ident
+                self.advance(); // consume `:`
+                let value = self.parse_expr_inner()?;
+                labelled_pairs.push((label, value));
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.advance();
+                    }
+                    Some(Token::RParen) => break,
+                    _ => {
+                        return Err(self.error_hint(
+                            "ILO-P009",
+                            "expected `,` or `)` in paren-form call argument list".into(),
+                            "paren-form calls use comma-separated args: `f(a, b, c)`. \
+                             For the postfix form write `f a b c` instead."
+                                .into(),
+                        ));
+                    }
+                }
+                continue;
+            }
+            if has_labelled {
+                // Once we've seen a labelled arg, remaining positional args are ambiguous.
+                // Emit an error.
+                let fname = fn_name.unwrap_or("?");
+                return Err(self.error_hint(
+                    "ILO-P019",
+                    format!("positional arg after labelled arg in call to `{fname}`"),
+                    "once you use labelled args, all remaining args must also be labelled".into(),
+                ));
             }
             // Parse one full expression as an argument.
             let arg = self.parse_expr_inner()?;
@@ -1143,8 +1353,89 @@ impl Parser {
                 }
             }
         }
-        self.no_whitespace_call = prev_no_ws;
+        self.pop_ctx(saved_ctx);
         self.expect(&Token::RParen)?;
+
+        // If we collected labelled args, resolve them using fn_name
+        if has_labelled {
+            let fname = fn_name.unwrap_or("?");
+            let span = self.peek_span();
+            // Merge labelled_pairs into args via resolve
+            let param_names = self.fn_param_names.get(fname).cloned();
+            let Some(pnames) = param_names else {
+                return Err(ParseError {
+                    code: "ILO-P019",
+                    position: self.pos,
+                    span,
+                    message: format!(
+                        "labelled args used on `{fname}` but its parameter names are unknown"
+                    ),
+                    hint: Some(
+                        "labelled args require a function with declared parameters".to_string(),
+                    ),
+                });
+            };
+            let n = pnames.len();
+            let mut result: Vec<Option<Expr>> = (0..n).map(|_| None).collect();
+            let positional_count = args.len();
+            for (i, arg) in args.into_iter().enumerate() {
+                if i >= n {
+                    return Err(ParseError {
+                        code: "ILO-P019",
+                        position: self.pos,
+                        span,
+                        message: format!(
+                            "`{fname}` has {n} parameters but received too many positional args"
+                        ),
+                        hint: None,
+                    });
+                }
+                result[i] = Some(arg);
+            }
+            for (label, value) in labelled_pairs {
+                let idx = pnames.iter().position(|p| p == &label);
+                let Some(idx) = idx else {
+                    let known = pnames.join(", ");
+                    return Err(ParseError {
+                        code: "ILO-P019",
+                        position: self.pos,
+                        span,
+                        message: format!(
+                            "unknown label `{label}` for `{fname}`; known parameters: {known}"
+                        ),
+                        hint: Some(format!("Use one of the declared parameter names: {known}")),
+                    });
+                };
+                if result[idx].is_some() {
+                    if idx < positional_count {
+                        return Err(ParseError {
+                            code: "ILO-P019",
+                            position: self.pos,
+                            span,
+                            message: format!(
+                                "label `{label}` conflicts with positional argument at slot {idx} of `{fname}`"
+                            ),
+                            hint: None,
+                        });
+                    }
+                    return Err(ParseError {
+                        code: "ILO-P019",
+                        position: self.pos,
+                        span,
+                        message: format!("duplicate argument for parameter `{label}` of `{fname}`"),
+                        hint: None,
+                    });
+                }
+                result[idx] = Some(value);
+            }
+            let final_args: Vec<Expr> = result
+                .into_iter()
+                .take_while(|s| s.is_some())
+                .flatten()
+                .collect();
+            return Ok(final_args);
+        }
+
         Ok(args)
     }
 
@@ -2262,11 +2553,19 @@ impl Parser {
         if self.peek() == Some(&Token::DotDot) {
             self.advance(); // consume ..
             let end_expr = self.parse_expr_inner()?;
+            // Optional `by <step>` clause: `@i 0..n by 2{...}`
+            let step_expr = if self.peek() == Some(&Token::By) {
+                self.advance(); // consume `by`
+                Some(self.parse_expr_inner()?)
+            } else {
+                None
+            };
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
                 start: start_expr,
                 end: end_expr,
+                step: step_expr,
                 body,
             });
         }
@@ -2578,10 +2877,9 @@ impl Parser {
     /// inside whitespace-list elements still work via parens (`[(f x) y]`
     /// or `[f(x) y]`) — the flag is cleared on paren entry.
     fn parse_list_element(&mut self) -> Result<Expr> {
-        let prev = self.no_whitespace_call;
-        self.no_whitespace_call = true;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = true);
         let result = self.parse_list_element_call_ok();
-        self.no_whitespace_call = prev;
+        self.pop_ctx(saved_ctx);
         result
     }
 
@@ -3085,6 +3383,8 @@ impl Parser {
             .map(|p| matches!(p.ty, Type::Fn(_, _)))
             .collect();
         self.fn_param_is_fn.insert(name.to_string(), flags);
+        let pnames: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+        self.fn_param_names.insert(name.to_string(), pnames);
     }
 
     /// Is arg position `arg_idx` of function `outer_name` a fn-ref position
@@ -3309,7 +3609,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `f` called with an inline-lambda arg, not a paren-call. The
                 // lambda check below peeks inside without consuming tokens.
                 if !self.looks_like_inline_lambda() {
-                    let args = self.parse_paren_call_args()?;
+                    let args = self.parse_paren_call_args_for(Some(&name))?;
                     let call = Expr::Call {
                         function: name,
                         args,
@@ -3354,7 +3654,20 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             }
 
             // Check for record construction: name field:value
+            // But first, if `name` is a known function and `ident:` follows,
+            // treat as a labelled-arg call rather than record construction.
             if self.is_named_field_ahead() {
+                if self.fn_param_names.contains_key(&name) {
+                    // Labelled call: `dtfmt epoch:e fmt:f` — resolve to positional.
+                    let call_span = self.peek_span();
+                    let args = self.resolve_labelled_args(&name, vec![], call_span)?;
+                    let call = Expr::Call {
+                        function: name,
+                        args,
+                        unwrap: UnwrapMode::None,
+                    };
+                    return self.parse_field_chain(call, None);
+                }
                 return self.parse_record(name);
             }
 
@@ -3409,7 +3722,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             // would parse as `at(xs, 0, at, xs, 2)` (5 args) instead of two
             // calls. Mirroring `parse_call_arg`'s `for i in 0..arity` keeps
             // each list element to a single capped call.
-            if self.no_whitespace_call {
+            if self.ctx.no_whitespace_call {
                 let arity = self.fn_arity.get(&name).copied().unwrap_or(0);
                 if arity == 0 || !self.can_start_operand() {
                     // Diagnostic-only fix for list-literal call traps: variadic
@@ -3474,6 +3787,15 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 let mut args = Vec::new();
                 let outer_arity_known = self.fn_arity.get(&name).copied();
                 while self.can_start_operand() {
+                    // If we encounter a labelled arg mid-call (e.g. `f a b:2`),
+                    // stop the positional loop and resolve the rest as labelled.
+                    if self.peek_labelled_arg_label().is_some()
+                        && self.fn_param_names.contains_key(&name)
+                    {
+                        let call_span = self.peek_span();
+                        args = self.resolve_labelled_args(&name, args, call_span)?;
+                        break;
+                    }
                     let arg_idx = args.len();
                     let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
                     let outer_ctx = outer_arity_known
@@ -3521,6 +3843,156 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             return true;
         }
         false
+    }
+
+    /// Check whether the next token(s) are a labelled arg: `ident:value`.
+    /// Returns the label name if so.
+    ///
+    /// Disambiguates from parameter type annotations (`name:type>`): the only
+    /// reliable indicator of a type context is `>` appearing after the type
+    /// ident (return-type separator), or `:` appearing after the type ident
+    /// (next param in list). A bare value (`ident:ident;` or `ident:literal`)
+    /// is always a labelled arg.
+    fn peek_labelled_arg_label(&self) -> Option<&str> {
+        if let Some(Token::Ident(label)) = self.peek()
+            && self.token_at(self.pos + 1) == Some(&Token::Colon)
+        {
+            // The token immediately after `:` determines context.
+            let after_colon = self.token_at(self.pos + 2);
+            let is_type_context = match after_colon {
+                Some(Token::Ident(_)) => {
+                    // `label:ident>` — return-type separator after ident means param decl.
+                    // `label:ident:` — another colon after ident means next param in list.
+                    // Anything else (`label:ident value`, `label:ident;`, `label:ident)`) is
+                    // a labelled arg where the value happens to be an identifier.
+                    matches!(
+                        self.token_at(self.pos + 3),
+                        Some(Token::Greater) | Some(Token::Colon)
+                    )
+                }
+                // Non-ident after `:` (literal, number, `[`, `(`, etc.) is always a value.
+                _ => false,
+            };
+            if !is_type_context {
+                return Some(label.as_str());
+            }
+        }
+        None
+    }
+
+    /// Parse labelled args for a call, reordering to positional order.
+    /// `func_name` is used to look up parameter names.
+    /// Returns `Ok(args)` with args in positional order, or an error.
+    /// `existing_positional` holds any positional args already parsed before
+    /// the first labelled arg was encountered.
+    fn resolve_labelled_args(
+        &mut self,
+        func_name: &str,
+        mut args: Vec<Expr>,
+        span: Span,
+    ) -> Result<Vec<Expr>> {
+        let param_names = self.fn_param_names.get(func_name).cloned();
+        let arity = self.fn_arity.get(func_name).copied();
+
+        // Collect all labelled args that follow
+        let mut labelled: Vec<(String, Expr)> = Vec::new();
+        while let Some(label) = self.peek_labelled_arg_label() {
+            let label = label.to_string();
+            self.advance(); // consume label ident
+            self.advance(); // consume `:`
+            let value = self.parse_operand()?;
+            labelled.push((label, value));
+        }
+
+        if labelled.is_empty() {
+            return Ok(args);
+        }
+
+        // Need param names to resolve
+        let Some(pnames) = param_names else {
+            return Err(ParseError {
+                code: "ILO-P019",
+                position: self.pos,
+                span,
+                message: format!(
+                    "labelled args used on `{func_name}` but its parameter names are unknown"
+                ),
+                hint: Some("labelled args require a function with declared parameters".to_string()),
+            });
+        };
+
+        let n = arity.unwrap_or(pnames.len());
+
+        // Check: number of positional + labelled must equal arity (or <= for underfilled)
+        let positional_count = args.len();
+
+        // Build result: start with positional args filling slots 0..positional_count
+        // then labelled args fill remaining slots by name
+        let mut result: Vec<Option<Expr>> = (0..n).map(|_| None).collect();
+
+        // Fill positional args first
+        for (i, arg) in args.drain(..).enumerate() {
+            if i >= n {
+                return Err(ParseError {
+                    code: "ILO-P019",
+                    position: self.pos,
+                    span,
+                    message: format!(
+                        "`{func_name}` has {n} parameters but got more positional args before labels"
+                    ),
+                    hint: None,
+                });
+            }
+            result[i] = Some(arg);
+        }
+
+        // Fill labelled args by matching against param names
+        for (label, value) in labelled {
+            let pos_idx = pnames.iter().position(|p| p == &label);
+            let Some(idx) = pos_idx else {
+                let known = pnames.join(", ");
+                return Err(ParseError {
+                    code: "ILO-P019",
+                    position: self.pos,
+                    span,
+                    message: format!(
+                        "unknown label `{label}` for `{func_name}`; known parameters: {known}"
+                    ),
+                    hint: Some(format!("Use one of the declared parameter names: {known}")),
+                });
+            };
+            if result[idx].is_some() {
+                return Err(ParseError {
+                    code: "ILO-P019",
+                    position: self.pos,
+                    span,
+                    message: format!("duplicate argument for parameter `{label}` of `{func_name}`"),
+                    hint: None,
+                });
+            }
+            // Check a positional arg doesn't already claim this slot
+            if idx < positional_count {
+                return Err(ParseError {
+                    code: "ILO-P019",
+                    position: self.pos,
+                    span,
+                    message: format!(
+                        "label `{label}` conflicts with positional argument at slot {idx} of `{func_name}`"
+                    ),
+                    hint: None,
+                });
+            }
+            result[idx] = Some(value);
+        }
+
+        // Collect only the filled slots (allow underfilled for verifier to catch)
+        let final_args: Vec<Expr> = result
+            .into_iter()
+            .take_while(|slot| slot.is_some())
+            .flatten()
+            .collect();
+
+        Ok(final_args)
     }
 
     /// Parse record: `typename field:val field:val`
@@ -4059,6 +4531,20 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 Ok(Expr::Literal(Literal::Nil))
             }
             Some(Token::Underscore) => {
+                // `_ident` (no whitespace between `_` and the following ident) →
+                // reference to a module-private declaration. Only fuse when the
+                // underscore is immediately adjacent to the next token (sharing a
+                // boundary), matching how declaration names are parsed.
+                // Otherwise, bare `_` remains the unit/nil-discard reference.
+                if let Some(Token::Ident(name)) = self.token_at(self.pos + 1).cloned() {
+                    let us_end = self.tokens[self.pos].1.end;
+                    let id_start = self.tokens[self.pos + 1].1.start;
+                    if us_end == id_start {
+                        self.advance(); // consume `_`
+                        self.advance(); // consume ident
+                        return Ok(Expr::Ref(format!("_{}", name)));
+                    }
+                }
                 self.advance();
                 Ok(Expr::Ref("_".to_string()))
             }
@@ -4075,10 +4561,9 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.advance();
                 // Parenthesised expressions are self-contained — restore
                 // normal whitespace-call behaviour inside.
-                let prev = self.no_whitespace_call;
-                self.no_whitespace_call = false;
+                let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
                 let expr = self.parse_expr();
-                self.no_whitespace_call = prev;
+                self.pop_ctx(saved_ctx);
                 let expr = expr?;
                 self.expect(&Token::RParen)?;
                 // Field access chain on a parenthesised expression:
@@ -4200,7 +4685,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     && self.is_adjacent_lparen()
                     && !self.looks_like_inline_lambda()
                 {
-                    let args = self.parse_paren_call_args()?;
+                    let args = self.parse_paren_call_args_for(Some(&name))?;
                     let call = Expr::Call {
                         function: name,
                         args,
@@ -4368,8 +4853,7 @@ For variable-position list indexing bind the head first: \
         let start = self.peek_span();
         self.expect(&Token::LParen)?;
         // Parens are self-contained; reset whitespace-call mode inside.
-        let prev_no_ws = self.no_whitespace_call;
-        self.no_whitespace_call = false;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
         let params = self.parse_params()?;
         self.expect(&Token::Greater)?;
         let return_type = self.parse_type()?;
@@ -4382,7 +4866,7 @@ For variable-position list indexing bind the head first: \
         // `)` as part of normal at-body-end logic — instead, parse a
         // semicolon-separated sequence that terminates on RParen.
         let body = self.parse_lambda_body()?;
-        self.no_whitespace_call = prev_no_ws;
+        self.pop_ctx(saved_ctx);
         let end = self.peek_span();
         // If the body completed but the next token is an Ident, the body
         // greedily consumed a prefix-call (`+a kc`) and the remaining
@@ -4544,10 +5028,14 @@ For variable-position list indexing bind the head first: \
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 self.collect_free_in_expr(start, params, local, free);
                 self.collect_free_in_expr(end, params, local, free);
+                if let Some(st) = step {
+                    self.collect_free_in_expr(st, params, local, free);
+                }
                 let depth = local.len();
                 local.push(binding.clone());
                 for s in body {
@@ -4886,6 +5374,123 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         }
     }
     (arity, fn_flags)
+}
+
+/// Build the parser's static parameter-names table for builtins.
+/// Used to resolve labelled args (`label:value`) to positional at parse time.
+/// Only builtins with arity ≥ 2 need entries (arity-1 calls rarely need labels;
+/// arity-0 calls never do). Entries with arity ≥ 4 are the primary target per ILO-71.
+fn builtin_param_names_table() -> HashMap<String, Vec<String>> {
+    // (name, param_names_in_order)
+    let entries: &[(&str, &[&str])] = &[
+        // Math (binary)
+        ("min", &["a", "b"]),
+        ("max", &["a", "b"]),
+        ("mod", &["a", "b"]),
+        ("pow", &["base", "exp"]),
+        ("fmod", &["a", "b"]),
+        ("atan2", &["y", "x"]),
+        ("rndn", &["mean", "sd"]),
+        // Math (ternary)
+        ("clamp", &["value", "lo", "hi"]),
+        // Collections (binary)
+        ("at", &["coll", "idx"]),
+        ("has", &["coll", "item"]),
+        ("spl", &["text", "sep"]),
+        ("cat", &["a", "b"]),
+        ("take", &["n", "coll"]),
+        ("drop", &["n", "coll"]),
+        ("zip", &["a", "b"]),
+        ("srt", &["fn", "list"]),
+        ("rsrt", &["fn", "list"]),
+        ("padl", &["s", "width"]),
+        ("padr", &["s", "width"]),
+        // Collections (ternary)
+        ("slc", &["coll", "start", "end"]),
+        ("lst", &["list", "idx", "val"]),
+        ("ewm", &["list", "alpha"]),
+        ("ins", &["list", "idx", "val"]),
+        ("setunion", &["a", "b"]),
+        ("setinter", &["a", "b"]),
+        ("setdiff", &["a", "b"]),
+        // Higher-order (2-arg)
+        ("map", &["fn", "list"]),
+        ("mapr", &["fn", "list"]),
+        ("flt", &["fn", "list"]),
+        ("ct", &["fn", "list"]),
+        ("grp", &["fn", "list"]),
+        ("uniqby", &["fn", "list"]),
+        ("partition", &["fn", "list"]),
+        ("flatmap", &["fn", "list"]),
+        // Higher-order (3-arg)
+        ("fld", &["fn", "list", "init"]),
+        // Text
+        ("rgx", &["pat", "text"]),
+        ("rgxall", &["pat", "text"]),
+        ("rgxall1", &["pat", "text"]),
+        ("rgxall-multi", &["pat", "text"]),
+        ("rgxrepl", &["pat", "repl", "text"]),
+        ("rgxreplall", &["pat", "repl", "text"]),
+        ("sub", &["old", "new", "text"]),
+        ("suball", &["old", "new", "text"]),
+        ("idx", &["text", "sub"]),
+        ("ridx", &["text", "sub"]),
+        ("strs", &["text", "sep"]),
+        ("lpad", &["s", "width"]),
+        ("rpad", &["s", "width"]),
+        // Date / time
+        ("dtfmt", &["epoch", "fmt"]),
+        ("dtparse", &["text", "fmt"]),
+        ("dtparse-rel", &["text", "base"]),
+        ("tz-offset", &["tz", "epoch"]),
+        // IO
+        ("rd", &["path"]),
+        ("wr", &["path", "content"]),
+        ("rdb", &["path"]),
+        ("wrb", &["path", "content"]),
+        ("rdinl", &[]),
+        ("jpth", &["path", "json"]),
+        ("jkeys", &["path", "json"]),
+        // HTTP
+        ("get", &["url"]),
+        ("pst", &["url", "body"]),
+        ("put", &["url", "body"]),
+        ("pat", &["url", "body"]),
+        ("del", &["url"]),
+        ("hed", &["url"]),
+        ("opt", &["url"]),
+        ("getx", &["url"]),
+        ("pstx", &["url", "body"]),
+        // Map
+        ("mget", &["map", "key"]),
+        ("mset", &["map", "key", "val"]),
+        ("mdel", &["map", "key"]),
+        ("mhas", &["map", "key"]),
+        ("mkeys", &["map"]),
+        ("mvals", &["map"]),
+        ("mlen", &["map"]),
+        ("mmerge", &["a", "b"]),
+        // Env
+        ("env", &["name"]),
+        // Misc
+        ("fmt2", &["value", "decimals"]),
+        ("sleep", &["ms"]),
+        ("seed", &["n"]),
+    ];
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, pnames) in entries {
+        map.insert(
+            name.to_string(),
+            pnames.iter().map(|s| s.to_string()).collect(),
+        );
+    }
+    // Mirror builtin aliases so long-form names also work.
+    for (long, short) in crate::ast::all_builtin_aliases() {
+        if let Some(pnames) = map.get(short).cloned() {
+            map.insert(long.to_string(), pnames);
+        }
+    }
+    map
 }
 
 /// Desugar `{name}` string interpolation into a `fmt` call.
@@ -8130,6 +8735,76 @@ mod tests {
             "got: {:?}",
             errors
         );
+    }
+
+    #[test]
+    fn parse_use_named_module_alias() {
+        let prog = parse_str(r#"use m:"lib.ilo""#);
+        let Decl::Use {
+            path, only, alias, ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "lib.ilo");
+        assert!(only.is_none());
+        assert_eq!(alias.as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn parse_use_named_module_alias_longer() {
+        let prog = parse_str(r#"use math:"math-lib.ilo""#);
+        let Decl::Use { path, alias, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "math-lib.ilo");
+        assert_eq!(alias.as_deref(), Some("math"));
+    }
+
+    #[test]
+    fn parse_use_named_module_rejects_bracket_combo() {
+        let (_, errors) = parse_str_errors(r#"use m:"lib.ilo" [foo]"#);
+        assert!(
+            !errors.is_empty(),
+            "expected error combining alias and bracket"
+        );
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P016"),
+            "expected ILO-P016: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_private_fn_decl() {
+        let prog = parse_str("_helper n:n>n;+n 1");
+        let Decl::Function { name, .. } = &prog.declarations[0] else {
+            panic!("expected Function, got {:?}", prog.declarations)
+        };
+        assert_eq!(name, "_helper");
+    }
+
+    #[test]
+    fn parse_private_fn_decl_hyphenated() {
+        let prog = parse_str("_do-thing n:n>n;+n 0");
+        let Decl::Function { name, .. } = &prog.declarations[0] else {
+            panic!("expected Function")
+        };
+        assert_eq!(name, "_do-thing");
+    }
+
+    #[test]
+    fn parse_private_fn_call_in_body() {
+        // `_helper` as a call in a body should parse as Expr::Call("_helper", ...)
+        let prog = parse_str("main n:n>n;_helper n");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected Function")
+        };
+        let last = body.last().expect("body not empty");
+        if let Stmt::Expr(Expr::Call { function, .. }) = &last.node {
+            assert_eq!(function, "_helper");
+        } else {
+            panic!("expected call to _helper, got {last:?}");
+        }
     }
 
     // --- alias declaration ---
