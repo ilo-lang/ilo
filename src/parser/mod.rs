@@ -4796,11 +4796,11 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.advance();
                 // The reason argument is required.
                 let reason = self.parse_expr_inner()?;
-                if is_todo {
-                    return Ok(Expr::Todo(Box::new(reason)));
+                Ok(if is_todo {
+                    Expr::Todo(Box::new(reason))
                 } else {
-                    return Ok(Expr::Panic(Box::new(reason)));
-                }
+                    Expr::Panic(Box::new(reason))
+                })
             }
             Some(Token::Ident(name)) => {
                 self.advance();
@@ -5136,9 +5136,7 @@ For variable-position list indexing bind the head first: \
                     }
                 }
                 Token::RParen | Token::RBracket => {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
+                    depth = depth.saturating_sub(1);
                 }
                 // A `;` at depth 1 before any `>` means destructure, not lambda.
                 Token::Semi if depth == 1 => return false,
