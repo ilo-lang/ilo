@@ -71,6 +71,10 @@ When an agent generates the next token, how many valid options are there? Fewer 
 **What the agent cares about:** "At each generation step, how many valid tokens are there?"
 **How this helps:** The language becomes a set of rails. Constrained generation can feed valid next-token sets back to the agent, making it *impossible* to generate invalid code.
 
+**On stdlib depth — acknowledged tension, not a contradiction.** "Small vocabulary" and "closed world" are real constraints, but they trade against a competing pressure: *stdlib depth*. Agents working on non-trivial tasks reach for common operations — byte-reversal, pairwise iteration, quantile aggregation, multi-key lookups — and when the builtin doesn't exist they hand-roll a workaround. That workaround costs tokens (typically 40–100 extra) and introduces surface area for errors, exactly what the Constrained principle is meant to prevent. The honest read: a vocabulary that is *too* small forces agents to reinvent primitives, which is its own form of unconstrained generation.
+
+The resolution is a decision criterion rather than a blanket policy. A new builtin is warranted when: **(a)** it appears as a hand-rolled workaround in **≥ 3 independent persona transcripts**, **(b)** each workaround costs **> 40 tokens** to express, and **(c)** there is no composition of existing builtins that reduces the workaround below that threshold. Below that bar, user code is the right home. Above it, adding the builtin reduces total token cost — consistent with the Constrained principle's own logic. Gaps that cross the threshold are tracked in [`persona-runs/ab-shared-issues.md`](persona-runs/ab-shared-issues.md); new proposals should be triaged against these criteria rather than argued on intuition. **The principle remains: the builtin set is closed and small. What changes is the explicit acknowledgement that "small" is a measurement outcome, not a fixed number, and that the measurement is grounded in dogfood data.**
+
 ### 3. Self-Contained
 
 Each unit carries its own context: deps, types, rules.
