@@ -7110,8 +7110,6 @@ mod tests {
     #[test]
     fn resolve_imports_conditional_wasm_true_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
-        #[allow(unused_imports)]
-        use std::io::Write;
         let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
         let native_path = "/tmp/ilo_cond_native_ILO399.ilo";
         std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();

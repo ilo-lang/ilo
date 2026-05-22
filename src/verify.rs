@@ -5832,9 +5832,24 @@ ilo has no tuple type."
                                 let actual = self.infer_expr(func, scope, expr, span);
                                 new_fields[pos] = (fname.clone(), actual);
                             } else {
-                                // New field being added via `with` — allowed for anonymous records
-                                let actual = self.infer_expr(func, scope, expr, span);
-                                new_fields.push((fname.clone(), actual));
+                                // ILO-T044: `with` on an anonymous record must not add new fields.
+                                let def_field_strings: Vec<String> =
+                                    def_fields.iter().map(|(n, _)| n.clone()).collect();
+                                let hint = closest_match(fname, def_field_strings.iter())
+                                    .map(|s| format!("did you mean '{s}'?"))
+                                    .or_else(|| {
+                                        Some(format!(
+                                            "existing fields: {}",
+                                            def_field_strings.join(", ")
+                                        ))
+                                    });
+                                self.err(
+                                    "ILO-T044",
+                                    func,
+                                    format!("'with' cannot add new field '{fname}' to an anonymous record"),
+                                    hint,
+                                    Some(span),
+                                );
                             }
                         }
                         Ty::AnonRecord(new_fields)
