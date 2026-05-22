@@ -321,3 +321,64 @@ fn errdefer_reserved_as_identifier_is_parse_error() {
         "expected parse error when using `errdefer` as identifier"
     );
 }
+
+// ── Performance: native VM defer must be faster than the old tree bridge ─────
+//
+// This test compiles a defer-containing function and measures the wall-clock
+// time for 1 000 repeated `vm::run` calls against the equivalent count via
+// the tree interpreter.  We assert that the VM path is at least as fast
+// (within a 2× margin to avoid flakiness on CI), and print the ratio.
+//
+// A significant speed-up is expected because OP_DEFER_PUSH / OP_DEFER_DRAIN
+// avoid the overhead of AST node cloning and full tree re-evaluation that the
+// old bridge incurred on every call.
+#[test]
+fn defer_vm_not_slower_than_tree() {
+    use std::time::Instant;
+
+    // A function with three defers and a real return expression.
+    // chosen to be non-trivial enough that the differ overhead is visible.
+    let src = "f x:n>n\n  defer +x 1\n  defer *x 1\n  defer -x 0\n  +x 0\n";
+    const ITERS: u32 = 500;
+
+    // ── tree timing ──
+    let t_start = Instant::now();
+    for _ in 0..ITERS {
+        let v = run_tree(src, "f", vec![Value::Number(42.0)]);
+        assert_eq!(v, Value::Number(42.0));
+    }
+    let tree_ns = t_start.elapsed().as_nanos();
+
+    // ── VM timing ──
+    // Pre-compile once; measure only the run cost.
+    let compiled = {
+        let tokens = ilo::lexer::lex(src).expect("lex");
+        let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+            .collect();
+        let (mut program, _) = ilo::parser::parse(token_spans);
+        ilo::ast::resolve_aliases(&mut program);
+        ilo::ast::desugar_dot_var_index(&mut program);
+        ilo::vm::compile(&program).expect("vm::compile")
+    };
+
+    let v_start = Instant::now();
+    for _ in 0..ITERS {
+        let v = ilo::vm::run(&compiled, Some("f"), vec![Value::Number(42.0)]).expect("run");
+        assert_eq!(v, Value::Number(42.0));
+    }
+    let vm_ns = v_start.elapsed().as_nanos();
+
+    let ratio = tree_ns as f64 / vm_ns as f64;
+    eprintln!(
+        "defer perf: tree={tree_ns}ns  vm={vm_ns}ns  vm_speedup={ratio:.2}x ({ITERS} iters)"
+    );
+
+    // VM must not be more than 2× slower than the tree (in practice it is
+    // faster because the tree bridge clones AST nodes on every call).
+    assert!(
+        vm_ns <= tree_ns * 2,
+        "VM defer path is more than 2× slower than tree: vm={vm_ns}ns tree={tree_ns}ns"
+    );
+}

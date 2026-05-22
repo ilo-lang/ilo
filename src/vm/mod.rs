@@ -174,6 +174,22 @@ pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in 
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
 pub(crate) const OP_SEED: u8 = 190; // seed(R[B]) — set shared PRNG state; R[A] = Nil
+
+// ── Defer opcodes ────────────────────────────────────────────────────────────
+// OP_DEFER_PUSH  ABC: push a deferred callable onto the current frame's defer
+//   stack.  A = register holding a FnRef or Closure (0-arg callable); B = kind
+//   byte (0 = always, 1 = on-error only).  The NanVal is RC-cloned into the
+//   frame's per-frame Vec.
+pub(crate) const OP_DEFER_PUSH: u8 = 191;
+
+// OP_DEFER_DRAIN ABx: drain the current frame's defer stack before returning.
+//   A = the register that holds the about-to-be-returned value (used to decide
+//   whether the exit is an error so errdefer entries fire correctly).
+//   Pops every entry from the defer stack in LIFO order; entries with kind=0
+//   (always) are always called; kind=1 (errdefer) are called only when R[A]
+//   carries a TAG_ERR value.  Call errors are silently swallowed so that a
+//   failing defer cannot hide the real return value.
+pub(crate) const OP_DEFER_DRAIN: u8 = 192;
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
@@ -1790,6 +1806,17 @@ struct RegCompiler {
     /// covers the rebind shape; this flag covers the tail-position
     /// `mset m k v` shape inside helper fns reached via OP_CALL_OWN1.
     in_tail_position: bool,
+    /// Set to true while lowering a function that contains at least one
+    /// `defer` / `errdefer` statement.  When true, `emit_ret` inserts an
+    /// OP_DEFER_DRAIN instruction immediately before every OP_RET.
+    current_fn_has_defer: bool,
+    /// Monotonic counter used to generate unique synthetic thunk names for
+    /// defer expressions: `__defer_0`, `__defer_1`, …
+    defer_thunk_counter: u32,
+    /// Compiled thunk chunks collected during function-body compilation.
+    /// After all real function chunks are pushed, these are appended in
+    /// order so that chunk indices match func_names indices.
+    deferred_thunk_chunks: Vec<Chunk>,
 }
 
 impl RegCompiler {
@@ -1813,6 +1840,9 @@ impl RegCompiler {
             current_fn_name: String::new(),
             current_fn_span: crate::ast::Span::UNKNOWN,
             in_tail_position: false,
+            current_fn_has_defer: false,
+            defer_thunk_counter: 0,
+            deferred_thunk_chunks: Vec::new(),
         }
     }
 
@@ -1874,6 +1904,17 @@ impl RegCompiler {
 
     fn emit_jmp_placeholder(&mut self) -> usize {
         self.emit_abx(OP_JMP, 0, 0)
+    }
+
+    /// Emit an OP_RET for `ret_reg`.  When the current function contains
+    /// defer/errdefer statements, inserts an OP_DEFER_DRAIN immediately
+    /// before the RET so all registered thunks fire before the frame is
+    /// torn down.
+    fn emit_ret(&mut self, ret_reg: u8) {
+        if self.current_fn_has_defer {
+            self.emit_abc(OP_DEFER_DRAIN, ret_reg, 0, 0);
+        }
+        self.emit_abx(OP_RET, ret_reg, 0);
     }
 
     fn emit_jump_to(&mut self, target: usize) {
@@ -2196,6 +2237,33 @@ impl RegCompiler {
             }
         }
 
+        // Pre-register synthetic thunk names for every defer/errdefer site.
+        // compile_defer_thunk looks them up by name to get the chunk index,
+        // and compile_program inserts placeholder chunks here so the index
+        // slots exist before function bodies are compiled.
+        let total_defers: u32 = program
+            .declarations
+            .iter()
+            .filter_map(|d| {
+                if let Decl::Function { body, .. } = d {
+                    Some(count_defers_in_body(body))
+                } else {
+                    None
+                }
+            })
+            .sum();
+        for i in 0..total_defers {
+            let thunk_name = format!("__defer_{i}");
+            self.func_names.push(thunk_name);
+            self.func_return_types.push(crate::ast::Type::Any);
+            is_tool.push(false);
+            is_defer_fn.push(false);
+            // No placeholder chunk here — compile_defer_thunk pushes to
+            // self.deferred_thunk_chunks, which is appended to self.chunks
+            // after all real function chunks are compiled (preserving the
+            // func_names <-> chunk-index invariant).
+        }
+
         for decl in &program.declarations {
             if let Decl::Function {
                 name,
@@ -2216,6 +2284,7 @@ impl RegCompiler {
                 self.max_reg = self.next_reg;
                 self.current_fn_name = name.clone();
                 self.current_fn_span = *span;
+                self.current_fn_has_defer = body_has_defer(body);
 
                 self.reg_is_num = [false; 256];
                 self.reg_is_str = [false; 256];
@@ -2248,21 +2317,31 @@ impl RegCompiler {
                     r
                 });
 
-                // Only emit RET if last instruction isn't already RET
-                let last_is_ret = self
-                    .current
-                    .code
-                    .last()
-                    .map(|inst| (inst >> 24) as u8 == OP_RET)
-                    .unwrap_or(false);
-                if !last_is_ret {
-                    self.emit_abx(OP_RET, ret_reg, 0);
+                // Only skip the final RET if `compile_body` itself produced no
+                // fall-through value (result == None), meaning every path
+                // already ends with an explicit `ret` statement. When result
+                // is Some(_), the last expression may have been after a guard
+                // whose body contained a `ret`, so the last emitted instruction
+                // could be OP_RET even though the fall-through path still needs
+                // one. Emitting an unconditional RET when `result` is Some is
+                // always correct.
+                if result.is_some() {
+                    self.emit_ret(ret_reg);
+                } else {
+                    // result == None: last stmt was a Stmt::Return or similar
+                    // non-value producer. If the last instruction is already
+                    // OP_RET (e.g. from Stmt::Return), skip to avoid double-ret.
+                    let last_op = self.current.code.last().map(|inst| (inst >> 24) as u8);
+                    if last_op != Some(OP_RET) {
+                        self.emit_ret(ret_reg);
+                    }
                 }
 
                 self.current.reg_count = self.max_reg;
                 if self.current_all_regs_numeric {
                     self.current.all_regs_numeric = chunk_is_all_numeric(&self.current);
                 }
+                self.current_fn_has_defer = false;
                 self.chunks.push(std::mem::take(&mut self.current));
             } else if let Decl::Tool { params, .. } = decl {
                 // Tool stub: emit LOADK Nil → WRAPOK → RET  (returns Ok(Nil))
@@ -2285,12 +2364,18 @@ impl RegCompiler {
             // TypeDef, Alias, Error — no chunk emitted (not in func_names)
         }
 
+        // Flush compiled thunk chunks after all real function/tool chunks.
+        // This preserves func_names[i] == self.chunks[i] for thunk indices.
+        for thunk_chunk in std::mem::take(&mut self.deferred_thunk_chunks) {
+            self.chunks.push(thunk_chunk);
+        }
+
         if let Some(e) = self.first_error {
             return Err(e);
         }
 
         // Collect the names of functions that contain defer/errdefer.
-        // These are delegated to the tree-walker at runtime.
+        // (No longer used for tree-bridge dispatch; kept for CompiledProgram metadata.)
         let mut defer_fns = std::collections::HashSet::new();
         for decl in &program.declarations {
             if let Decl::Function { name, body, .. } = decl {
@@ -2721,7 +2806,7 @@ impl RegCompiler {
                         self.emit_abx(OP_LOADK, r, ki);
                         r
                     });
-                    self.emit_abx(OP_RET, ret_reg, 0);
+                    self.emit_ret(ret_reg);
                     self.current.patch_jump(jump);
                     self.next_reg = saved_next;
                     None
@@ -2969,7 +3054,7 @@ impl RegCompiler {
 
             Stmt::Return(expr) => {
                 let reg = self.compile_expr(expr);
-                self.emit_abx(OP_RET, reg, 0);
+                self.emit_ret(reg);
                 None
             }
 
@@ -3014,14 +3099,139 @@ impl RegCompiler {
                 let reg = self.compile_expr(expr);
                 Some(reg)
             }
-            Stmt::Defer { .. } => {
-                // defer/errdefer are not yet compiled to bytecode.
-                // The VM falls back to the tree-walker for any function
-                // containing a Stmt::Defer (handled at compile time by
-                // `has_defer_stmt`). This arm is a safety net.
-                None
+            Stmt::Defer { expr, kind } => {
+                // Compile the deferred expression as a synthetic zero-arg
+                // thunk chunk.  All current locals are passed as captures so
+                // the thunk sees the values they held at defer-registration
+                // time (snapshot by value, matching the tree-walker).
+                let kind_byte: u8 = match kind {
+                    crate::ast::DeferKind::Always => 0,
+                    crate::ast::DeferKind::OnError => 1,
+                };
+                let closure_reg = self.compile_defer_thunk(expr, kind_byte);
+                Some(closure_reg)
             }
         }
+    }
+
+    /// Compile a deferred expression as a synthetic thunk and emit the
+    /// instructions that push it onto the current frame's defer stack.
+    ///
+    /// The thunk is a zero-capture-arg synthetic function whose parameter
+    /// list mirrors the current locals (so `expr` can reference any name
+    /// that is in scope at the `defer` site).  We compile the thunk's chunk
+    /// in a nested compiler state, then emit:
+    ///
+    ///   OP_LOADFN  fn_reg,   thunk_idx
+    ///   OP_MAKE_CLOSURE  closure_reg,  fn_reg,  N   [+ N/4 data words]
+    ///   OP_DEFER_PUSH    closure_reg,  kind,    0
+    ///
+    /// Returns the closure register (which callers can ignore; the push is
+    /// the side-effecting operation).
+    fn compile_defer_thunk(&mut self, expr: &Expr, kind: u8) -> u8 {
+        // Snapshot the locals visible at this defer site.
+        let captured_locals: Vec<(String, u8)> = self.locals.clone();
+
+        // Build the thunk name.
+        let thunk_name = format!("__defer_{}", self.defer_thunk_counter);
+        self.defer_thunk_counter += 1;
+
+        // The thunk index in func_names / chunks.  It was pre-registered by
+        // compile_program before the function-body loop, so we just look it up.
+        let thunk_fn_idx = self
+            .func_names
+            .iter()
+            .position(|n| n == &thunk_name)
+            .expect("defer thunk name must be pre-registered in func_names") as u16;
+
+        // Save compiler state for the enclosing function.
+        let saved_current = std::mem::take(&mut self.current);
+        let saved_locals = std::mem::take(&mut self.locals);
+        let saved_next = self.next_reg;
+        let saved_max = self.max_reg;
+        let saved_reg_is_num = self.reg_is_num;
+        let saved_reg_is_str = self.reg_is_str;
+        let saved_reg_record = self.reg_record_type;
+        let saved_all_numeric = self.current_all_regs_numeric;
+        let saved_fn_name = std::mem::take(&mut self.current_fn_name);
+        let saved_fn_span = self.current_fn_span;
+        let saved_in_tail = self.in_tail_position;
+        let saved_has_defer = self.current_fn_has_defer;
+
+        // Set up a new chunk for the thunk.  It receives N params — one per
+        // captured local — and evaluates `expr` using those params.
+        let n_caps = captured_locals.len() as u8;
+        self.current = Chunk::new(n_caps);
+        self.next_reg = n_caps;
+        self.max_reg = n_caps;
+        self.reg_is_num = [false; 256];
+        self.reg_is_str = [false; 256];
+        self.reg_record_type = [u16::MAX; 256];
+        self.current_all_regs_numeric = false; // conservative
+        self.current_fn_name = thunk_name.clone();
+        self.current_fn_span = self.current_span;
+        self.in_tail_position = true;
+        self.current_fn_has_defer = false; // thunks are never themselves defer-containing
+
+        // Re-establish locals as the captured params (in the same order so
+        // OP_MAKE_CLOSURE's register capture indices match).
+        self.locals.clear();
+        for (i, (name, _reg)) in captured_locals.iter().enumerate() {
+            self.locals.push((name.clone(), i as u8));
+        }
+
+        // Compile the expression body of the thunk.
+        let result_reg = self.compile_expr(expr);
+        self.emit_abx(OP_RET, result_reg, 0);
+
+        self.current.reg_count = self.max_reg;
+        let thunk_chunk = std::mem::take(&mut self.current);
+
+        // Restore enclosing function compiler state.
+        self.current = saved_current;
+        self.locals = saved_locals;
+        self.next_reg = saved_next;
+        self.max_reg = saved_max;
+        self.reg_is_num = saved_reg_is_num;
+        self.reg_is_str = saved_reg_is_str;
+        self.reg_record_type = saved_reg_record;
+        self.current_all_regs_numeric = saved_all_numeric;
+        self.current_fn_name = saved_fn_name;
+        self.current_fn_span = saved_fn_span;
+        self.in_tail_position = saved_in_tail;
+        self.current_fn_has_defer = saved_has_defer;
+
+        // Append the thunk chunk to the deferred side-channel.
+        // compile_program will flush self.deferred_thunk_chunks into self.chunks
+        // after all real function chunks are pushed, preserving the
+        // func_names[i] == self.chunks[i] invariant.
+        self.deferred_thunk_chunks.push(thunk_chunk);
+
+        // Emit instructions in the enclosing function to build the closure.
+        let fn_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADFN, fn_reg, thunk_fn_idx);
+
+        let closure_reg = self.alloc_reg();
+        // The closure captures all locals that were in scope at the defer site.
+        let n = captured_locals.len();
+        self.emit_abc(OP_MAKE_CLOSURE, closure_reg, fn_reg, n as u8);
+        // Pack capture source register indices 4 per 32-bit data word.
+        let n_words = n.div_ceil(4);
+        for w in 0..n_words {
+            let mut word: u32 = 0;
+            for slot in 0..4usize {
+                let i = w * 4 + slot;
+                if i < n {
+                    word |= (captured_locals[i].1 as u32) << (slot * 8);
+                }
+            }
+            self.current.emit(word, self.current_span);
+        }
+
+        // Push the closure onto the frame's defer stack.
+        self.emit_abc(OP_DEFER_PUSH, closure_reg, kind, 0);
+
+        closure_reg
     }
 
     fn compile_match_arms(&mut self, sub_reg: u8, result_reg: u8, arms: &[MatchArm]) {
@@ -7921,7 +8131,6 @@ impl NanVal {
 // ── VM ───────────────────────────────────────────────────────────────
 
 /// Returns true if any statement in `body` (recursively) is a `Stmt::Defer`.
-/// Used to identify functions that must be delegated to the tree-walker.
 fn body_has_defer(body: &[crate::ast::Spanned<Stmt>]) -> bool {
     body.iter().any(|s| stmt_has_defer(&s.node))
 }
@@ -7937,6 +8146,36 @@ fn stmt_has_defer(stmt: &Stmt) -> bool {
             body_has_defer(body)
         }
         _ => false,
+    }
+}
+
+/// Count the total number of `Stmt::Defer` / `Stmt::Errdefer` nodes in a body
+/// (recursively).  Used to pre-allocate synthetic thunk name slots before the
+/// function-body compilation pass.
+fn count_defers_in_body(body: &[crate::ast::Spanned<Stmt>]) -> u32 {
+    body.iter().map(|s| count_defers_in_stmt(&s.node)).sum()
+}
+
+fn count_defers_in_stmt(stmt: &Stmt) -> u32 {
+    match stmt {
+        Stmt::Defer { .. } => 1,
+        Stmt::Guard {
+            body, else_body, ..
+        } => {
+            count_defers_in_body(body)
+                + else_body
+                    .as_deref()
+                    .map(count_defers_in_body)
+                    .unwrap_or(0)
+        }
+        Stmt::Match { arms, .. } => arms
+            .iter()
+            .map(|a| count_defers_in_body(&a.body))
+            .sum(),
+        Stmt::ForEach { body, .. }
+        | Stmt::ForRange { body, .. }
+        | Stmt::While { body, .. } => count_defers_in_body(body),
+        _ => 0,
     }
 }
 
@@ -7983,21 +8222,6 @@ pub fn run_with_caps(
     })?;
     check_entry_arity(compiled, func_idx, &target, args.len())?;
 
-    // Program-wide bridge: if any function in the program contains defer/errdefer,
-    // delegate the entire execution to the tree-walker. This is the correct V1
-    // approach because defer functions may be called in tail position (OP_TAILCALL)
-    // from non-defer callers, and the OP_CALL bridge alone cannot intercept tailcalls.
-    // The tree interpreter has full native defer support.
-    if !compiled.defer_fns.is_empty() {
-        if let Some(ast) = &compiled.ast {
-            return crate::interpreter::run(ast, Some(&target), args).map_err(|e| VmRuntimeError {
-                error: VmError::Runtime(e.message),
-                span: e.span,
-                call_stack: e.call_stack,
-            });
-        }
-    }
-
     VM::new_with_caps(compiled, caps).call(func_idx, args)
 }
 
@@ -8018,19 +8242,6 @@ pub fn run(
             })?
             .clone(),
     };
-
-    // Program-wide bridge: if any function contains defer/errdefer, delegate
-    // the entire execution to the tree-walker (which has native defer support).
-    // This covers direct calls AND tail-call-optimised calls from non-defer callers.
-    if !compiled.defer_fns.is_empty() {
-        if let Some(ast) = &compiled.ast {
-            return crate::interpreter::run(ast, Some(&target), args).map_err(|e| VmRuntimeError {
-                error: VmError::Runtime(e.message),
-                span: e.span,
-                call_stack: e.call_stack,
-            });
-        }
-    }
 
     let func_idx = compiled.func_index(&target).ok_or_else(|| VmRuntimeError {
         error: VmError::UndefinedFunction {
@@ -8167,6 +8378,10 @@ struct CallFrame {
     ip: usize,
     stack_base: usize,
     result_reg: u8,
+    /// Per-frame defer stack: (callable NanVal, kind).
+    /// kind 0 = always, 1 = on-error only.
+    /// Populated by OP_DEFER_PUSH; drained LIFO by OP_DEFER_DRAIN.
+    defer_stack: Vec<(NanVal, u8)>,
 }
 
 struct VM<'a> {
@@ -8182,6 +8397,10 @@ struct VM<'a> {
     tokio_runtime: Option<&'a tokio::runtime::Runtime>,
     /// CLI capability policy.
     caps: Arc<Caps>,
+    /// When > 0, `execute()` stops and returns as soon as `self.frames.len()`
+    /// drops to this value instead of continuing to run the parent frame.
+    /// Used by `OP_DEFER_DRAIN` to run each defer thunk in isolation.
+    execute_stop_depth: usize,
 }
 
 impl<'a> Drop for VM<'a> {
@@ -8205,6 +8424,7 @@ impl<'a> VM<'a> {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps: Arc::new(Caps::default()),
+            execute_stop_depth: 0,
         }
     }
 
@@ -8220,6 +8440,7 @@ impl<'a> VM<'a> {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps,
+            execute_stop_depth: 0,
         }
     }
 
@@ -8239,6 +8460,7 @@ impl<'a> VM<'a> {
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
             caps: Arc::new(Caps::default()),
+            execute_stop_depth: 0,
         }
     }
 
@@ -8260,6 +8482,7 @@ impl<'a> VM<'a> {
             ip: 0,
             stack_base,
             result_reg,
+            defer_stack: Vec::new(),
         });
     }
 
@@ -10012,33 +10235,6 @@ impl<'a> VM<'a> {
                         continue;
                     }
 
-                    // If this function contains defer/errdefer, bridge to the tree-walker.
-                    // The tree interpreter has native defer support; the VM does not (v1 MVP).
-                    let is_defer_call = self
-                        .program
-                        .is_defer_fn
-                        .get(func_idx as usize)
-                        .copied()
-                        .unwrap_or(false);
-                    if is_defer_call {
-                        if let Some(ast) = &self.program.ast {
-                            let callee_name = &self.program.func_names[func_idx as usize].clone();
-                            let mut value_args = Vec::with_capacity(n_args);
-                            for i in 0..n_args {
-                                value_args.push(reg!(base + a as usize + 1 + i).to_value());
-                            }
-                            let tree_result =
-                                crate::interpreter::run(ast, Some(callee_name), value_args)
-                                    .map_err(|e| VmError::Runtime(e.message))?;
-                            let nan_result = NanVal::from_value(&tree_result);
-                            reg_set!(base + a as usize, nan_result);
-                            continue;
-                        }
-                        // AST not available — fall through to normal VM dispatch
-                        // (defer semantics will be silently absent, but this path
-                        // is not reachable in practice since compile() always sets ast).
-                    }
-
                     // Push args directly onto the stack (no intermediate Vec).
                     let new_base = self.stack.len();
                     let callee_all_numeric =
@@ -10083,6 +10279,7 @@ impl<'a> VM<'a> {
                         ip: 0,
                         stack_base: new_base,
                         result_reg: a,
+                        defer_stack: Vec::new(),
                     });
 
                     // SAFETY: we just pushed a new frame above.
@@ -10211,6 +10408,7 @@ impl<'a> VM<'a> {
                                 ip: 0,
                                 stack_base: new_base,
                                 result_reg: a,
+                                defer_stack: Vec::new(),
                             });
                             ci = func_idx as usize;
                             ip = 0;
@@ -10288,8 +10486,13 @@ impl<'a> VM<'a> {
                         self.stack.truncate(base);
                         self.frames.pop();
 
-                        if self.frames.is_empty() {
-                            self.arena.reset();
+                        let stop = self.execute_stop_depth;
+                        if self.frames.len() == stop {
+                            // Either fully done (stop == 0) or returning to the
+                            // depth requested by OP_DEFER_DRAIN's thunk runner.
+                            if stop == 0 {
+                                self.arena.reset();
+                            }
                             return Ok(result.to_value_with_program(&self.program.func_names));
                         }
 
@@ -10312,18 +10515,21 @@ impl<'a> VM<'a> {
                         self.stack.truncate(base);
                         self.frames.pop();
 
-                        if self.frames.is_empty() {
-                            // Promote arena records before resetting arena
+                        let stop = self.execute_stop_depth;
+                        if self.frames.len() == stop {
+                            // Either fully done or thunk-runner stop point.
                             if result.is_arena_record() {
                                 result = result.promote_arena_to_heap(&self.program.type_registry);
                             }
-                            self.arena.reset();
+                            if stop == 0 {
+                                self.arena.reset();
+                            }
                             let val = result.to_value_with_program(&self.program.func_names);
                             result.drop_rc();
                             return Ok(val);
                         }
 
-                        // SAFETY: we just checked !self.frames.is_empty().
+                        // SAFETY: we just checked frames.len() > stop (non-zero remaining).
                         let f = unsafe { self.frames.last().unwrap_unchecked() };
                         ci = f.chunk_idx as usize;
                         ip = f.ip;
@@ -13688,6 +13894,7 @@ impl<'a> VM<'a> {
                         ip: 0,
                         stack_base: new_base,
                         result_reg: a,
+                        defer_stack: Vec::new(),
                     });
 
                     ci = func_idx as usize;
@@ -13808,6 +14015,137 @@ impl<'a> VM<'a> {
                     ip = 0;
                     base = saved_stack_base;
                 }
+
+                // ── Defer opcodes ────────────────────────────────────────
+                OP_DEFER_PUSH => {
+                    // ABC: A = closure register, B = kind byte (0=always, 1=on-error)
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let kind = ((inst >> 8) & 0xFF) as u8;
+                    let callable = reg!(a);
+                    // RC-bump the value so the defer stack holds a reference.
+                    if !callable.is_number() {
+                        callable.clone_rc();
+                    }
+                    // SAFETY: frames is non-empty while execute() runs.
+                    unsafe { self.frames.last_mut().unwrap_unchecked() }
+                        .defer_stack
+                        .push((callable, kind));
+                }
+
+                OP_DEFER_DRAIN => {
+                    // ABC: A = the register holding the about-to-be-returned
+                    // value (used to detect error exits for errdefer).
+                    // Drain the current frame's defer_stack in LIFO order,
+                    // calling each 0-arg thunk.  Errors from thunks are
+                    // silently swallowed so they cannot mask the real result.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let ret_val = reg!(a);
+                    let is_error = (ret_val.0 & TAG_MASK) == TAG_ERR;
+
+                    // Drain into a local vec so thunks can push their own
+                    // defers without invalidating our iteration.
+                    let defers = {
+                        // SAFETY: frames non-empty.
+                        let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                        std::mem::take(&mut frame.defer_stack)
+                    };
+
+                    // LIFO: drain in reverse order.
+                    for (callable, kind) in defers.into_iter().rev() {
+                        let should_run = kind == 0 || (kind == 1 && is_error);
+                        if !should_run {
+                            callable.drop_rc();
+                            continue;
+                        }
+
+                        // Resolve the callable: FnRef (user fn) or Closure.
+                        let (thunk_fn_idx, captures): (usize, Vec<NanVal>) =
+                            if callable.is_fnref() {
+                                let (_kind, id) = callable.fnref_parts();
+                                (id as usize, Vec::new())
+                            } else if callable.is_heap() && (callable.0 & TAG_MASK) == TAG_LIST {
+                                let heap = unsafe { callable.as_heap_ref() };
+                                if let HeapObj::Closure {
+                                    kind: _k,
+                                    id,
+                                    captures,
+                                } = heap
+                                {
+                                    let caps = captures.clone();
+                                    (*id as usize, caps)
+                                } else {
+                                    callable.drop_rc();
+                                    continue;
+                                }
+                            } else {
+                                callable.drop_rc();
+                                continue;
+                            };
+                        callable.drop_rc();
+
+                        // Push the thunk frame.  Captures are installed as
+                        // the param registers (mirrors OP_CALL_DYN closure path).
+                        let new_base = self.stack.len();
+                        let cap_count = captures.len();
+                        let reg_count = self
+                            .program
+                            .chunks
+                            .get(thunk_fn_idx)
+                            .map(|c| c.reg_count as usize)
+                            .unwrap_or(cap_count);
+                        let new_len = new_base + reg_count;
+                        {
+                            let old_len = self.stack.len();
+                            if new_len > old_len {
+                                self.stack.reserve(new_len - old_len);
+                                let nil = NanVal::nil();
+                                let ptr = self.stack.as_mut_ptr();
+                                for i in old_len..new_len {
+                                    unsafe { ptr.add(i).write(nil) };
+                                }
+                                unsafe { self.stack.set_len(new_len) };
+                            }
+                        }
+                        // Install captures at R[0..cap_count].
+                        for (i, cap) in captures.into_iter().enumerate() {
+                            if !cap.is_number() {
+                                cap.clone_rc();
+                            }
+                            unsafe {
+                                *self.stack.as_mut_ptr().add(new_base + i) = cap;
+                            }
+                        }
+
+                        // Save the parent frame's ip so execute() restores it.
+                        // SAFETY: frames non-empty.
+                        unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+
+                        self.frames.push(CallFrame {
+                            chunk_idx: thunk_fn_idx as u16,
+                            ip: 0,
+                            stack_base: new_base,
+                            result_reg: 0, // result is discarded
+                            defer_stack: Vec::new(),
+                        });
+
+                        // Run the thunk in isolation by setting execute_stop_depth
+                        // to the parent-frame depth.  execute() will return as soon
+                        // as OP_RET in the thunk pops back to that depth.
+                        let stop = self.frames.len() - 1; // parent frame depth
+                        let saved_stop = self.execute_stop_depth;
+                        self.execute_stop_depth = stop;
+                        let _ = self.execute(); // errors silently swallowed
+                        self.execute_stop_depth = saved_stop;
+
+                        // Restore the enclosing frame's dispatch variables.
+                        // SAFETY: frames non-empty (parent frame still present).
+                        let f = unsafe { self.frames.last().unwrap_unchecked() };
+                        ci = f.chunk_idx as usize;
+                        ip = f.ip;
+                        base = f.stack_base;
+                    }
+                }
+
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
         }
