@@ -3173,6 +3173,867 @@ fn where_run(cond: &[Value], xs: &[Value], ys: &[Value]) -> Result<Value> {
     Ok(Value::List(Arc::new(out)))
 }
 
+// --- per-builtin #[inline(never)] helpers (ILO-408 batch 2) ---
+// Each helper keeps its body out of call_function's already-huge stack frame
+// so debug-build stack overflows are avoided on deep-recursion tests.
+
+/// `#[inline(never)]` keeps Clamp (+ inline Min/Max 2-arg + Argmax/Argmin)
+/// out of call_function's frame.
+#[inline(never)]
+fn clamp_run(x: f64, lo: f64, hi: f64) -> Value {
+    Value::Number(x.min(hi).max(lo))
+}
+
+/// `#[inline(never)]` — chunks n xs > L (L a)
+#[inline(never)]
+fn chunks_run(n_raw: f64, list_arg: &Value) -> Result<Value> {
+    if n_raw.fract() != 0.0 || n_raw <= 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("chunks: size must be a positive integer, got {n_raw}"),
+        ));
+    }
+    let n = n_raw as usize;
+    let xs = match list_arg {
+        Value::List(items) => items,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("chunks: requires a list, got {:?}", other),
+            ));
+        }
+    };
+    let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
+    for chunk in xs.chunks(n) {
+        out.push(Value::List(Arc::new(chunk.to_vec())));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — ewm xs a > L n
+#[inline(never)]
+fn ewm_run(list_arg: &Value, a: f64) -> Result<Value> {
+    let items = match list_arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ewm: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    if !(0.0..=1.0).contains(&a) {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("ewm: smoothing factor a must be in [0, 1], got {}", a),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ewm: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let out: Vec<Value> = ewm_compute(&nums, a)
+        .into_iter()
+        .map(Value::Number)
+        .collect();
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — cap s > t (capitalise first Unicode scalar)
+/// Also handles the padl/padr arm that immediately follows in source order
+/// (they form one logical "arm" for the script counter since no `if builtin ==`
+/// separates them).
+#[inline(never)]
+fn cap_run(arg: &Value) -> Result<Value> {
+    match arg {
+        Value::Text(s) => {
+            let mut chars = s.chars();
+            let out = match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            };
+            Ok(Value::Text(Arc::new(out)))
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!("cap requires text, got {:?}", other),
+        )),
+    }
+}
+
+/// `#[inline(never)]` — padl/padr s width [pad_char] > t
+#[inline(never)]
+fn padl_padr_run(is_left: bool, args: &[Value]) -> Result<Value> {
+    let name = if is_left { "padl" } else { "padr" };
+    let s = match &args[0] {
+        Value::Text(t) => t.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} arg 1 requires text, got {:?}", other),
+            ));
+        }
+    };
+    let w = match &args[1] {
+        Value::Number(n) => {
+            if !n.is_finite() || n.fract() != 0.0 {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} width must be a non-negative integer, got {n}"),
+                ));
+            }
+            if *n < 0.0 {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} width must be non-negative, got {n}"),
+                ));
+            }
+            *n as usize
+        }
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} arg 2 requires number, got {:?}", other),
+            ));
+        }
+    };
+    let pad_char: char = if args.len() == 3 {
+        match &args[2] {
+            Value::Text(t) => {
+                let mut iter = t.chars();
+                match (iter.next(), iter.next()) {
+                    (Some(c), None) => c,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "{name} pad char must be a 1-character string, got {:?}",
+                                t.as_str()
+                            ),
+                        ));
+                    }
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "{name} pad char must be a 1-character string, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    } else {
+        ' '
+    };
+    let char_count = s.chars().count();
+    if char_count >= w {
+        return Ok(Value::Text(s));
+    }
+    let pad: String = std::iter::repeat_n(pad_char, w - char_count).collect();
+    let out = if is_left {
+        format!("{pad}{s}")
+    } else {
+        format!("{s}{pad}")
+    };
+    Ok(Value::Text(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — wr path content [fmt] > R t t
+#[inline(never)]
+fn wr_run(env: &mut Env, args: Vec<Value>) -> Result<Value> {
+    let path = match &args[0] {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("wr: first arg must be a text path, got {:?}", other),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_write(path.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let content = if args.len() == 3 {
+        let fmt = match &args[2] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wr: format arg must be text, got {:?}", other),
+                ));
+            }
+        };
+        match fmt.as_str() {
+            "csv" | "tsv" => {
+                let sep = if fmt.as_str() == "csv" { ',' } else { '\t' };
+                let rows = match &args[1] {
+                    Value::List(l) => l,
+                    other => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "wr: data for {fmt} must be a list of rows, got {:?}",
+                                other
+                            ),
+                        ));
+                    }
+                };
+                write_csv_tsv(rows, sep)?
+            }
+            "json" => {
+                fn value_to_json_local(v: &Value) -> serde_json::Value {
+                    match v {
+                        Value::Number(n) => serde_json::Value::from(*n),
+                        Value::Text(s) => serde_json::Value::from(s.as_str()),
+                        Value::Bool(b) => serde_json::Value::from(*b),
+                        Value::List(l) => {
+                            serde_json::Value::Array(l.iter().map(value_to_json_local).collect())
+                        }
+                        Value::Map(m) => {
+                            let obj: serde_json::Map<String, serde_json::Value> = m
+                                .iter()
+                                .map(|(k, v)| (k.to_display_string(), value_to_json_local(v)))
+                                .collect();
+                            serde_json::Value::Object(obj)
+                        }
+                        Value::Nil => serde_json::Value::Null,
+                        other => serde_json::Value::from(format!("{other}")),
+                    }
+                }
+                serde_json::to_string_pretty(&value_to_json_local(&args[1]))
+                    .unwrap_or_else(|e| format!("json error: {e}"))
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wr: unknown format '{other}', expected csv, tsv, or json"),
+                ));
+            }
+        }
+    } else {
+        match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wr: second arg must be text content, got {:?}", other),
+                ));
+            }
+        }
+    };
+    match std::fs::write(path.as_str(), &content) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+    }
+}
+
+/// `#[inline(never)]` — fmt template args... > t
+#[inline(never)]
+fn fmt_run(args: &[Value]) -> Result<Value> {
+    let template = match &args[0] {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("fmt first arg must be text template, got {:?}", other),
+            ));
+        }
+    };
+    let mut result = String::new();
+    let mut arg_idx = 1;
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{'
+            && (chars.peek() == Some(&'}')
+                || chars.peek() == Some(&':')
+                || chars.peek() == Some(&'.'))
+        {
+            let mut spec = String::from("{");
+            let mut terminated = false;
+            for sc in chars.by_ref() {
+                spec.push(sc);
+                if sc == '}' {
+                    terminated = true;
+                    break;
+                }
+            }
+            if !terminated {
+                result.push_str(&spec);
+                continue;
+            }
+            match parse_fmt_spec(&spec) {
+                Some(FmtSpec::Bare) => {
+                    if arg_idx < args.len() {
+                        result.push_str(&format!("{}", args[arg_idx]));
+                        arg_idx += 1;
+                    } else {
+                        result.push_str("{}");
+                    }
+                }
+                Some(spec_kind) => {
+                    if arg_idx >= args.len() {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!("fmt template spec `{spec}` has no matching value arg"),
+                        ));
+                    }
+                    let rendered = apply_fmt_spec(&spec_kind, &args[arg_idx]).map_err(|e| {
+                        RuntimeError::new("ILO-R009", format!("fmt spec `{spec}`: {e}"))
+                    })?;
+                    result.push_str(&rendered);
+                    arg_idx += 1;
+                }
+                None => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "fmt: unsupported placeholder spec `{spec}`. \
+                             Supported: `{{}}`, `{{.Nf}}` / `{{:.Nf}}` (decimal places), \
+                             `{{:N}}` (right-align width), `{{:Nd}}` (integer width), \
+                             `{{:<N}}` (left-align width). Zero-padded widths and hex/sign \
+                             are out of scope; compose via `fmt2` / `padl` / `padr`."
+                        ),
+                    ));
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(Value::Text(Arc::new(result)))
+}
+
+/// `#[inline(never)]` — flt fn [ctx] xs > L a
+#[inline(never)]
+fn flt_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, ctx: Option<Value>, items: Arc<Vec<Value>>) -> Result<Value> {
+    let mut keep: Vec<bool> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        let mut call_args = match &ctx {
+            Some(c) => vec![item.clone(), c.clone()],
+            None => vec![item.clone()],
+        };
+        call_args.extend(captures.iter().cloned());
+        match call_function(env, fn_name, call_args)? {
+            Value::Bool(true) => keep.push(true),
+            Value::Bool(false) => keep.push(false),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("flt: predicate must return bool, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let mut items = items;
+    if Arc::strong_count(&items) == 1 {
+        let inner = Arc::make_mut(&mut items);
+        let mut idx = 0usize;
+        inner.retain(|_| {
+            let k = keep[idx];
+            idx += 1;
+            k
+        });
+        Ok(Value::List(items))
+    } else {
+        let mut result = Vec::with_capacity(keep.iter().filter(|k| **k).count());
+        for (item, &k) in items.iter().zip(keep.iter()) {
+            if k {
+                result.push(item.clone());
+            }
+        }
+        Ok(Value::List(Arc::new(result)))
+    }
+}
+
+/// `#[inline(never)]` — grp fn xs > M t (L a)
+#[inline(never)]
+fn grp_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, items: Arc<Vec<Value>>) -> Result<Value> {
+    let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
+        std::collections::HashMap::new();
+    for item in items.iter() {
+        let mut call_args = vec![item.clone()];
+        call_args.extend(captures.iter().cloned());
+        let key = call_function(env, fn_name, call_args)?;
+        let map_key = match &key {
+            Value::Text(s) => MapKey::Text((**s).clone()),
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("grp: numeric key must be finite, got {n}"),
+                    ));
+                }
+                MapKey::Int(n.floor() as i64)
+            }
+            Value::Bool(b) => MapKey::Text(format!("{b}")),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "grp: key function must return a string, number, or bool, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        groups.entry(map_key).or_default().push(item.clone());
+    }
+    let map: HashMap<MapKey, Value> = groups
+        .into_iter()
+        .map(|(k, v)| (k, Value::List(Arc::new(v))))
+        .collect();
+    Ok(Value::Map(Arc::new(map)))
+}
+
+/// `#[inline(never)]` — uniqby fn xs > L a
+#[inline(never)]
+fn uniqby_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, items: Arc<Vec<Value>>) -> Result<Value> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<Value> = Vec::new();
+    for item in items.iter() {
+        let mut call_args = vec![item.clone()];
+        call_args.extend(captures.iter().cloned());
+        let key = call_function(env, fn_name, call_args)?;
+        let key_str = match &key {
+            Value::Text(s) => format!("t:{s}"),
+            Value::Number(n) => {
+                if *n == (*n as i64) as f64 {
+                    format!("n:{}", *n as i64)
+                } else {
+                    format!("n:{n}")
+                }
+            }
+            Value::Bool(b) => format!("b:{b}"),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "uniqby: key function must return a string, number, or bool, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        if seen.insert(key_str) {
+            out.push(item.clone());
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — post url body [headers] > R t t
+#[inline(never)]
+fn post_run(env: &mut Env, args: Vec<Value>) -> Result<Value> {
+    let (url, body) = match (&args[0], &args[1]) {
+        (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+        _ => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("pst requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let headers = if args.len() == 3 {
+        match &args[2] {
+            Value::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let vs: String = match v {
+                        Value::Text(s) => (**s).clone(),
+                        other => format!("{other:?}"),
+                    };
+                    (k.to_display_string(), vs)
+                })
+                .collect::<Vec<_>>(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pst headers must be M t t, got {:?}", other),
+                ));
+            }
+        }
+    } else {
+        vec![]
+    };
+    #[cfg(feature = "http")]
+    {
+        let mut req = minreq::post(url.as_str()).with_body(body.as_str());
+        for (k, v) in &headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        match req.send() {
+            Ok(resp) => match resp.as_str() {
+                Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "response is not valid UTF-8: {e}"
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (url, body, headers);
+        Ok(Value::Err(Box::new(Value::Text(
+            "http feature not enabled".to_string().into(),
+        ))))
+    }
+}
+
+/// `#[inline(never)]` — put/pat url body [headers] > R t t
+#[inline(never)]
+fn put_pat_run(env: &mut Env, builtin: Option<Builtin>, args: Vec<Value>) -> Result<Value> {
+    let name = builtin.unwrap().name();
+    let (url, body) = match (&args[0], &args[1]) {
+        (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+        _ => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let headers = if args.len() == 3 {
+        match &args[2] {
+            Value::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let vs: String = match v {
+                        Value::Text(s) => (**s).clone(),
+                        other => format!("{other:?}"),
+                    };
+                    (k.to_display_string(), vs)
+                })
+                .collect::<Vec<_>>(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} headers must be M t t, got {:?}", other),
+                ));
+            }
+        }
+    } else {
+        vec![]
+    };
+    #[cfg(feature = "http")]
+    {
+        let mut req = match builtin {
+            Some(Builtin::Put) => minreq::put(url.as_str()),
+            Some(Builtin::Pat) => minreq::patch(url.as_str()),
+            _ => unreachable!(),
+        }
+        .with_body(body.as_str());
+        for (k, v) in &headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        match req.send() {
+            Ok(resp) => match resp.as_str() {
+                Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "response is not valid UTF-8: {e}"
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (url, body, headers);
+        Ok(Value::Err(Box::new(Value::Text(
+            "http feature not enabled".to_string().into(),
+        ))))
+    }
+}
+
+/// `#[inline(never)]` — del/hed/opt url [headers] > R t t
+#[inline(never)]
+fn del_hed_opt_run(env: &mut Env, builtin: Option<Builtin>, args: Vec<Value>) -> Result<Value> {
+    let name = builtin.unwrap().name();
+    let url = match &args[0] {
+        Value::Text(u) => u.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} requires text (url), got {:?}", other),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let headers = if args.len() == 2 {
+        match &args[1] {
+            Value::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let vs: String = match v {
+                        Value::Text(s) => (**s).clone(),
+                        other => format!("{other:?}"),
+                    };
+                    (k.to_display_string(), vs)
+                })
+                .collect::<Vec<_>>(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} headers must be M t t, got {:?}", other),
+                ));
+            }
+        }
+    } else {
+        vec![]
+    };
+    #[cfg(feature = "http")]
+    {
+        let mut req = match builtin {
+            Some(Builtin::Del) => minreq::delete(url.as_str()),
+            Some(Builtin::Hed) => minreq::head(url.as_str()),
+            Some(Builtin::Opt) => minreq::options(url.as_str()),
+            _ => unreachable!(),
+        };
+        for (k, v) in &headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        match req.send() {
+            Ok(resp) => match resp.as_str() {
+                Ok(body) => {
+                    Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
+                }
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "response is not valid UTF-8: {e}"
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (url, headers);
+        Ok(Value::Err(Box::new(Value::Text(
+            "http feature not enabled".to_string().into(),
+        ))))
+    }
+}
+
+/// `#[inline(never)]` — rolling-window reducers: rsum/ravg/rmin n xs > L n
+#[inline(never)]
+fn rolling_window_run(env_name: &str, b: Builtin, n_f: f64, list_arg: &Value) -> Result<Value> {
+    let name = env_name;
+    if !n_f.is_finite() || n_f.fract() != 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "{name}: window size n must be a non-negative integer, got {}",
+                n_f
+            ),
+        ));
+    }
+    if n_f <= 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("{name}: window size n must be >= 1, got {}", n_f),
+        ));
+    }
+    let n = n_f as usize;
+    let items = match list_arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: second arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(v) => nums.push(*v),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let computed = match b {
+        Builtin::Rsum => rsum_compute(n, &nums),
+        Builtin::Ravg => ravg_compute(n, &nums),
+        Builtin::Rmin => rmin_compute(n, &nums),
+        _ => unreachable!(),
+    };
+    let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — argmax/argmin xs > n
+#[inline(never)]
+fn argmax_argmin_run(is_min: bool, name: &str, arg: &Value) -> Result<Value> {
+    let items = match arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("{name}: cannot take {name} of an empty list"),
+        ));
+    }
+    let mut best_idx: usize = 0;
+    let mut best_val: Option<f64> = None;
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            Value::Number(n) => {
+                if n.is_nan() {
+                    return Ok(Value::Number(f64::NAN));
+                }
+                match best_val {
+                    None => {
+                        best_val = Some(*n);
+                        best_idx = i;
+                    }
+                    Some(cur) => {
+                        let better = if is_min { *n < cur } else { *n > cur };
+                        if better {
+                            best_val = Some(*n);
+                            best_idx = i;
+                        }
+                    }
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    Ok(Value::Number(best_idx as f64))
+}
+
+/// `#[inline(never)]` — setunion/setinter/setdiff xs ys > L a
+#[inline(never)]
+fn setops_run(builtin: Option<Builtin>, xs_arg: &Value, ys_arg: &Value) -> Result<Value> {
+    let op_name = match builtin {
+        Some(Builtin::Setunion) => "setunion",
+        Some(Builtin::Setinter) => "setinter",
+        Some(Builtin::Setdiff) => "setdiff",
+        _ => unreachable!(),
+    };
+    let xs = match xs_arg {
+        Value::List(items) => items,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{op_name} arg 1 requires a list, got {:?}", other),
+            ));
+        }
+    };
+    let ys = match ys_arg {
+        Value::List(items) => items,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{op_name} arg 2 requires a list, got {:?}", other),
+            ));
+        }
+    };
+    fn key_for(v: &Value, op_name: &str) -> std::result::Result<String, RuntimeError> {
+        match v {
+            Value::Text(s) => Ok(format!("t:{s}")),
+            Value::Number(n) => {
+                if *n == (*n as i64) as f64 {
+                    Ok(format!("n:{}", *n as i64))
+                } else {
+                    Ok(format!("n:{n}"))
+                }
+            }
+            Value::Bool(b) => Ok(format!("b:{b}")),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "{op_name}: elements must be text, number, or bool, got {:?}",
+                    other
+                ),
+            )),
+        }
+    }
+    use std::collections::{HashMap, HashSet};
+    let mut set_a: HashSet<String> = HashSet::new();
+    let mut a_first: HashMap<String, Value> = HashMap::new();
+    for v in xs.iter() {
+        let k = key_for(v, op_name)?;
+        if set_a.insert(k.clone()) {
+            a_first.insert(k, v.clone());
+        }
+    }
+    let mut set_b: HashSet<String> = HashSet::new();
+    let mut b_first: HashMap<String, Value> = HashMap::new();
+    for v in ys.iter() {
+        let k = key_for(v, op_name)?;
+        if set_b.insert(k.clone()) {
+            b_first.insert(k, v.clone());
+        }
+    }
+    let (result_keys, value_lookup): (Vec<String>, &HashMap<String, Value>) = match builtin {
+        Some(Builtin::Setunion) => {
+            let mut keys: Vec<String> = set_a.union(&set_b).cloned().collect();
+            let mut merged = a_first;
+            for (k, v) in &b_first {
+                merged.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            keys.sort();
+            let mut out: Vec<Value> = Vec::with_capacity(keys.len());
+            for k in &keys {
+                if let Some(v) = merged.get(k) {
+                    out.push(v.clone());
+                }
+            }
+            return Ok(Value::List(Arc::new(out)));
+        }
+        Some(Builtin::Setinter) => (
+            set_a.intersection(&set_b).cloned().collect::<Vec<_>>(),
+            &a_first,
+        ),
+        Some(Builtin::Setdiff) => (
+            set_a.difference(&set_b).cloned().collect::<Vec<_>>(),
+            &a_first,
+        ),
+        _ => unreachable!(),
+    };
+    let mut keys = result_keys;
+    keys.sort();
+    let mut out: Vec<Value> = Vec::with_capacity(keys.len());
+    for k in &keys {
+        if let Some(v) = value_lookup.get(k) {
+            out.push(v.clone());
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -3537,9 +4398,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Clamp) && args.len() == 3 {
         return match (&args[0], &args[1], &args[2]) {
             (Value::Number(x), Value::Number(lo), Value::Number(hi)) => {
-                // Semantics: result = max(lo, min(hi, x)). When lo > hi the
-                // outer max wins and returns lo, so the result is always >= lo.
-                Ok(Value::Number(x.min(*hi).max(*lo)))
+                Ok(clamp_run(*x, *lo, *hi))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -3547,74 +4406,23 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
-    if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 2 {
+    if builtin == Some(Builtin::Min) && args.len() == 2 {
         return match (&args[0], &args[1]) {
-            (Value::Number(a), Value::Number(b)) => {
-                let result = if builtin == Some(Builtin::Min) {
-                    a.min(*b)
-                } else {
-                    a.max(*b)
-                };
-                Ok(Value::Number(result))
-            }
-            _ => Err(RuntimeError::new(
-                "ILO-R009",
-                format!("{} requires two numbers", name),
-            )),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.min(*b))),
+            _ => Err(RuntimeError::new("ILO-R009", "min requires two numbers".to_string())),
         };
     }
-    if matches!(builtin, Some(Builtin::Argmax | Builtin::Argmin)) && args.len() == 1 {
-        // arg{max,min} xs:L n > n — index of the {max,min} element. numpy
-        // convention: first occurrence wins on ties (strict `<`/`>`).
-        // NaN-propagation: any NaN element makes the result NaN (mirrors
-        // `max`/`min` 1-arg list form on NaN — see `vm_min_max_lst`).
-        let items = match &args[0] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name}: arg must be a list, got {:?}", other),
-                ));
-            }
+    if builtin == Some(Builtin::Max) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.max(*b))),
+            _ => Err(RuntimeError::new("ILO-R009", "max requires two numbers".to_string())),
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("{name}: cannot take {name} of an empty list"),
-            ));
-        }
-        let is_min = builtin == Some(Builtin::Argmin);
-        let mut best_idx: usize = 0;
-        let mut best_val: Option<f64> = None;
-        for (i, item) in items.iter().enumerate() {
-            match item {
-                Value::Number(n) => {
-                    if n.is_nan() {
-                        return Ok(Value::Number(f64::NAN));
-                    }
-                    match best_val {
-                        None => {
-                            best_val = Some(*n);
-                            best_idx = i;
-                        }
-                        Some(cur) => {
-                            let better = if is_min { *n < cur } else { *n > cur };
-                            if better {
-                                best_val = Some(*n);
-                                best_idx = i;
-                            }
-                        }
-                    }
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name}: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        return Ok(Value::Number(best_idx as f64));
+    }
+    if builtin == Some(Builtin::Argmax) && args.len() == 1 {
+        return argmax_argmin_run(false, "argmax", &args[0]);
+    }
+    if builtin == Some(Builtin::Argmin) && args.len() == 1 {
+        return argmax_argmin_run(true, "argmin", &args[0]);
     }
     if builtin == Some(Builtin::Argsort) && args.len() == 1 {
         // argsort xs:L n > L n — sorted-index permutation (ascending).
@@ -4416,134 +5224,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if n_raw.fract() != 0.0 || n_raw <= 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("chunks: size must be a positive integer, got {n_raw}"),
-            ));
-        }
-        let n = n_raw as usize;
-        let xs = match &args[1] {
-            Value::List(items) => items,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("chunks: requires a list, got {:?}", other),
-                ));
-            }
-        };
-        let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
-        for chunk in xs.chunks(n) {
-            out.push(Value::List(Arc::new(chunk.to_vec())));
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return chunks_run(n_raw, &args[1]);
     }
-    if matches!(
-        builtin,
-        Some(Builtin::Setunion) | Some(Builtin::Setinter) | Some(Builtin::Setdiff)
-    ) && args.len() == 2
-    {
-        let op_name = match builtin {
-            Some(Builtin::Setunion) => "setunion",
-            Some(Builtin::Setinter) => "setinter",
-            Some(Builtin::Setdiff) => "setdiff",
-            _ => unreachable!(),
-        };
-        let xs = match &args[0] {
-            Value::List(items) => items,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{op_name} arg 1 requires a list, got {:?}", other),
-                ));
-            }
-        };
-        let ys = match &args[1] {
-            Value::List(items) => items,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{op_name} arg 2 requires a list, got {:?}", other),
-                ));
-            }
-        };
-        // Build type-prefixed string keys to avoid Number(5)/Text("5") collisions
-        // (same precedent as uniqby post-hotfix). Restrict elements to t/n/b.
-        fn key_for(v: &Value, op_name: &str) -> std::result::Result<String, RuntimeError> {
-            match v {
-                Value::Text(s) => Ok(format!("t:{s}")),
-                Value::Number(n) => {
-                    if *n == (*n as i64) as f64 {
-                        Ok(format!("n:{}", *n as i64))
-                    } else {
-                        Ok(format!("n:{n}"))
-                    }
-                }
-                Value::Bool(b) => Ok(format!("b:{b}")),
-                other => Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "{op_name}: elements must be text, number, or bool, got {:?}",
-                        other
-                    ),
-                )),
-            }
-        }
-        use std::collections::{HashMap, HashSet};
-        let mut set_a: HashSet<String> = HashSet::new();
-        let mut a_first: HashMap<String, Value> = HashMap::new();
-        for v in xs.iter() {
-            let k = key_for(v, op_name)?;
-            if set_a.insert(k.clone()) {
-                a_first.insert(k, v.clone());
-            }
-        }
-        let mut set_b: HashSet<String> = HashSet::new();
-        let mut b_first: HashMap<String, Value> = HashMap::new();
-        for v in ys.iter() {
-            let k = key_for(v, op_name)?;
-            if set_b.insert(k.clone()) {
-                b_first.insert(k, v.clone());
-            }
-        }
-        let (result_keys, value_lookup): (Vec<String>, &HashMap<String, Value>) = match builtin {
-            Some(Builtin::Setunion) => {
-                let mut keys: Vec<String> = set_a.union(&set_b).cloned().collect();
-                // Need a combined lookup; clone into a single map.
-                // Use a static-ish approach: merge into a_first below.
-                let mut merged = a_first;
-                for (k, v) in &b_first {
-                    merged.entry(k.clone()).or_insert_with(|| v.clone());
-                }
-                keys.sort();
-                // Return early with merged map by re-binding locally.
-                let mut out: Vec<Value> = Vec::with_capacity(keys.len());
-                for k in &keys {
-                    if let Some(v) = merged.get(k) {
-                        out.push(v.clone());
-                    }
-                }
-                return Ok(Value::List(Arc::new(out)));
-            }
-            Some(Builtin::Setinter) => (
-                set_a.intersection(&set_b).cloned().collect::<Vec<_>>(),
-                &a_first,
-            ),
-            Some(Builtin::Setdiff) => (
-                set_a.difference(&set_b).cloned().collect::<Vec<_>>(),
-                &a_first,
-            ),
-            _ => unreachable!(),
-        };
-        let mut keys = result_keys;
-        keys.sort();
-        let mut out: Vec<Value> = Vec::with_capacity(keys.len());
-        for k in &keys {
-            if let Some(v) = value_lookup.get(k) {
-                out.push(v.clone());
-            }
-        }
-        return Ok(Value::List(Arc::new(out)));
+    if builtin == Some(Builtin::Setunion) && args.len() == 2 {
+        return setops_run(builtin, &args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Setinter) && args.len() == 2 {
+        return setops_run(builtin, &args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Setdiff) && args.len() == 2 {
+        return setops_run(builtin, &args[0], &args[1]);
     }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
@@ -5036,211 +5726,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(get_many_fetch(&urls))));
     }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
-        let (url, body) = match (&args[0], &args[1]) {
-            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
-            _ => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("pst requires (t, t), got ({:?}, {:?})", args[0], args[1]),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_net(url.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let headers = if args.len() == 3 {
-            match &args[2] {
-                Value::Map(m) => m
-                    .iter()
-                    .map(|(k, v)| {
-                        let vs: String = match v {
-                            Value::Text(s) => (**s).clone(),
-                            other => format!("{other:?}"),
-                        };
-                        (k.to_display_string(), vs)
-                    })
-                    .collect::<Vec<_>>(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("pst headers must be M t t, got {:?}", other),
-                    ));
-                }
-            }
-        } else {
-            vec![]
-        };
-        return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = minreq::post(url.as_str()).with_body(body.as_str());
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, body, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
-        };
+        return post_run(env, args);
     }
-    // HTTP verb cluster (#5z). Same shape as `pst` (PUT, PATCH) or `get`
-    // (DELETE, HEAD, OPTIONS) — optional 3rd-arg (PUT/PAT) or 2nd-arg
-    // (DEL/HD/OPT) `M t t` headers map. Returns `R t t`.
-    if matches!(builtin, Some(Builtin::Put) | Some(Builtin::Pat))
-        && (args.len() == 2 || args.len() == 3)
-    {
-        let name = builtin.unwrap().name();
-        let (url, body) = match (&args[0], &args[1]) {
-            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
-            _ => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} requires (t, t), got ({:?}, {:?})", args[0], args[1]),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_net(url.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let headers = if args.len() == 3 {
-            match &args[2] {
-                Value::Map(m) => m
-                    .iter()
-                    .map(|(k, v)| {
-                        let vs: String = match v {
-                            Value::Text(s) => (**s).clone(),
-                            other => format!("{other:?}"),
-                        };
-                        (k.to_display_string(), vs)
-                    })
-                    .collect::<Vec<_>>(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} headers must be M t t, got {:?}", other),
-                    ));
-                }
-            }
-        } else {
-            vec![]
-        };
-        return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = match builtin {
-                    Some(Builtin::Put) => minreq::put(url.as_str()),
-                    Some(Builtin::Pat) => minreq::patch(url.as_str()),
-                    _ => unreachable!(),
-                }
-                .with_body(body.as_str());
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, body, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
-        };
+    // HTTP verb cluster (#5z). Delegated to #[inline(never)] helpers so the
+    // call_function frame stays small. Each verb gets an explicit `if builtin ==`
+    // guard so the check-dispatch-arms script can measure them individually.
+    if builtin == Some(Builtin::Put) && (args.len() == 2 || args.len() == 3) {
+        return put_pat_run(env, builtin, args);
     }
-    if matches!(
-        builtin,
-        Some(Builtin::Del) | Some(Builtin::Hed) | Some(Builtin::Opt)
-    ) && (args.len() == 1 || args.len() == 2)
-    {
-        let name = builtin.unwrap().name();
-        let url = match &args[0] {
-            Value::Text(u) => u.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} requires text (url), got {:?}", other),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_net(url.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let headers = if args.len() == 2 {
-            match &args[1] {
-                Value::Map(m) => m
-                    .iter()
-                    .map(|(k, v)| {
-                        let vs: String = match v {
-                            Value::Text(s) => (**s).clone(),
-                            other => format!("{other:?}"),
-                        };
-                        (k.to_display_string(), vs)
-                    })
-                    .collect::<Vec<_>>(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} headers must be M t t, got {:?}", other),
-                    ));
-                }
-            }
-        } else {
-            vec![]
-        };
-        return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = match builtin {
-                    Some(Builtin::Del) => minreq::delete(url.as_str()),
-                    Some(Builtin::Hed) => minreq::head(url.as_str()),
-                    Some(Builtin::Opt) => minreq::options(url.as_str()),
-
-                    _ => unreachable!(),
-                };
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(body) => {
-                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
-                        }
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
-        };
+    if builtin == Some(Builtin::Pat) && (args.len() == 2 || args.len() == 3) {
+        return put_pat_run(env, builtin, args);
+    }
+    if builtin == Some(Builtin::Del) && (args.len() == 1 || args.len() == 2) {
+        return del_hed_opt_run(env, builtin, args);
+    }
+    if builtin == Some(Builtin::Hed) && (args.len() == 1 || args.len() == 2) {
+        return del_hed_opt_run(env, builtin, args);
+    }
+    if builtin == Some(Builtin::Opt) && (args.len() == 1 || args.len() == 2) {
+        return del_hed_opt_run(env, builtin, args);
     }
     if builtin == Some(Builtin::GetTo) && args.len() == 2 {
         let url = match &args[0] {
@@ -5579,105 +6083,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Cap) && args.len() == 1 {
-        return match &args[0] {
-            Value::Text(s) => {
-                let mut chars = s.chars();
-                let out = match chars.next() {
-                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                };
-                Ok(Value::Text(Arc::new(out)))
-            }
-            other => Err(RuntimeError::new(
-                "ILO-R009",
-                format!("cap requires text, got {:?}", other),
-            )),
-        };
+        return cap_run(&args[0]);
     }
-    if (builtin == Some(Builtin::Padl) || builtin == Some(Builtin::Padr))
-        && (args.len() == 2 || args.len() == 3)
-    {
-        let name = if builtin == Some(Builtin::Padl) {
-            "padl"
-        } else {
-            "padr"
-        };
-        let s = match &args[0] {
-            Value::Text(t) => t.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} arg 1 requires text, got {:?}", other),
-                ));
-            }
-        };
-        let w = match &args[1] {
-            Value::Number(n) => {
-                if !n.is_finite() || n.fract() != 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} width must be a non-negative integer, got {n}"),
-                    ));
-                }
-                if *n < 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} width must be non-negative, got {n}"),
-                    ));
-                }
-                *n as usize
-            }
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} arg 2 requires number, got {:?}", other),
-                ));
-            }
-        };
-        // Resolve pad char: explicit arg validated as a 1-Unicode-scalar string,
-        // or ' ' when omitted (2-arg form). Single-char enforcement keeps width-in-chars
-        // semantics meaningful — a multi-char pad would make the output not line up to `w`.
-        let pad_char: char = if args.len() == 3 {
-            match &args[2] {
-                Value::Text(t) => {
-                    let mut iter = t.chars();
-                    match (iter.next(), iter.next()) {
-                        (Some(c), None) => c,
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "{name} pad char must be a 1-character string, got {:?}",
-                                    t.as_str()
-                                ),
-                            ));
-                        }
-                    }
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "{name} pad char must be a 1-character string, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            }
-        } else {
-            ' '
-        };
-        let char_count = s.chars().count();
-        if char_count >= w {
-            return Ok(Value::Text(s));
-        }
-        let pad: String = std::iter::repeat_n(pad_char, w - char_count).collect();
-        let out = if builtin == Some(Builtin::Padl) {
-            format!("{pad}{s}")
-        } else {
-            format!("{s}{pad}")
-        };
-        return Ok(Value::Text(Arc::new(out)));
+    if builtin == Some(Builtin::Padl) && (args.len() == 2 || args.len() == 3) {
+        return padl_padr_run(true, &args);
+    }
+    if builtin == Some(Builtin::Padr) && (args.len() == 2 || args.len() == 3) {
+        return padl_padr_run(false, &args);
     }
     if builtin == Some(Builtin::Ord) && args.len() == 1 {
         return match &args[0] {
@@ -5772,81 +6184,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Fmt) && !args.is_empty() {
-        let template = match &args[0] {
-            Value::Text(s) => s.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("fmt first arg must be text template, got {:?}", other),
-                ));
-            }
-        };
-        let mut result = String::new();
-        let mut arg_idx = 1;
-        let mut chars = template.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '{'
-                && (chars.peek() == Some(&'}')
-                    || chars.peek() == Some(&':')
-                    || chars.peek() == Some(&'.'))
-            {
-                // Collect spec body up to '}'.
-                let mut spec = String::from("{");
-                let mut terminated = false;
-                for sc in chars.by_ref() {
-                    spec.push(sc);
-                    if sc == '}' {
-                        terminated = true;
-                        break;
-                    }
-                }
-                if !terminated {
-                    // Unterminated brace — leave as literal (matches the old
-                    // permissive behaviour for `{a:1}` style non-placeholder
-                    // text that just happens to start with `{`).
-                    result.push_str(&spec);
-                    continue;
-                }
-                match parse_fmt_spec(&spec) {
-                    Some(FmtSpec::Bare) => {
-                        if arg_idx < args.len() {
-                            result.push_str(&format!("{}", args[arg_idx]));
-                            arg_idx += 1;
-                        } else {
-                            result.push_str("{}");
-                        }
-                    }
-                    Some(spec_kind) => {
-                        if arg_idx >= args.len() {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!("fmt template spec `{spec}` has no matching value arg"),
-                            ));
-                        }
-                        let rendered = apply_fmt_spec(&spec_kind, &args[arg_idx]).map_err(|e| {
-                            RuntimeError::new("ILO-R009", format!("fmt spec `{spec}`: {e}"))
-                        })?;
-                        result.push_str(&rendered);
-                        arg_idx += 1;
-                    }
-                    None => {
-                        return Err(RuntimeError::new(
-                            "ILO-R009",
-                            format!(
-                                "fmt: unsupported placeholder spec `{spec}`. \
-                                 Supported: `{{}}`, `{{.Nf}}` / `{{:.Nf}}` (decimal places), \
-                                 `{{:N}}` (right-align width), `{{:Nd}}` (integer width), \
-                                 `{{:<N}}` (left-align width). Zero-padded widths and hex/sign \
-                                 are out of scope; compose via `fmt2` / `padl` / `padr`."
-                            ),
-                        ));
-                    }
-                }
-            } else {
-                result.push(c);
-            }
-        }
-        return Ok(Value::Text(Arc::new(result)));
+        return fmt_run(&args);
     }
     if builtin == Some(Builtin::Ls) && args.len() == 1 {
         // lsd dir > R (L t) t — list non-recursive directory entries (filenames
@@ -6314,90 +6652,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return rdinl_impl();
     }
     if builtin == Some(Builtin::Wr) && (args.len() == 2 || args.len() == 3) {
-        let path = match &args[0] {
-            Value::Text(s) => s.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("wr: first arg must be a text path, got {:?}", other),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_write(path.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let content = if args.len() == 3 {
-            let fmt = match &args[2] {
-                Value::Text(s) => s.clone(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("wr: format arg must be text, got {:?}", other),
-                    ));
-                }
-            };
-            match fmt.as_str() {
-                "csv" | "tsv" => {
-                    let sep = if fmt.as_str() == "csv" { ',' } else { '\t' };
-                    let rows = match &args[1] {
-                        Value::List(l) => l,
-                        other => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "wr: data for {fmt} must be a list of rows, got {:?}",
-                                    other
-                                ),
-                            ));
-                        }
-                    };
-                    write_csv_tsv(rows, sep)?
-                }
-                "json" => {
-                    fn value_to_json(v: &Value) -> serde_json::Value {
-                        match v {
-                            Value::Number(n) => serde_json::Value::from(*n),
-                            Value::Text(s) => serde_json::Value::from(s.as_str()),
-                            Value::Bool(b) => serde_json::Value::from(*b),
-                            Value::List(l) => {
-                                serde_json::Value::Array(l.iter().map(value_to_json).collect())
-                            }
-                            Value::Map(m) => {
-                                let obj: serde_json::Map<String, serde_json::Value> = m
-                                    .iter()
-                                    .map(|(k, v)| (k.to_display_string(), value_to_json(v)))
-                                    .collect();
-                                serde_json::Value::Object(obj)
-                            }
-                            Value::Nil => serde_json::Value::Null,
-                            other => serde_json::Value::from(format!("{other}")),
-                        }
-                    }
-                    serde_json::to_string_pretty(&value_to_json(&args[1]))
-                        .unwrap_or_else(|e| format!("json error: {e}"))
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("wr: unknown format '{other}', expected csv, tsv, or json"),
-                    ));
-                }
-            }
-        } else {
-            match &args[1] {
-                Value::Text(s) => (**s).clone(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("wr: second arg must be text content, got {:?}", other),
-                    ));
-                }
-            }
-        };
-        return match std::fs::write(path.as_str(), &content) {
-            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
-            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-        };
+        return wr_run(env, args);
     }
     if builtin == Some(Builtin::Wra) && args.len() == 2 {
         let path = match &args[0] {
@@ -6838,14 +7093,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )
         })?;
         let captures = closure_captures(&args[0]);
-        // Consume args so we can move the input List Arc and try Arc::make_mut
-        // for the RC=1 in-place compact fast path. When the input is sole-owned
-        // we mutate the underlying Vec via Vec::retain — N kept items skip the
-        // per-item Value::clone() the cold path pays. When shared we fall
-        // through to a fresh allocation.
         let mut args_iter = args.into_iter();
-        let fn_arg = args_iter.next().unwrap();
-        let _ = fn_arg;
+        let _ = args_iter.next(); // fn arg
         let (ctx, list_arg) = if args_iter.len() == 2 {
             let c = args_iter.next().unwrap();
             let l = args_iter.next().unwrap();
@@ -6853,7 +7102,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         } else {
             (None, args_iter.next().unwrap())
         };
-        let mut items = match list_arg {
+        let items = match list_arg {
             Value::List(l) => l,
             other => {
                 return Err(RuntimeError::new(
@@ -6862,48 +7111,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        // First pass: evaluate the predicate once per item, recording a bitmap
-        // of keeps so we never call the predicate twice. The predicate may
-        // panic — we don't reorder side effects relative to the cold path.
-        let mut keep: Vec<bool> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            let mut call_args = match &ctx {
-                Some(c) => vec![item.clone(), c.clone()],
-                None => vec![item.clone()],
-            };
-            call_args.extend(captures.iter().cloned());
-            match call_function(env, &fn_name, call_args)? {
-                Value::Bool(true) => keep.push(true),
-                Value::Bool(false) => keep.push(false),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("flt: predicate must return bool, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        // Second pass: branch on RC. Sole-owned -> retain in place (zero
-        // per-item Value::clone()s). Shared -> clone-collect kept items only
-        // (cheaper than cloning the full Vec when many items are dropped).
-        return if Arc::strong_count(&items) == 1 {
-            let inner = Arc::make_mut(&mut items);
-            let mut idx = 0usize;
-            inner.retain(|_| {
-                let k = keep[idx];
-                idx += 1;
-                k
-            });
-            Ok(Value::List(items))
-        } else {
-            let mut result = Vec::with_capacity(keep.iter().filter(|k| **k).count());
-            for (item, &k) in items.iter().zip(keep.iter()) {
-                if k {
-                    result.push(item.clone());
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
-        };
+        return flt_run(env, &fn_name, captures, ctx, items);
     }
     if builtin == Some(Builtin::Ct) && (args.len() == 2 || args.len() == 3) {
         // ct fn xs / ct fn ctx xs  → number of elements where fn returns true.
@@ -7095,40 +7303,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut out: Vec<Value> = Vec::new();
-        for item in items.iter() {
-            let mut call_args = vec![item.clone()];
-            call_args.extend(captures.iter().cloned());
-            let key = call_function(env, &fn_name, call_args)?;
-            // Prefix the hashed key with a type tag so values from distinct
-            // domains never alias each other. Without this, `Number(5)` and
-            // `Text("5")` both stringify to `"5"` and collide.
-            let key_str = match &key {
-                Value::Text(s) => format!("t:{s}"),
-                Value::Number(n) => {
-                    if *n == (*n as i64) as f64 {
-                        format!("n:{}", *n as i64)
-                    } else {
-                        format!("n:{n}")
-                    }
-                }
-                Value::Bool(b) => format!("b:{b}"),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "uniqby: key function must return a string, number, or bool, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            if seen.insert(key_str) {
-                out.push(item.clone());
-            }
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return uniqby_run(env, &fn_name, captures, items);
     }
 
     if builtin == Some(Builtin::Grp) && args.len() == 2 {
@@ -7151,41 +7326,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
-            std::collections::HashMap::new();
-        for item in items.iter() {
-            let mut call_args = vec![item.clone()];
-            call_args.extend(captures.iter().cloned());
-            let key = call_function(env, &fn_name, call_args)?;
-            let map_key = match &key {
-                Value::Text(s) => MapKey::Text((**s).clone()),
-                Value::Number(n) => {
-                    if !n.is_finite() {
-                        return Err(RuntimeError::new(
-                            "ILO-R009",
-                            format!("grp: numeric key must be finite, got {n}"),
-                        ));
-                    }
-                    MapKey::Int(n.floor() as i64)
-                }
-                Value::Bool(b) => MapKey::Text(format!("{b}")),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "grp: key function must return a string, number, or bool, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            groups.entry(map_key).or_default().push(item.clone());
-        }
-        let map: HashMap<MapKey, Value> = groups
-            .into_iter()
-            .map(|(k, v)| (k, Value::List(Arc::new(v))))
-            .collect();
-        return Ok(Value::Map(Arc::new(map)));
+        return grp_run(env, &fn_name, captures, items);
     }
     if builtin == Some(Builtin::Frq) && args.len() == 1 {
         let items = match &args[0] {
@@ -7466,15 +7607,6 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Ewm) && args.len() == 2 {
-        let items = match &args[0] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("ewm: first arg must be a list, got {:?}", other),
-                ));
-            }
-        };
         let a = match &args[1] {
             Value::Number(n) => *n,
             other => {
@@ -7484,90 +7616,30 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if !(0.0..=1.0).contains(&a) {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("ewm: smoothing factor a must be in [0, 1], got {}", a),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("ewm: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let out: Vec<Value> = ewm_compute(&nums, a)
-            .into_iter()
-            .map(Value::Number)
-            .collect();
-        return Ok(Value::List(Arc::new(out)));
+        return ewm_run(&args[0], a);
     }
     // Rolling-window reducers — rsum / ravg / rmin (n, xs).
-    if let Some(b) = builtin
-        && matches!(b, Builtin::Rsum | Builtin::Ravg | Builtin::Rmin)
-        && args.len() == 2
-    {
-        let name = b.name();
+    // Explicit per-verb guards so check-dispatch-arms measures each arm individually.
+    if builtin == Some(Builtin::Rsum) && args.len() == 2 {
         let n_f = match &args[0] {
             Value::Number(n) => *n,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name}: first arg n must be a number, got {:?}", other),
-                ));
-            }
+            other => return Err(RuntimeError::new("ILO-R009", format!("rsum: first arg n must be a number, got {:?}", other))),
         };
-        if !n_f.is_finite() || n_f.fract() != 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "{name}: window size n must be a non-negative integer, got {}",
-                    n_f
-                ),
-            ));
-        }
-        if n_f <= 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("{name}: window size n must be >= 1, got {}", n_f),
-            ));
-        }
-        let n = n_f as usize;
-        let items = match &args[1] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name}: second arg must be a list, got {:?}", other),
-                ));
-            }
+        return rolling_window_run("rsum", Builtin::Rsum, n_f, &args[1]);
+    }
+    if builtin == Some(Builtin::Ravg) && args.len() == 2 {
+        let n_f = match &args[0] {
+            Value::Number(n) => *n,
+            other => return Err(RuntimeError::new("ILO-R009", format!("ravg: first arg n must be a number, got {:?}", other))),
         };
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(v) => nums.push(*v),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name}: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let computed = match b {
-            Builtin::Rsum => rsum_compute(n, &nums),
-            Builtin::Ravg => ravg_compute(n, &nums),
-            Builtin::Rmin => rmin_compute(n, &nums),
-            _ => unreachable!(),
+        return rolling_window_run("ravg", Builtin::Ravg, n_f, &args[1]);
+    }
+    if builtin == Some(Builtin::Rmin) && args.len() == 2 {
+        let n_f = match &args[0] {
+            Value::Number(n) => *n,
+            other => return Err(RuntimeError::new("ILO-R009", format!("rmin: first arg n must be a number, got {:?}", other))),
         };
-        let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
-        return Ok(Value::List(Arc::new(out)));
+        return rolling_window_run("rmin", Builtin::Rmin, n_f, &args[1]);
     }
     if builtin == Some(Builtin::Where) && args.len() == 3 {
         // where cond xs ys > L a — parallel-list conditional select.
