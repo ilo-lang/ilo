@@ -1,0 +1,96 @@
+{
+  "generated": "2026-05-22T18:45:51Z",
+  "experiment": "ILO-415 sigil A/B: >> vs -> as pipe operator",
+  "variants": {
+    "A": ">> (current, baseline)",
+    "B": "-> (proposed; not yet implemented \u2014 all B tasks expected to fail)"
+  },
+  "tasks": [
+    {
+      "task": "t01-basic-pipe",
+      "tokens": 21,
+      "varA": {
+        "check": "PASS",
+        "run": "PASS",
+        "check_detail": "ok",
+        "run_detail": "ok"
+      },
+      "varB": {
+        "check": "FAIL",
+        "run": "SKIP",
+        "check_detail": "ILO-P010",
+        "run_detail": "skipped"
+      }
+    },
+    {
+      "task": "t02-pipe-with-list",
+      "tokens": 19,
+      "varA": {
+        "check": "PASS",
+        "run": "PASS",
+        "check_detail": "ok",
+        "run_detail": "ok"
+      },
+      "varB": {
+        "check": "FAIL",
+        "run": "SKIP",
+        "check_detail": "ILO-P010",
+        "run_detail": "skipped"
+      }
+    },
+    {
+      "task": "t03-pipe-str-transform",
+      "tokens": 8,
+      "varA": {
+        "check": "PASS",
+        "run": "PASS",
+        "check_detail": "ok",
+        "run_detail": "ok"
+      },
+      "varB": {
+        "check": "FAIL",
+        "run": "SKIP",
+        "check_detail": "ILO-P010",
+        "run_detail": "skipped"
+      }
+    },
+    {
+      "task": "t04-pipe-paren-wrap",
+      "tokens": 20,
+      "varA": {
+        "check": "PASS",
+        "run": "PASS",
+        "check_detail": "ok",
+        "run_detail": "ok"
+      },
+      "varB": {
+        "check": "FAIL",
+        "run": "SKIP",
+        "check_detail": "ILO-P009",
+        "run_detail": "skipped"
+      }
+    },
+    {
+      "task": "t05-pipe-multiline",
+      "tokens": 11,
+      "varA": {
+        "check": "PASS",
+        "run": "PASS",
+        "check_detail": "ok",
+        "run_detail": "ok"
+      },
+      "varB": {
+        "check": "FAIL",
+        "run": "SKIP",
+        "check_detail": "ILO-P009",
+        "run_detail": "skipped"
+      }
+    }
+  ],
+  "summary": {
+    "varA_pass": 5,
+    "varA_fail": 0,
+    "varB_pass": 0,
+    "varB_fail": 5
+  }
+}

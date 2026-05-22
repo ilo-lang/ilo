@@ -1,0 +1,8 @@
+-- T05: multiline pipe chain (tests newline-normalization with pipes)
+num-len x:n>n
+  x
+    ->str
+    ->len
+
+-- run: num-len 12345
+-- out: 5

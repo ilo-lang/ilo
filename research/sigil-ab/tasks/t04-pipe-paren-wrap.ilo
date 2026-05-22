@@ -1,0 +1,8 @@
+-- T04: pipe with paren wrapping (non-last in expression context)
+-- Tests that (x>>f>>g) works inside a larger expression
+dbl x:n>n;*x 2
+inc x:n>n;+x 1
+add-piped a:n b:n>n;+(a>>dbl) (b>>inc)
+
+-- run: add-piped 3 4
+-- out: 11

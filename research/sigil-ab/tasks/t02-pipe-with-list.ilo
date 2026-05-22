@@ -1,0 +1,7 @@
+-- T02: pipe with list operations - filter then map via pipe
+pos x:n>b;>x 0
+sq x:n>n;*x x
+main xs:L n>L n;xs>>flt pos>>map sq
+
+-- run: main [1,-2,3,-4,5]
+-- out: [1, 9, 25]
