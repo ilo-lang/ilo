@@ -10,6 +10,11 @@ permissions:
 
 jobs:
   bench:
+    # Hardware standardisation (ILO-348): GitHub's standard ubuntu-latest
+    # runners are always 2-core / 7 GB RAM machines.  We pin here and record
+    # the actual CPU model at run-time; results are rejected when the shape
+    # differs from the stored baseline.  Re-seed by deleting
+    # bench/hw-baseline.json and letting one run write the new file.
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +38,69 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Collect hardware info and check baseline
+        run: |
+          python3 - << 'PYEOF'
+          import json, os, pathlib, sys
+
+          cpu_model = "unknown"
+          cpu_count = os.cpu_count() or 0
+          mem_gb    = 0
+
+          try:
+              lines = pathlib.Path("/proc/cpuinfo").read_text().splitlines()
+              for l in lines:
+                  if l.startswith("model name"):
+                      cpu_model = l.split(":", 1)[1].strip()
+                      break
+          except Exception:
+              pass
+
+          try:
+              mem_kb = int(next(
+                  l.split()[1] for l in pathlib.Path("/proc/meminfo").read_text().splitlines()
+                  if l.startswith("MemTotal")
+              ))
+              mem_gb = round(mem_kb / 1024 / 1024, 1)
+          except Exception:
+              pass
+
+          hw = {"cpu_model": cpu_model, "cpu_count": cpu_count, "mem_gb": mem_gb}
+          print(f"Hardware detected: {hw}")
+
+          baseline_path = pathlib.Path("bench/hw-baseline.json")
+          if not baseline_path.exists():
+              print("No hw-baseline.json found — seeding from current run.")
+              baseline_path.write_text(json.dumps(hw, indent=2) + "\n")
+          else:
+              baseline = json.loads(baseline_path.read_text())
+              mismatches = []
+              if baseline["cpu_model"] != hw["cpu_model"]:
+                  mismatches.append(
+                      f"  cpu_model: baseline={baseline['cpu_model']!r}  actual={hw['cpu_model']!r}"
+                  )
+              if baseline["cpu_count"] != hw["cpu_count"]:
+                  mismatches.append(
+                      f"  cpu_count: baseline={baseline['cpu_count']}  actual={hw['cpu_count']}"
+                  )
+              if abs(baseline["mem_gb"] - hw["mem_gb"]) > 0.5:
+                  mismatches.append(
+                      f"  mem_gb: baseline={baseline['mem_gb']}  actual={hw['mem_gb']}"
+                  )
+              if mismatches:
+                  print("HARDWARE MISMATCH — results rejected:")
+                  for m in mismatches:
+                      print(m)
+                  print()
+                  print("Re-seed by deleting bench/hw-baseline.json and re-running.")
+                  sys.exit(1)
+              else:
+                  print("Hardware matches baseline — proceeding.")
+
+          # Write hw info to a temp file so run.sh can embed it
+          pathlib.Path("bench/.hw-info.json").write_text(json.dumps(hw))
+          PYEOF
+
       - name: Run benchmark suite
         run: bash bench/run.sh --no-rust
 
@@ -53,8 +121,16 @@ jobs:
           if [ -f bench/results-prev.json ]; then
             python3 - bench/results.json bench/results-prev.json << 'PYEOF'
           import sys, json
-          cur  = json.load(open(sys.argv[1]))["benchmarks"]
-          prev = json.load(open(sys.argv[2]))["benchmarks"]
+          cur_doc  = json.load(open(sys.argv[1]))
+          prev_doc = json.load(open(sys.argv[2]))
+          # Skip comparison if hardware shape changed between runs
+          cur_hw  = cur_doc.get("hardware", {})
+          prev_hw = prev_doc.get("hardware", {})
+          if cur_hw and prev_hw and cur_hw != prev_hw:
+              print(f"Hardware changed ({prev_hw} -> {cur_hw}); skipping regression check.")
+              sys.exit(0)
+          cur  = cur_doc["benchmarks"]
+          prev = prev_doc["benchmarks"]
           failures = []
           for bench, langs in cur.items():
               for lang, ns in langs.items():
@@ -80,5 +156,5 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(bench): update nightly results [skip ci]"
-          file_pattern: "bench/results.json bench/results-prev.json"
+          file_pattern: "bench/results.json bench/results-prev.json bench/hw-baseline.json"
           branch: main
