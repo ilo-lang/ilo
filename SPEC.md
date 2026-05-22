@@ -83,6 +83,23 @@ color x:S red green blue > t
 
 Sum types are compatible with `t` - a sum value can be passed to any `t` parameter.
 
+### Discriminated union types (`type Foo = A | B(n) | C(t)`)
+
+Named sum types with optional per-variant payloads (Rust-style enums). Each variant is either payload-less or carries exactly one value of a primitive type.
+
+```
+type shape = circle(n) | square(n) | point
+
+area s:shape > n
+  ?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}
+```
+
+- **Declaration**: `type Name = V1 | V2(payloadType) | ...` at top level.
+- **Construction**: `circle 5` (payload variant), `point` (payload-less variant used as value directly).
+- **Pattern match**: `?s{circle(r):...; square(side):...; point:...}` using `tag(binding):` or `tag:` arms.
+- **Exhaustiveness**: verifier checks all variants are covered (wildcard `_:` accepted).
+- **VM**: programs using discriminated unions fall back to the tree interpreter (JIT codegen deferred).
+
 ### Map type (`M k v`)
 
 Dynamic key-value collection. Keys are typed: text (`t`) or integer (`n`). `Int(1)` and `Text("1")` are distinct keys.

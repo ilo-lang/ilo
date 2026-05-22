@@ -272,7 +272,7 @@ pub fn build_graph(program: &Program) -> ProgramGraph {
         .declarations
         .iter()
         .filter_map(|d| match d {
-            Decl::TypeDef { name, .. } => Some(name.clone()),
+            Decl::TypeDef { name, .. } | Decl::SumType { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
@@ -373,7 +373,7 @@ pub fn build_graph(program: &Program) -> ProgramGraph {
 /// Find a declaration by name.
 fn find_decl<'a>(program: &'a Program, name: &str) -> Option<&'a Decl> {
     program.declarations.iter().find(|d| match d {
-        Decl::Function { name: n, .. } | Decl::TypeDef { name: n, .. } => n == name,
+        Decl::Function { name: n, .. } | Decl::TypeDef { name: n, .. } | Decl::SumType { name: n, .. } => n == name,
         _ => false,
     })
 }

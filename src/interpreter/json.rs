@@ -65,6 +65,14 @@ impl Value {
             }
             Value::FnRef(_) => Err("functions cannot be serialized".to_string()),
             Value::Closure { .. } => Err("closures cannot be serialized".to_string()),
+            Value::Variant { tag, payload, .. } => {
+                let mut map = serde_json::Map::with_capacity(2);
+                map.insert("tag".to_string(), serde_json::Value::String(tag.clone()));
+                if let Some(p) = payload {
+                    map.insert("payload".to_string(), p.to_json()?);
+                }
+                Ok(serde_json::Value::Object(map))
+            }
         }
     }
 

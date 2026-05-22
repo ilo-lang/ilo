@@ -2246,6 +2246,7 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
         ast::Decl::Tool { name, .. } => Some(name),
         ast::Decl::TypeDef { name, .. } => Some(name),
         ast::Decl::Alias { name, .. } => Some(name),
+        ast::Decl::SumType { name, .. } => Some(name),
         ast::Decl::Use { .. } | ast::Decl::Error { .. } => None,
     }
 }

@@ -200,6 +200,7 @@ impl From<&crate::vm::CompileError> for Diagnostic {
             CompileError::UnsupportedClosureCapture { .. } => "ILO-E802",
             CompileError::RegisterOverflow { .. } => "ILO-T035",
             CompileError::CallRegisterOverflow { .. } => "ILO-T036",
+            CompileError::SumTypeNotSupported { .. } => "ILO-E803",
         };
         let d = Diagnostic::error(e.to_string()).with_code(code);
         match e {

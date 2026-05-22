@@ -86,6 +86,11 @@ struct TypeDef {
 struct VerifyContext {
     functions: HashMap<String, FuncSig>,
     types: HashMap<String, TypeDef>,
+    /// Named discriminated-union types declared with `type Foo = A(n) | B | C(t)`.
+    sum_types: HashMap<String, Vec<crate::ast::Variant>>,
+    /// Variant constructor names (both payload and payload-less) registered from sum type decls.
+    /// Used to suppress ILO-T039 for 0-arg variant constructors used as values.
+    variant_constructors: std::collections::HashSet<String>,
     aliases: HashMap<String, Ty>,
     errors: Vec<VerifyError>,
     in_loop: bool,
@@ -3821,6 +3826,8 @@ impl VerifyContext {
         Self {
             functions: HashMap::new(),
             types: HashMap::new(),
+            sum_types: HashMap::new(),
+            variant_constructors: std::collections::HashSet::new(),
             aliases: HashMap::new(),
             errors: Vec::new(),
             in_loop: false,
@@ -3932,6 +3939,45 @@ impl VerifyContext {
             }
         }
 
+        // Collect sum type declarations and register variant constructors as functions.
+        for decl in &program.declarations {
+            if let Decl::SumType { name, variants, .. } = decl {
+                if self.sum_types.contains_key(name) || self.types.contains_key(name) || self.aliases.contains_key(name) {
+                    self.err(
+                        "ILO-T001",
+                        "<global>",
+                        format!("duplicate type definition '{name}'"),
+                        None,
+                        None,
+                    );
+                    continue;
+                }
+                self.sum_types.insert(name.clone(), variants.clone());
+                // Register each variant constructor as a callable function.
+                // Payload-less variant: 0 params, returns Named(type_name).
+                // Payload variant:      1 param of the payload type, returns Named(type_name).
+                for v in variants {
+                    let vfn_params = match &v.payload {
+                        Some(ty) => vec![(
+                            "payload".to_string(),
+                            convert_type_with_aliases(ty, &self.aliases),
+                        )],
+                        None => vec![],
+                    };
+                    let vfn_ret = Ty::Named(name.clone());
+                    // Variant constructors shadow nothing important and are not user fns.
+                    self.variant_constructors.insert(v.name.clone());
+                    self.functions.insert(
+                        v.name.clone(),
+                        FuncSig {
+                            params: vfn_params,
+                            return_type: vfn_ret,
+                        },
+                    );
+                }
+            }
+        }
+
         // Second pass: collect functions and tools, validate Named types in signatures
         for decl in &program.declarations {
             match decl {
@@ -4006,6 +4052,7 @@ impl VerifyContext {
                     );
                 }
                 Decl::TypeDef { .. } => {} // already handled
+                Decl::SumType { .. } => {} // already handled above
                 Decl::Alias { .. } => {}   // already handled
                 Decl::Use { .. } => {}     // resolved before verify — skip
                 Decl::Error { .. } => {}   // poison node — skip silently
@@ -4126,7 +4173,9 @@ impl VerifyContext {
 
     fn validate_named_type_recursive(&mut self, ty: &Ty, ctx: &str) {
         match ty {
-            Ty::Named(name) if !self.types.contains_key(name) => {
+            Ty::Named(name)
+                if !self.types.contains_key(name) && !self.sum_types.contains_key(name) =>
+            {
                 let hint =
                     closest_match(name, self.types.keys()).map(|s| format!("did you mean '{s}'?"));
                 self.err(
@@ -4675,6 +4724,23 @@ impl VerifyContext {
                 };
                 scope_insert(scope, binding.clone(), bound_ty);
             }
+            Pattern::Variant { tag, binding } => {
+                // Look up the variant's payload type in the sum_types map.
+                // Bind the payload to `binding` (if present) with the declared payload type.
+                let payload_ty = self
+                    .sum_types
+                    .values()
+                    .flat_map(|vs| vs.iter())
+                    .find(|v| &v.name == tag)
+                    .and_then(|v| v.payload.as_ref())
+                    .map(|ty| convert_type_with_aliases(ty, &self.aliases))
+                    .unwrap_or(Ty::Unknown);
+                if let Some(b) = binding {
+                    if b != "_" {
+                        scope_insert(scope, b.clone(), payload_ty);
+                    }
+                }
+            }
         }
     }
 
@@ -4704,6 +4770,11 @@ impl VerifyContext {
                     // never intentional — the result is a function value, not a
                     // `ret`. Emit a hint so the agent gets the correction inline.
                     if params.is_empty() {
+                        if self.variant_constructors.contains(name) {
+                            // 0-arg variant constructor used as a value — resolve directly to the
+                            // variant's return type (the sum type), not a Fn reference.
+                            return ret;
+                        }
                         self.err(
                             "ILO-T039",
                             func,
@@ -5932,6 +6003,53 @@ ilo has no tuple type."
                             names
                                 .iter()
                                 .map(|n| format!("\"{n}\": <expr>"))
+                                .collect::<Vec<_>>()
+                                .join(" or ")
+                        )),
+                        Some(span),
+                    );
+                }
+            }
+            // Named sum types (from `type Foo = A | B(n)`): exhaustive if all
+            // variant tags are covered by Variant patterns.
+            Ty::Named(type_name) if self.sum_types.contains_key(type_name.as_str()) => {
+                let variants = self.sum_types[type_name.as_str()].clone();
+                let covered: Vec<&str> = arms
+                    .iter()
+                    .filter_map(|a| match &a.pattern {
+                        Pattern::Variant { tag, .. } => Some(tag.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let missing: Vec<&str> = variants
+                    .iter()
+                    .filter(|v| !covered.contains(&v.name.as_str()))
+                    .map(|v| v.name.as_str())
+                    .collect();
+                if !missing.is_empty() {
+                    self.err(
+                        "ILO-T024",
+                        func,
+                        format!(
+                            "non-exhaustive match on sum type '{type_name}': missing {}",
+                            missing.join(", ")
+                        ),
+                        Some(format!(
+                            "add variant arms: {}",
+                            missing
+                                .iter()
+                                .map(|n| {
+                                    // Find whether this variant has a payload
+                                    let has_payload = variants.iter()
+                                        .find(|v| v.name == *n)
+                                        .and_then(|v| v.payload.as_ref())
+                                        .is_some();
+                                    if has_payload {
+                                        format!("{n}(v): <expr>")
+                                    } else {
+                                        format!("{n}: <expr>")
+                                    }
+                                })
                                 .collect::<Vec<_>>()
                                 .join(" or ")
                         )),

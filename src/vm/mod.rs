@@ -100,6 +100,10 @@ pub enum CompileError {
         #[allow(dead_code)]
         span: crate::ast::Span,
     },
+    /// Sum types with payloads are not yet natively compiled by the VM.
+    /// The caller should fall back to the tree interpreter.
+    #[error("sum type `{name}` is not yet supported by the VM; falling back to tree interpreter")]
+    SumTypeNotSupported { name: String },
 }
 
 #[cfg(feature = "cranelift")]
@@ -2111,6 +2115,14 @@ impl RegCompiler {
     }
 
     fn compile_program(mut self, program: &Program) -> Result<CompiledProgram, CompileError> {
+        // Sum types with payloads are not yet natively supported by the VM.
+        // Return a compile error so the caller can fall back to the tree interpreter.
+        for decl in &program.declarations {
+            if let Decl::SumType { name, .. } = decl {
+                return Err(CompileError::SumTypeNotSupported { name: name.clone() });
+            }
+        }
+
         // Build type registry from TypeDefs
         for decl in &program.declarations {
             if let Decl::TypeDef { name, fields, .. } = decl {
@@ -2146,6 +2158,7 @@ impl RegCompiler {
                     is_tool.push(true);
                 }
                 Decl::TypeDef { .. }
+                | Decl::SumType { .. }
                 | Decl::Alias { .. }
                 | Decl::Use { .. }
                 | Decl::Error { .. } => {}
@@ -3067,6 +3080,16 @@ impl RegCompiler {
                     }
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
+                }
+                Pattern::Variant { .. } => {
+                    // Sum type variant patterns are not yet natively compiled
+                    // by the VM. The compile_program guard at the top of
+                    // compile_program returns SumTypeNotSupported before we
+                    // reach this point; this arm is a safety net.
+                    self.first_error
+                        .get_or_insert(CompileError::SumTypeNotSupported {
+                            name: "<variant>".to_string(),
+                        });
                 }
             }
 
@@ -7315,6 +7338,16 @@ impl NanVal {
                 // tree-bridge call site); native compilation goes through
                 // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
+            }
+            Value::Variant { tag, payload, .. } => {
+                // Variants are not natively representable in NanVal — the VM
+                // bridge falls back to the tree interpreter for sum-type programs.
+                // Encode as a string sentinel so the conversion doesn't panic.
+                let s = match payload {
+                    Some(p) => format!("{}({})", tag, p),
+                    None => tag.clone(),
+                };
+                NanVal::heap_string(s)
             }
         }
     }

@@ -260,6 +260,18 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
             indent(out, level);
             out.push_str(&format!("# alias {} = {}\n", name, emit_type(target)));
         }
+        Decl::SumType { name, variants, .. } => {
+            indent(out, level);
+            out.push_str(&format!("# sum type {name}\n"));
+            for v in variants {
+                indent(out, level);
+                if let Some(ty) = &v.payload {
+                    out.push_str(&format!("# {}({}) -> {name}\n", v.name, emit_type(ty)));
+                } else {
+                    out.push_str(&format!("# {} -> {name}\n", v.name));
+                }
+            }
+        }
         Decl::Use { .. } => {}   // resolved before codegen — skip
         Decl::Error { .. } => {} // poison node — skip
     }
@@ -450,6 +462,16 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                 indent(out, level + 1);
                 out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
             }
+            Pattern::Variant { tag, binding } => {
+                out.push_str(&format!(
+                    "{} isinstance({}, tuple) and {}[0] == \"{}\":\n",
+                    keyword, subj_str, subj_str, tag
+                ));
+                if let Some(b) = binding {
+                    indent(out, level + 1);
+                    out.push_str(&format!("{} = {}[1]\n", py_name(b), subj_str));
+                }
+            }
         }
         emit_body(out, &arm.body, level + 1, true);
     }
@@ -462,7 +484,7 @@ fn arm_needs_statements(arm: &MatchArm) -> bool {
     // reference `_`. Plain wildcards also bind `_` to the subject, but the
     // ternary path special-cases that by inlining the subject expression.
     match &arm.pattern {
-        Pattern::Ok(_) | Pattern::Err(_) | Pattern::TypeIs { .. } => return true,
+        Pattern::Ok(_) | Pattern::Err(_) | Pattern::TypeIs { .. } | Pattern::Variant { binding: Some(_), .. } => return true,
         Pattern::Wildcard if body_refs_underscore(&arm.body) => return true,
         _ => {}
     }
@@ -1065,6 +1087,12 @@ fn emit_match_expr(
                     type_to_py(ty)
                 ));
             }
+            Pattern::Variant { tag, .. } => {
+                parts.push(format!(
+                    "{} if isinstance({}, tuple) and {}[0] == \"{}\" else",
+                    arm_val, subj, subj, tag
+                ));
+            }
         }
     }
 
@@ -1137,6 +1165,16 @@ fn emit_match_expr_complex(
                 ));
                 indent(out, level + 1);
                 out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
+            }
+            Pattern::Variant { tag, binding } => {
+                out.push_str(&format!(
+                    "{} isinstance({}, tuple) and {}[0] == \"{}\":\n",
+                    keyword, subj_str, subj_str, tag
+                ));
+                if let Some(b) = binding {
+                    indent(out, level + 1);
+                    out.push_str(&format!("{} = {}[1]\n", py_name(b), subj_str));
+                }
             }
         }
         emit_match_arm_body_to_tmp(out, &arm.body, level + 1, &tmp);

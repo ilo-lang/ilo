@@ -136,6 +136,13 @@ pub enum Value {
         fn_name: String,
         captures: Vec<Value>,
     },
+    /// A tagged variant value from a named sum type declaration.
+    /// `Circle 5.0` → `Variant { type_name: "shape", tag: "circle", payload: Some(Number(5.0)) }`
+    Variant {
+        type_name: String,
+        tag: String,
+        payload: Option<Box<Value>>,
+    },
 }
 
 impl std::fmt::Display for Value {
@@ -203,6 +210,10 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, "]>")
             }
+            Value::Variant { tag, payload, .. } => match payload {
+                Some(p) => write!(f, "{tag}({p})"),
+                None => write!(f, "{tag}"),
+            },
         }
     }
 }
@@ -238,6 +249,9 @@ struct Env {
     /// Stack of indices into `vars` marking where each scope starts.
     scope_marks: Vec<usize>,
     functions: HashMap<String, Decl>,
+    /// Variant constructors from `Decl::SumType`. Maps variant name → (type_name, has_payload).
+    /// Used by `call_function` to construct `Value::Variant`.
+    sum_variants: HashMap<String, (String, bool)>,
     call_stack: Vec<String>,
     tool_provider: Option<std::sync::Arc<dyn crate::tools::ToolProvider>>,
     #[cfg(feature = "tools")]
@@ -252,6 +266,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: None,
             #[cfg(feature = "tools")]
@@ -265,6 +280,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: None,
             #[cfg(feature = "tools")]
@@ -281,6 +297,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
@@ -298,6 +315,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
@@ -357,6 +375,19 @@ impl Env {
         // Function names resolve to FnRef when used as values
         if self.functions.contains_key(name) {
             return Ok(Value::FnRef(name.to_string()));
+        }
+        // Variant constructor names: 0-arg variants resolve directly to Value::Variant;
+        // payload variants resolve to FnRef so they can be called with an argument.
+        if let Some((type_name, has_payload)) = self.sum_variants.get(name) {
+            if *has_payload {
+                return Ok(Value::FnRef(name.to_string()));
+            } else {
+                return Ok(Value::Variant {
+                    type_name: type_name.clone(),
+                    tag: name.to_string(),
+                    payload: None,
+                });
+            }
         }
         // Builtin names also resolve to FnRef so they can be passed to
         // higher-order builtins (e.g. `fld max xs 0`).
@@ -453,6 +484,12 @@ pub fn call_builtin_for_bridge_with_program(
             Decl::Function { name, .. } | Decl::Tool { name, .. } => {
                 env.functions.insert(name.clone(), decl.clone());
             }
+            Decl::SumType { name, variants, .. } => {
+                for v in variants {
+                    env.sum_variants
+                        .insert(v.name.clone(), (name.clone(), v.payload.is_some()));
+                }
+            }
             Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
         }
     }
@@ -498,11 +535,17 @@ fn run_with_env(
     args: Vec<Value>,
     mut env: Env,
 ) -> Result<Value> {
-    // Register all functions and tools
+    // Register all functions, tools, and sum type variant constructors
     for decl in &program.declarations {
         match decl {
             Decl::Function { name, .. } | Decl::Tool { name, .. } => {
                 env.functions.insert(name.clone(), decl.clone());
+            }
+            Decl::SumType { name, variants, .. } => {
+                for v in variants {
+                    env.sum_variants
+                        .insert(v.name.clone(), (name.clone(), v.payload.is_some()));
+                }
             }
             Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
         }
@@ -7633,6 +7676,35 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(result)));
     }
 
+    // Sum type variant constructor: `Circle 5.0` or `red` (no payload)
+    if let Some((type_name, has_payload)) = env.sum_variants.get(name).cloned() {
+        return if has_payload {
+            if args.len() != 1 {
+                return Err(RuntimeError::new(
+                    "ILO-R004",
+                    format!("{name}: variant constructor expects 1 argument, got {}", args.len()),
+                ));
+            }
+            Ok(Value::Variant {
+                type_name,
+                tag: name.to_string(),
+                payload: Some(Box::new(args.into_iter().next().unwrap())),
+            })
+        } else {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "ILO-R004",
+                    format!("{name}: variant constructor takes no arguments, got {}", args.len()),
+                ));
+            }
+            Ok(Value::Variant {
+                type_name,
+                tag: name.to_string(),
+                payload: None,
+            })
+        };
+    }
+
     // Dynamic dispatch: callee resolved to a FnRef at runtime
     // (e.g. calling a function passed as a parameter: `fn x` where fn:F n n)
     // This is handled by looking up `name` in scope within eval_expr, not here.
@@ -7767,6 +7839,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             "ILO-R002",
             format!("{} failed to parse", name),
         )),
+        Decl::SumType { .. } => Err(RuntimeError::new(
+            "ILO-R002",
+            format!("{} is a sum type, not a callable function", name),
+        )),
     }
 }
 
@@ -7804,6 +7880,14 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::FnRef(name) => serde_json::Value::String(format!("<fn:{}>", name)),
         Value::Closure { fn_name, .. } => {
             serde_json::Value::String(format!("<closure:{}>", fn_name))
+        }
+        Value::Variant { tag, payload, .. } => {
+            let mut map = serde_json::Map::new();
+            map.insert("tag".to_string(), serde_json::Value::String(tag.clone()));
+            if let Some(p) = payload {
+                map.insert("payload".to_string(), value_to_json(p));
+            }
+            serde_json::Value::Object(map)
         }
     }
 }
@@ -8827,6 +8911,29 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
             };
             if matches {
                 Some(vec![(binding.clone(), value.clone())])
+            } else {
+                None
+            }
+        }
+        Pattern::Variant { tag, binding } => {
+            if let Value::Variant {
+                tag: vtag,
+                payload,
+                ..
+            } = value
+            {
+                if vtag == tag {
+                    let mut bindings = vec![];
+                    if let Some(b) = binding {
+                        if b != "_" {
+                            let pval = payload.as_deref().cloned().unwrap_or(Value::Nil);
+                            bindings.push((b.clone(), pval));
+                        }
+                    }
+                    Some(bindings)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -15312,5 +15419,36 @@ mod tests {
         // Regression: exit must be Number, not Text (run uses Text for code).
         let src = r#"f>b;r=run2!! "true" [];?r.exit{0:true;_:false}"#;
         assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
+    }
+
+    // ── ILO-62: Sum types (discriminated unions) ────────────────────────────
+
+    #[test]
+    fn sum_type_payload_less_variant_returns_variant_value() {
+        let src = r#"type color = red | green | blue
+f>t;c=red;?c{red:"r";green:"g";blue:"b"}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Text(Arc::new("r".to_string())));
+    }
+
+    #[test]
+    fn sum_type_payload_variant_carries_value() {
+        let src = r#"type shape = circle(n) | point
+f>n;s=circle 5;?s{circle(r):r;point:0}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(5.0));
+    }
+
+    #[test]
+    fn sum_type_wildcard_arm_catches_remaining() {
+        let src = r#"type shape = circle(n) | square(n) | point
+f>t;s=point;?s{circle(r):"c";_:"other"}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Text(Arc::new("other".to_string())));
+    }
+
+    #[test]
+    fn sum_type_multiple_payload_variants_inline() {
+        let src = r#"type shape = circle(n) | square(n) | point
+area s:shape>n;?s{circle(r):*3 r;square(side):*side side;point:0}
+f>n;+area(circle 2) area(square 3)"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(6.0 + 9.0));
     }
 }

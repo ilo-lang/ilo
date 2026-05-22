@@ -92,6 +92,15 @@ pub struct Param {
     pub ty: Type,
 }
 
+/// A variant in a sum-type declaration.
+/// `Circle(n)` → Variant { name: "circle", payload: Some(Type::Number) }
+/// `red`       → Variant { name: "red",    payload: None }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Variant {
+    pub name: String,
+    pub payload: Option<Type>,
+}
+
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Decl {
@@ -141,6 +150,14 @@ pub enum Decl {
         path: String,
         /// `None` = import all; `Some(names)` = import only those names.
         only: Option<Vec<String>>,
+        #[serde(skip)]
+        span: Span,
+    },
+
+    /// `type Name = Circle(n) | Square(n) | red` — named discriminated union
+    SumType {
+        name: String,
+        variants: Vec<Variant>,
         #[serde(skip)]
         span: Span,
     },
@@ -235,6 +252,8 @@ pub enum Pattern {
     Wildcard,
     /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
     TypeIs { ty: Type, binding: String },
+    /// `Circle(r):` — match a named-sum variant, optionally bind payload
+    Variant { tag: String, binding: Option<String> },
 }
 
 /// Auto-unwrap mode on `Expr::Call`. See `Expr::Call` for full semantics.
