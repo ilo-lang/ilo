@@ -32,7 +32,7 @@ fn run_err(engine: &str, src: &str, entry: &str, arg: &str) -> String {
         .expect("failed to run ilo");
     // We expect a non-zero exit code for error cases.
     String::from_utf8_lossy(&out.stderr).trim().to_string()
-        + &String::from_utf8_lossy(&out.stdout).trim().to_string()
+        + String::from_utf8_lossy(&out.stdout).trim()
 }
 
 // ── Basic 4-byte reversal ────────────────────────────────────────────────────
