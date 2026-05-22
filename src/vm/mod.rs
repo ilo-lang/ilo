@@ -2140,7 +2140,10 @@ impl RegCompiler {
         for decl in &program.declarations {
             match decl {
                 Decl::Function {
-                    name, return_type, body, ..
+                    name,
+                    return_type,
+                    body,
+                    ..
                 } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
@@ -7702,9 +7705,9 @@ fn body_has_defer(body: &[crate::ast::Spanned<Stmt>]) -> bool {
 fn stmt_has_defer(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Defer { .. } => true,
-        Stmt::Guard { body, else_body, .. } => {
-            body_has_defer(body) || else_body.as_deref().map(body_has_defer).unwrap_or(false)
-        }
+        Stmt::Guard {
+            body, else_body, ..
+        } => body_has_defer(body) || else_body.as_deref().map(body_has_defer).unwrap_or(false),
         Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_defer(&a.body)),
         Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } | Stmt::While { body, .. } => {
             body_has_defer(body)
@@ -9756,8 +9759,7 @@ impl<'a> VM<'a> {
                         .unwrap_or(false);
                     if is_defer_call {
                         if let Some(ast) = &self.program.ast {
-                            let callee_name =
-                                &self.program.func_names[func_idx as usize].clone();
+                            let callee_name = &self.program.func_names[func_idx as usize].clone();
                             let mut value_args = Vec::with_capacity(n_args);
                             for i in 0..n_args {
                                 value_args.push(reg!(base + a as usize + 1 + i).to_value());
@@ -13421,7 +13423,6 @@ impl<'a> VM<'a> {
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = (bx >> 8) as u16;
                     let n_args = bx & 0xFF;
-
 
                     // Save current frame metadata (result_reg + stack_base
                     // survive across the tail-call; ip is reset to 0).
@@ -28778,7 +28779,7 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -28804,7 +28805,7 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -33849,7 +33850,7 @@ f>n;r=mk 10 20;+r.x r.y";
             ]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -33904,7 +33905,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(99.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -33955,7 +33956,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34061,7 +34062,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![], vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false, false],
-                    is_defer_fn: vec![false, false],
+            is_defer_fn: vec![false, false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34203,7 +34204,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34282,7 +34283,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34361,7 +34362,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34391,7 +34392,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34464,7 +34465,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(input)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34504,7 +34505,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(2.0), NanVal::number(10.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34646,7 +34647,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(1.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -34687,7 +34688,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -35071,7 +35072,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(5.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -35110,7 +35111,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::number(1.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };
@@ -35150,7 +35151,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
-                    is_defer_fn: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
         };

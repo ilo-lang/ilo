@@ -1492,7 +1492,10 @@ impl Parser {
                 }
                 self.advance(); // consume "defer"
                 let expr = self.parse_expr()?;
-                Ok(Stmt::Defer { expr, kind: DeferKind::Always })
+                Ok(Stmt::Defer {
+                    expr,
+                    kind: DeferKind::Always,
+                })
             }
             Some(Token::Ident(name)) if name == "errdefer" => {
                 if self.token_at(self.pos + 1) == Some(&Token::Eq) {
@@ -1504,7 +1507,10 @@ impl Parser {
                 }
                 self.advance(); // consume "errdefer"
                 let expr = self.parse_expr()?;
-                Ok(Stmt::Defer { expr, kind: DeferKind::OnError })
+                Ok(Stmt::Defer {
+                    expr,
+                    kind: DeferKind::OnError,
+                })
             }
             Some(Token::LBrace) if self.is_destructure_pattern() => self.parse_destructure(),
             Some(Token::Ident(_)) => {

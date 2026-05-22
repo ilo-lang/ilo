@@ -210,7 +210,12 @@ pub fn deserialize_program(bytes: &[u8]) -> Result<CompiledProgram, String> {
     for (i, decl) in ast
         .declarations
         .iter()
-        .filter(|d| matches!(d, crate::ast::Decl::Function { .. } | crate::ast::Decl::Tool { .. }))
+        .filter(|d| {
+            matches!(
+                d,
+                crate::ast::Decl::Function { .. } | crate::ast::Decl::Tool { .. }
+            )
+        })
         .enumerate()
     {
         if let crate::ast::Decl::Function { body, .. } = decl {
