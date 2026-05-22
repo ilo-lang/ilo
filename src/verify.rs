@@ -9840,7 +9840,8 @@ mod tests {
     fn generic_return_list_element_substituted() {
         // first<a> xs:L a>a — calling with L n should return n.
         // Passing result to helper:n should pass.
-        let src = "first<a> xs:L a>a;hd xs\nhelper y:n>n;y\nmain>n\n  helper (first [1 2 3])\n  0\n";
+        let src =
+            "first<a> xs:L a>a;hd xs\nhelper y:n>n;y\nmain>n\n  helper (first [1 2 3])\n  0\n";
         assert!(
             parse_and_verify(src).is_ok(),
             "first<a> called with L n should return n; helper n should accept it"
