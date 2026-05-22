@@ -228,11 +228,12 @@ done
 # ── Emit results.json ─────────────────────────────────────────────────────────
 section "Writing $RESULTS_FILE"
 
-python3 - "$RESULTS_TMP" "$RESULTS_FILE" << 'PYEOF'
-import sys, json, datetime
+python3 - "$RESULTS_TMP" "$RESULTS_FILE" "$BENCH_DIR/.hw-info.json" << 'PYEOF'
+import sys, json, datetime, os, pathlib
 
-results_tmp = sys.argv[1]
-out_path    = sys.argv[2]
+results_tmp  = sys.argv[1]
+out_path     = sys.argv[2]
+hw_info_path = sys.argv[3] if len(sys.argv) > 3 else None
 
 data = {}
 with open(results_tmp) as f:
@@ -243,8 +244,35 @@ with open(results_tmp) as f:
         bench, lang, ns = line.split("|")
         data.setdefault(bench, {})[lang] = int(ns)
 
+# Collect hardware info: prefer the pre-written .hw-info.json (CI path),
+# fall back to live detection (local runs).
+hw = {}
+if hw_info_path and pathlib.Path(hw_info_path).exists():
+    hw = json.loads(pathlib.Path(hw_info_path).read_text())
+else:
+    cpu_model = "unknown"
+    cpu_count = os.cpu_count() or 0
+    mem_gb    = 0
+    try:
+        for l in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
+            if l.startswith("model name"):
+                cpu_model = l.split(":", 1)[1].strip()
+                break
+    except Exception:
+        pass
+    try:
+        mem_kb = int(next(
+            l.split()[1] for l in pathlib.Path("/proc/meminfo").read_text().splitlines()
+            if l.startswith("MemTotal")
+        ))
+        mem_gb = round(mem_kb / 1024 / 1024, 1)
+    except Exception:
+        pass
+    hw = {"cpu_model": cpu_model, "cpu_count": cpu_count, "mem_gb": mem_gb}
+
 output = {
     "generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "hardware": hw,
     "benchmarks": data,
 }
 
