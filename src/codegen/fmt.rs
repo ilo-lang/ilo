@@ -1275,6 +1275,7 @@ mod tests {
         let use_decl = Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         };
         let s = format_decl(&use_decl, FmtMode::Dense);

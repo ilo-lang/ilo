@@ -13777,6 +13777,7 @@ mod tests {
             Decl::Use {
                 path: "x.ilo".to_string(),
                 only: None,
+                alias: None,
                 span: Span { start: 0, end: 0 },
             },
         );

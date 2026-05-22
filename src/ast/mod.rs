@@ -135,12 +135,18 @@ pub enum Decl {
 
     /// `use "path/to/file.ilo"` — import all declarations from another file.
     /// `use "path/to/file.ilo" [name1 name2]` — import only named declarations.
+    /// `use alias:"path/to/file.ilo"` — import all public declarations, prefixed
+    ///   with `alias-` (e.g. `math-dbl`, `math-half`). Private (`_`-prefixed)
+    ///   symbols are always excluded from named-module imports.
     /// Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
         path: String,
         /// `None` = import all; `Some(names)` = import only those names.
         only: Option<Vec<String>>,
+        /// Named module alias: `use alias:"path"` sets this to `Some("alias")`.
+        /// When set, imported public symbols are renamed `alias-<name>`.
+        alias: Option<String>,
         #[serde(skip)]
         span: Span,
     },
