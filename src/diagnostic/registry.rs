@@ -666,6 +666,39 @@ unambiguous and remain accepted.
 "#,
     },
     ErrorEntry {
+        code: "ILO-P022",
+        phase: Phase::Parse,
+        short: "malformed generic type-parameter block",
+        long: r#"## ILO-P022: malformed generic type-parameter block
+
+The `<…>` generic type-parameter block after a function name is
+malformed.
+
+**Valid forms**
+
+```
+mn<a>              -- unbounded type variable
+mn<a:comparable>   -- bounded type variable
+mn<a:comparable b:numeric>  -- multiple type variables
+```
+
+**Rules**
+
+* Each entry is a single lowercase letter, optionally followed by
+  `:boundname`.
+* Valid bound names: `any`, `comparable`, `numeric`, `text`.
+* Multiple variables are space-separated inside the `<…>`.
+
+**Common mistakes**
+
+```
+mn<A:comparable>   -- uppercase letter, not allowed (lexer rejects capitals)
+mn<ab:comparable>  -- multi-letter name, not allowed
+mn<a:Comparable>   -- capitalised bound name, not allowed (lexer rejects capitals)
+```
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P103",
         phase: Phase::Parse,
         short: "AST nesting depth exceeded",
@@ -1817,6 +1850,49 @@ into a record and capture the single record value instead.
 Phase 2 closure capture is otherwise fully supported across every
 in-process engine (tree, VM, Cranelift JIT). This diagnostic only
 fires on the pathological wide-capture case.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-T045",
+        phase: Phase::Verify,
+        short: "generic type variable used inconsistently or bound violated",
+        long: r#"## ILO-T045: generic type variable inconsistency / bound violation
+
+A function with explicit generic type parameters (`<a:comparable>`,
+`<a:numeric>`, etc.) was called with arguments that either:
+
+* used the **same type variable** with **different concrete types**, or
+* violated the **bound** declared for that variable.
+
+### Bounds
+
+| Bound        | Permitted types |
+|--------------|-----------------|
+| `any`        | any type (default when no bound is written) |
+| `comparable` | `n`, `t`, `b`   |
+| `numeric`    | `n`             |
+| `text`       | `t`             |
+
+### Example — inconsistent usage
+
+```
+mn<a:comparable> x:a y:a>a
+  r=x;>(x) y{r=y};r
+
+mn 1 "two"   -- ILO-T044: 'a' bound to n then t
+```
+
+Fix: pass two values of the same type.
+
+### Example — bound violation
+
+```
+add-one<a:numeric> x:a>a;+x 1
+
+add-one "hello"   -- ILO-T044: text does not satisfy numeric
+```
+
+Fix: pass a numeric argument.
 "#,
     },
 ];

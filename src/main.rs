@@ -2650,12 +2650,14 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             return_type,
             body,
             span,
+            type_params,
         } => ast::Decl::Function {
             name: format!("{}-{}", alias, name),
             params,
             return_type,
             body,
             span,
+            type_params,
         },
         ast::Decl::Tool {
             name,
@@ -6577,6 +6579,7 @@ mod tests {
     #[test]
     fn decl_name_function_returns_name() {
         let d = ast::Decl::Function {
+            type_params: vec![],
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -6973,6 +6976,7 @@ mod tests {
     #[test]
     fn resolve_imports_non_use_decl_passes_through() {
         let func_decl = ast::Decl::Function {
+            type_params: vec![],
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -8665,6 +8669,7 @@ mod tests {
         use ast::{Decl, Param, Span, Type};
         let decls = vec![
             Decl::Function {
+                type_params: vec![],
                 name: "helper".into(),
                 params: vec![Param {
                     name: "x".into(),
