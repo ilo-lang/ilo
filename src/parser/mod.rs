@@ -5244,6 +5244,12 @@ For variable-position list indexing bind the head first: \
         }
         let mut depth = 1usize;
         let mut i = self.pos + 1;
+        // A brace-lambda needs at least one ident-shaped token (a param name)
+        // before the `>` separator. Without this check, a braced guard body
+        // whose first statement is a comparison/prefix-op guard (e.g.
+        // `@x a{>x 0{m=x}}`) misparses as `a` calling a brace-lambda, with
+        // the `>` mistaken for the lambda's param separator.
+        let mut saw_param_ident = false;
         while let Some(tok) = self.token_at(i) {
             match tok {
                 Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
@@ -5258,8 +5264,10 @@ For variable-position list indexing bind the head first: \
                 }
                 // A `;` at depth 1 before any `>` means destructure, not lambda.
                 Token::Semi if depth == 1 => return false,
-                // A `>` at depth 1 signals brace-lambda params separator.
-                Token::Greater if depth == 1 => return true,
+                // A `>` at depth 1 signals brace-lambda params separator —
+                // but only if at least one param ident appeared first.
+                Token::Greater if depth == 1 => return saw_param_ident,
+                Token::Ident(_) if depth == 1 => saw_param_ident = true,
                 _ => {}
             }
             i += 1;
