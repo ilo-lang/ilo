@@ -917,6 +917,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Bshl64, 2) => true,
         (Builtin::Bshr64, 2) => true,
         (Builtin::Brot64, 2) => true,
+        // Numeric-pipeline primitives (0.13.0). Pure constructors and stack
+        // combinators; no FnRef args, no I/O, no Result wrapper.
+        (Builtin::Zeros, 1) => true,
+        (Builtin::Arange, 3) => true,
+        (Builtin::Vstack, 1) => true,
+        (Builtin::Hstack, 1) => true,
+        (Builtin::ColumnStack, 1) => true,
+        (Builtin::Hist, 2) => true,
         _ => false,
     }
 }
@@ -18089,6 +18097,14 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // tokcount: raises ILO-R009 on non-text input. Surface on
             // Cranelift in lockstep rather than degenerating silently to nil.
             | Builtin::Tokcount
+            // Numeric-pipeline primitives (0.13.0). Raise ILO-R009 on bad
+            // inputs; surface on Cranelift in lockstep rather than silently nil.
+            | Builtin::Zeros
+            | Builtin::Arange
+            | Builtin::Vstack
+            | Builtin::Hstack
+            | Builtin::ColumnStack
+            | Builtin::Hist
     )
 }
 
