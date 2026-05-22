@@ -3775,8 +3775,11 @@ fn dispatch_run(
         if target == "python" {
             println!("{}", codegen::python::emit(&program));
             0
+        } else if target == "js" {
+            println!("{}", codegen::js::emit(&program));
+            0
         } else {
-            eprintln!("Unknown emit target. Supported: python");
+            eprintln!("Unknown emit target. Supported: python, js");
             1
         }
     } else if r.dense {
@@ -4236,6 +4239,7 @@ fn print_help() {
     println!("  ilo <file.ilo> [args...]          Run from file");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
+    println!("  ilo <code> --emit js              Transpile to JavaScript (ES modules)");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
@@ -4290,6 +4294,7 @@ fn print_help() {
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
     println!("  ilo program.ilo 10 20             Run file with arguments");
     println!("  ilo 'f x:n>n;*x 2' --emit python Transpile to Python");
+    println!("  ilo 'f x:n>n;*x 2' --emit js     Transpile to JavaScript");
 }
 
 /// Dispatch --run-vm, routing to MCP / HTTP / plain run based on available providers.

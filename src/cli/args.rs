@@ -169,7 +169,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub bench: bool,
 
-    /// Emit target (e.g. python) instead of running.
+    /// Emit target (e.g. python, js) instead of running.
     #[arg(long)]
     pub emit: Option<String>,
 
