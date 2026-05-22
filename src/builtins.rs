@@ -556,6 +556,16 @@ pub enum Builtin {
     // Lists must have the same length; mismatch raises ILO-R009. Closes the
     // distance-matrix loop that pairwise-distance personas write.
     Pdist2,
+
+    // `run-full-env cmd:t args:L t > R (M t t) t` — like `run` but inherits
+    // the full parent environment (including sensitive vars like ANTHROPIC_API_KEY,
+    // GITHUB_TOKEN, etc.). Opt-in; prefer `run` which scrubs secrets by default.
+    // Tree-bridge eligible alongside `run`.
+    RunFullEnv,
+    // `run2-full-env cmd:t args:L t > R RunResult t` — like `run2` but inherits
+    // the full parent environment. Opt-in; prefer `run2` which scrubs secrets by default.
+    // Tree-bridge eligible alongside `run2`.
+    Run2FullEnv,
 }
 
 impl Builtin {
@@ -699,6 +709,8 @@ impl Builtin {
             "run" => Some(Builtin::Run),
             "run2" => Some(Builtin::Run2),
             "run-bg" => Some(Builtin::RunBg),
+            "run-full-env" => Some(Builtin::RunFullEnv),
+            "run2-full-env" => Some(Builtin::Run2FullEnv),
             "get" => Some(Builtin::Get),
             // 0.12.0 rename: `post` → `pst`. Brings post into line with the
             // I/O compression family (rd, wr, srt, flt, fld, fmt). Clean
@@ -936,6 +948,8 @@ impl Builtin {
             Builtin::Run => "run",
             Builtin::Run2 => "run2",
             Builtin::RunBg => "run-bg",
+            Builtin::RunFullEnv => "run-full-env",
+            Builtin::Run2FullEnv => "run2-full-env",
             Builtin::Get => "get",
             Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
@@ -1446,6 +1460,15 @@ impl Builtin {
         // interpreter (tree-bridge eligible via is_tree_bridge_eligible). Added
         // in 0.12.2 as the recommended general concurrency primitive.
         Builtin::ParMap,
+        // `run-full-env cmd:t args:L t > R (M t t) t` — opt-in full-env
+        // variant of `run`. The default `run` scrubs ANTHROPIC_*, CLAUDE_*,
+        // GITHUB_TOKEN, *_TOKEN, *_KEY, *_SECRET from the child env; use
+        // `run-full-env` when the child legitimately needs those vars.
+        // Tree-bridge eligible alongside `run`.
+        Builtin::RunFullEnv,
+        // `run2-full-env cmd:t args:L t > R RunResult t` — opt-in full-env
+        // variant of `run2`. Same policy as `run-full-env`.
+        Builtin::Run2FullEnv,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.

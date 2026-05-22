@@ -767,8 +767,10 @@ Called like functions, compiled to dedicated opcodes.
 | `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
 | `tokcount s` | approximate cl100k_base token count of string `s` (bytes/3.4 stub; within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. ILO-47 tracks replacing the stub with a real BPE tokeniser. *Experimental.* | `n` |
-| `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
-| `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
+| `run cmd argv` | spawn `cmd` with argv list — secrets scrubbed from child env by default; see [Process spawn](#process-spawn) | `R (M t t) t` |
+| `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`); secrets scrubbed from child env by default | `R RunResult t` |
+| `run-full-env cmd argv` | like `run` but inherits the full parent env (opt-in; use when child legitimately needs secrets) | `R (M t t) t` |
+| `run2-full-env cmd argv` | like `run2` but inherits the full parent env (opt-in) | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `world` | return the current capability World token (see [Capability World](#capability-world)) | `W` |
@@ -1200,7 +1202,19 @@ Prefer `run2` for new code. `run` is kept for compatibility.
 
 **`run2` exit on signal.** On Unix, a signal-killed process has no exit code. `run2` surfaces this as `exit: -1` so the caller can branch on `<0 r.exit`. `run` uses the string `"signal:<n>"` for the same case.
 
-**Inherits parent env + cwd.** Neither primitive provides env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
+**Env scrubbing (ILO-346).** `run` and `run2` scrub the following env vars from the child process by default so that secrets set in the agent's environment cannot leak to untrusted children:
+
+- `ANTHROPIC_*` and `CLAUDE_*` — Anthropic / Claude credentials
+- `GITHUB_TOKEN`, `GITHUB_PAT` — GitHub PATs
+- Any var whose name ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSWD`, `_CREDENTIAL`, or `_CREDENTIALS`
+
+All other vars (including `PATH`, `HOME`, `LANG`, `TZ`) are inherited normally. To opt in to passing the full environment — for example when a child script legitimately needs `ANTHROPIC_API_KEY` — use the `run-full-env` or `run2-full-env` builtins instead:
+
+```
+m = run-full-env "my-agent" ["--task" task]   -- full env passes through
+```
+
+**Inherits parent cwd.** Neither primitive provides a cwd override; set the parent cwd before invoking ilo if you need a different working directory.
 
 **Captured output is capped at 10 MiB per stream.** Either stream exceeding the cap returns an `Err` rather than partial capture so downstream JSON pipelines never see a truncated payload.
 
