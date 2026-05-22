@@ -5104,6 +5104,11 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
+            // ILO-343: OP_STMT is a VM-only trace boundary; JIT trace is a
+            // follow-up. Treat it as a no-op so JIT compilation proceeds.
+            crate::vm::OP_STMT => {
+                // no-op in JIT codegen
+            }
             _ => {
                 // Unknown opcode — bail out
                 return None;

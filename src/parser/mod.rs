@@ -5859,6 +5859,7 @@ For variable-position list indexing bind the head first: \
             body,
             span,
             type_params: vec![],
+            effect_set: None,
         });
         if free.is_empty() {
             Ok(Expr::Ref(fn_name))

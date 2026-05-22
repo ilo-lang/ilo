@@ -194,6 +194,19 @@ pub(crate) const OP_DEFER_PUSH: u8 = 191;
 //   carries a TAG_ERR value.  Call errors are silently swallowed so that a
 //   failing defer cannot hide the real return value.
 pub(crate) const OP_DEFER_DRAIN: u8 = 192;
+
+// Statement-boundary trace hook (ILO-343).
+// Emitted by the compiler after each top-level statement when trace debug
+// info is available. Only fires when TRACE_HOOK is installed; otherwise it
+// is a no-op with a single branch and costs ~1 ns per statement.
+//
+// Encoding (ABx):
+//   A  = result register (255 = void/nil result)
+//   Bx = index into Chunk::stmt_debug — the name→register snapshot at this
+//        statement boundary. Gives the runtime the variable names so it can
+//        collect {name: value} bindings without storing a symbol table in
+//        the hot path.
+pub(crate) const OP_STMT: u8 = 193;
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
@@ -1022,6 +1035,10 @@ pub struct Chunk {
     pub reg_count: u8,
     pub spans: Vec<crate::ast::Span>,
     pub all_regs_numeric: bool,
+    /// Debug table for OP_STMT trace events. Each entry corresponds to one
+    /// emitted OP_STMT (indexed by the Bx field of that instruction) and
+    /// records the name→register mapping visible at that statement boundary.
+    pub stmt_debug: Vec<Vec<(String, u8)>>,
 }
 
 impl Chunk {
@@ -1033,6 +1050,7 @@ impl Chunk {
             reg_count: param_count,
             spans: Vec::new(),
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         }
     }
 
@@ -1278,6 +1296,10 @@ enum InlineOpKind {
     DataWord,
     /// Not whitelisted for inlining.
     Reject,
+    /// OP_STMT trace boundary (ILO-343): transparent to the inliner.
+    /// The instruction is silently dropped when a body is inlined; trace
+    /// events fire from the outer body instead.
+    Skip,
 }
 
 /// Returns the kind for a given opcode byte. Only safe single-word
@@ -1362,6 +1384,8 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
         // bodies inline into the outer `flt all-h ws` after the
         // OP_LEN_HAS_K_COUNT fast path fires.
         OP_LEN_HAS_K_COUNT => InlineOpKind::AbcRegPlusDataK,
+        // OP_STMT trace boundary — silently dropped when inlining.
+        OP_STMT => InlineOpKind::Skip,
 
         // Everything else (jumps, calls, foreach, panic-unwrap, anything
         // with a 2-word encoding, anything that mutates outside the
@@ -1453,7 +1477,9 @@ impl RegCompiler {
             return None;
         }
         let code = &callee.code;
-        if code.is_empty() || code.len() > budget {
+        // OP_STMT trace markers (ILO-343) are transparent to the inliner.
+        let non_stmt_count = code.iter().filter(|&&w| (w >> 24) as u8 != OP_STMT).count();
+        if non_stmt_count == 0 || non_stmt_count > budget {
             return None;
         }
 
@@ -1535,7 +1561,12 @@ impl RegCompiler {
                     unreachable!("data words are handled in the is_data_word branch above")
                 }
                 InlineOpKind::Ret => {
-                    if i != code.len() - 1 {
+                    // OP_RET must be the last non-OP_STMT instruction.
+                    // OP_STMT trace markers (ILO-343) may follow RET; skip
+                    // them when checking whether this is the terminal.
+                    let remaining_non_stmt =
+                        code[i + 1..].iter().any(|&w| (w >> 24) as u8 != OP_STMT);
+                    if remaining_non_stmt {
                         // OP_RET in the middle of a body would skip the
                         // remaining ops at runtime; the inliner doesn't
                         // model that yet.
@@ -1545,6 +1576,12 @@ impl RegCompiler {
                         return None;
                     }
                     ret_reg = Some(a);
+                }
+                InlineOpKind::Skip => {
+                    // OP_STMT trace markers are transparent to the inliner:
+                    // do not push them into the instruction stream. Trace
+                    // events fire from the outer body instead.
+                    continue;
                 }
                 InlineOpKind::Abc => {
                     if a >= reg_count || b >= reg_count || c >= reg_count {
@@ -1807,6 +1844,10 @@ impl RegCompiler {
                 }
                 InlineOpKind::Reject => unreachable!(
                     "predicate-inline: Reject in emitted body; analyser invariant violated"
+                ),
+                InlineOpKind::Skip => unreachable!(
+                    "predicate-inline: Skip (OP_STMT) filtered out during analysis, \
+                     should never appear in body.instructions"
                 ),
             };
             self.current.emit(new_inst, span);
@@ -2507,24 +2548,19 @@ impl RegCompiler {
                     r
                 });
 
-                // Only skip the final RET if `compile_body` itself produced no
-                // fall-through value (result == None), meaning every path
-                // already ends with an explicit `ret` statement. When result
-                // is Some(_), the last expression may have been after a guard
-                // whose body contained a `ret`, so the last emitted instruction
-                // could be OP_RET even though the fall-through path still needs
-                // one. Emitting an unconditional RET when `result` is Some is
-                // always correct.
-                if result.is_some() {
-                    self.emit_ret(ret_reg);
-                } else {
-                    // result == None: last stmt was a Stmt::Return or similar
-                    // non-value producer. If the last instruction is already
-                    // OP_RET (e.g. from Stmt::Return), skip to avoid double-ret.
-                    let last_op = self.current.code.last().map(|inst| (inst >> 24) as u8);
-                    if last_op != Some(OP_RET) {
-                        self.emit_ret(ret_reg);
-                    }
+                // Only emit RET if the last non-OP_STMT instruction isn't already RET.
+                // OP_STMT (ILO-343) trace markers may be the last word in code;
+                // scan past them to find the real terminal.
+                let last_is_ret = self
+                    .current
+                    .code
+                    .iter()
+                    .rev()
+                    .find(|&&w| (w >> 24) as u8 != OP_STMT)
+                    .map(|&inst| (inst >> 24) as u8 == OP_RET)
+                    .unwrap_or(false);
+                if !last_is_ret {
+                    self.emit_abx(OP_RET, ret_reg, 0);
                 }
 
                 self.current.reg_count = self.max_reg;
@@ -2652,10 +2688,51 @@ impl RegCompiler {
             // the top-level call to compile_body for the function root.
             self.in_tail_position = saved_tail && i == last_idx;
             result = self.compile_stmt(&spanned.node);
+            // ILO-343: emit a statement-boundary trace instruction so the VM
+            // can fire trace events without modifying the hot instruction loop.
+            self.emit_stmt_trace(spanned, result);
         }
         self.in_tail_position = saved_tail;
         self.locals.truncate(saved_locals);
         result
+    }
+
+    /// Emit an `OP_STMT` trace instruction after a statement has been compiled.
+    /// Records a snapshot of the current locals into `Chunk::stmt_debug` and
+    /// emits `OP_STMT A=result_reg Bx=debug_idx`.
+    ///
+    /// The instruction is cheap at runtime: a single branch on `trace_hook_active()`
+    /// that is always-not-taken during normal execution.
+    fn emit_stmt_trace(&mut self, spanned: &crate::ast::Spanned<Stmt>, result_reg: Option<u8>) {
+        // Determine the result register: use the explicit result, or for a
+        // `let name = …` statement look up the name in locals.
+        let a: u8 = match result_reg {
+            Some(r) => r,
+            None => {
+                // For Stmt::Let, the newly bound register is the last local
+                // whose name matches the bound name.
+                if let Stmt::Let { name, .. } = &spanned.node {
+                    self.locals
+                        .iter()
+                        .rev()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, r)| *r)
+                        .unwrap_or(255)
+                } else {
+                    255 // void (break/continue/return with no value)
+                }
+            }
+        };
+
+        // Snapshot current locals (name → register) for the trace event.
+        let snapshot: Vec<(String, u8)> = self.locals.clone();
+        let debug_idx = self.current.stmt_debug.len();
+        self.current.stmt_debug.push(snapshot);
+
+        // Emit OP_STMT with the statement's span so the runtime can look up
+        // the source line via Chunk::spans[].
+        let idx = debug_idx.min(u16::MAX as usize) as u16;
+        self.current.emit(encode_abx(OP_STMT, a, idx), spanned.span);
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Option<u8> {
@@ -3852,12 +3929,20 @@ impl RegCompiler {
         // Anything else (larger body, different ops, multi-statement
         // bodies that fold the result through extra registers) is the
         // existing inliner's job.
-        if callee.code.len() != 3 {
+        // OP_STMT instructions (ILO-343 trace boundary markers) are
+        // transparent to this matcher — filter them out before checking.
+        let non_stmt: Vec<u32> = callee
+            .code
+            .iter()
+            .copied()
+            .filter(|&i| (i >> 24) as u8 != OP_STMT)
+            .collect();
+        if non_stmt.len() != 3 {
             return None;
         }
-        let inst0 = callee.code[0];
-        let inst1 = callee.code[1];
-        let inst2 = callee.code[2];
+        let inst0 = non_stmt[0];
+        let inst1 = non_stmt[1];
+        let inst2 = non_stmt[2];
 
         let op0 = (inst0 >> 24) as u8;
         let op1 = (inst1 >> 24) as u8;
@@ -8715,6 +8800,47 @@ pub fn run_with_tools(
         runtime,
     )
     .call(func_idx, args)
+}
+
+/// Run a compiled program with a per-statement trace callback (ILO-343).
+///
+/// Installs the same `TRACE_HOOK` thread-local used by the tree-walker's
+/// `run_with_trace`. The VM's `OP_STMT` instruction checks this hook and
+/// fires one `TraceEvent` per top-level statement in every function frame.
+///
+/// `source` is the original ilo source text; it is used to resolve span
+/// offsets to 1-based line numbers and statement text for the trace events.
+pub fn run_with_trace<F>(
+    compiled: &CompiledProgram,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    source: Option<String>,
+    on_event: F,
+) -> Result<Value, VmRuntimeError>
+where
+    F: FnMut(crate::interpreter::TraceEvent) + 'static,
+{
+    use crate::interpreter::{TRACE_HOOK, TRACE_SOURCE};
+
+    // Install the hook and source text.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = Some(Box::new(on_event));
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = source;
+    });
+
+    let result = run(compiled, func_name, args);
+
+    // Always clear, even on error.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = None;
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = None;
+    });
+
+    result
 }
 
 #[cfg(test)]
@@ -14561,6 +14687,78 @@ impl<'a> VM<'a> {
                         ci = f.chunk_idx as usize;
                         ip = f.ip;
                         base = f.stack_base;
+                    }
+                }
+
+                // ── ILO-343: statement-boundary trace ─────────────────────────────
+                OP_STMT => {
+                    // Fast-path: skip all work if no trace hook is installed.
+                    if crate::interpreter::trace_hook_active() {
+                        let a = ((inst >> 16) & 0xFF) as u8;
+                        let debug_idx = (inst & 0xFFFF) as usize;
+                        let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
+
+                        // Resolve source line from span.
+                        let span = chunk
+                            .spans
+                            .get(ip - 1)
+                            .copied()
+                            .unwrap_or(crate::ast::Span::UNKNOWN);
+
+                        // Build bindings from the locals snapshot stored at compile time.
+                        let bindings: Vec<(String, Value)> =
+                            if let Some(locals) = chunk.stmt_debug.get(debug_idx) {
+                                locals
+                                    .iter()
+                                    .filter_map(|(name, reg)| {
+                                        let slot = base + *reg as usize;
+                                        if slot < self.stack.len() {
+                                            let v = self.stack[slot]
+                                                .to_value_with_program(&self.program.func_names);
+                                            Some((name.clone(), v))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                        // Collect the statement result.
+                        let result = if a != 255 {
+                            let slot = base + a as usize;
+                            if slot < self.stack.len() {
+                                self.stack[slot].to_value_with_program(&self.program.func_names)
+                            } else {
+                                Value::Nil
+                            }
+                        } else {
+                            Value::Nil
+                        };
+
+                        // Resolve source line/text from the span.
+                        let (line, stmt_text) = crate::interpreter::TRACE_SOURCE.with(|s| {
+                            if let Some(ref source) = *s.borrow() {
+                                if span != crate::ast::Span::UNKNOWN {
+                                    let sm = crate::ast::SourceMap::new(source);
+                                    let (ln, _) = sm.lookup(span.start);
+                                    let text = sm.line_text(source, ln).trim().to_string();
+                                    (ln, text)
+                                } else {
+                                    (0usize, String::new())
+                                }
+                            } else {
+                                (0usize, String::new())
+                            }
+                        });
+
+                        crate::interpreter::fire_trace_hook(crate::interpreter::TraceEvent {
+                            line,
+                            stmt: stmt_text,
+                            bindings,
+                            result,
+                        });
                     }
                 }
 
@@ -29945,6 +30143,7 @@ mod tests {
             reg_count: 0,
             spans: vec![],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -29971,6 +30170,7 @@ mod tests {
             reg_count: 0,
             spans: vec![crate::ast::Span { start: 1, end: 2 }],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -35063,6 +35263,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 6],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let program = CompiledProgram {
@@ -35121,6 +35322,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 6],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let program = CompiledProgram {
@@ -35172,6 +35374,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 6],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let program = CompiledProgram {
@@ -35269,6 +35472,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 1,
             spans: vec![crate::ast::Span::UNKNOWN; 2],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let chunk_g = Chunk {
@@ -35278,6 +35482,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 1,
             spans: vec![],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let program = CompiledProgram {
@@ -35420,6 +35625,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 5],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let program = CompiledProgram {
@@ -35499,6 +35705,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 6],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
 
         let program = CompiledProgram {
@@ -35579,6 +35786,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 3],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -35609,6 +35817,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 3],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -35640,6 +35849,7 @@ f>n;r=mk 10 20;+r.x r.y";
                 reg_count: 3,
                 spans: vec![crate::ast::Span::UNKNOWN; 3],
                 all_regs_numeric: false,
+                stmt_debug: Vec::new(),
             };
             let program = CompiledProgram {
                 chunks: vec![chunk],
@@ -35682,6 +35892,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 3,
             spans: vec![crate::ast::Span::UNKNOWN; 3],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -35722,6 +35933,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 4,
             spans: vec![crate::ast::Span::UNKNOWN; 4],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -35864,6 +36076,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 4,
             spans: vec![crate::ast::Span::UNKNOWN; 4],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -35905,6 +36118,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 4,
             spans: vec![crate::ast::Span::UNKNOWN; 4],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -36289,6 +36503,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 4,
             spans: vec![crate::ast::Span::UNKNOWN; 4],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -36328,6 +36543,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 4,
             spans: vec![crate::ast::Span::UNKNOWN; 4],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -36368,6 +36584,7 @@ f>n;r=mk 10 20;+r.x r.y";
             reg_count: 4,
             spans: vec![crate::ast::Span::UNKNOWN; 4],
             all_regs_numeric: false,
+            stmt_debug: Vec::new(),
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -37522,6 +37739,49 @@ main>n
             vm_result, interp_result,
             "VM and interpreter disagree on generic sum type result"
         );
+    }
+
+    // ── ILO-343: OP_STMT VM trace ──────────────────────────────────────────────
+
+    #[test]
+    fn vm_trace_fires_one_event_per_stmt() {
+        // Three statements: two lets and one expression.
+        let src = "f>n;a=1;b=2;+a b";
+        let program = parse_program(src);
+        let compiled = crate::vm::compile(&program).expect("compile");
+
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        crate::vm::run_with_trace(
+            &compiled,
+            Some("f"),
+            vec![],
+            Some(src.to_string()),
+            move |ev: crate::interpreter::TraceEvent| {
+                events_clone.lock().unwrap().push(ev);
+            },
+        )
+        .expect("run");
+
+        let events = events.lock().unwrap();
+        // Expect 3 trace events (one per statement).
+        assert_eq!(events.len(), 3, "expected 3 trace events, got: {events:?}");
+        // Last event result should be 3.0 (+a b = 1+2)
+        assert_eq!(events[2].result, Value::Number(3.0));
+        // After the second stmt, both a and b are bound.
+        let bindings_last: std::collections::HashMap<_, _> =
+            events[2].bindings.iter().cloned().collect();
+        assert_eq!(bindings_last.get("a"), Some(&Value::Number(1.0)));
+        assert_eq!(bindings_last.get("b"), Some(&Value::Number(2.0)));
+    }
+
+    #[test]
+    fn vm_trace_no_hook_no_panic() {
+        // Running without trace hook must not panic or error.
+        let src = "f>n;x=10;+x 1";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(11.0));
     }
 }
 
