@@ -259,27 +259,17 @@ fn anon_satisfies_named(
     let Some(type_def) = types.get(type_name) else {
         return false;
     };
-    let anon_map: HashMap<&str, &Ty> = anon_fields
-        .iter()
-        .map(|(n, t)| (n.as_str(), t))
-        .collect();
-    type_def
-        .fields
-        .iter()
-        .all(|(name, expected_ty)| {
-            anon_map
-                .get(name.as_str())
-                .is_some_and(|actual_ty| compatible(actual_ty, expected_ty))
-        })
+    let anon_map: HashMap<&str, &Ty> = anon_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    type_def.fields.iter().all(|(name, expected_ty)| {
+        anon_map
+            .get(name.as_str())
+            .is_some_and(|actual_ty| compatible(actual_ty, expected_ty))
+    })
 }
 
 /// Like `compatible`, but additionally allows an `AnonRecord` to satisfy a
 /// `Named` record type via structural subtyping (see `anon_satisfies_named`).
-fn compatible_ext(
-    a: &Ty,
-    b: &Ty,
-    types: &HashMap<String, TypeDef>,
-) -> bool {
+fn compatible_ext(a: &Ty, b: &Ty, types: &HashMap<String, TypeDef>) -> bool {
     match (a, b) {
         // anon record supplied where a named record type is expected
         (Ty::AnonRecord(fields), Ty::Named(name)) | (Ty::Named(name), Ty::AnonRecord(fields)) => {
@@ -6866,8 +6856,9 @@ mod tests {
     #[test]
     fn anon_record_satisfies_named_param() {
         // greet p:person; passing {name:"jane" age:30} should be accepted
-        let result =
-            parse_and_verify("type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30}");
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30}",
+        );
         assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
     }
 
@@ -6883,8 +6874,9 @@ mod tests {
     #[test]
     fn anon_record_missing_required_field_rejected() {
         // anon record is missing 'age' — should produce a type error
-        let result =
-            parse_and_verify("type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\"}");
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\"}",
+        );
         assert!(result.is_err(), "expected type error for missing field");
     }
 
@@ -6900,8 +6892,7 @@ mod tests {
     #[test]
     fn anon_record_as_return_type_of_named() {
         // function declared to return 'person' but returns anon record — should be accepted
-        let result =
-            parse_and_verify("type person{name:t;age:n} mk>person;{name:\"bob\" age:25}");
+        let result = parse_and_verify("type person{name:t;age:n} mk>person;{name:\"bob\" age:25}");
         assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
     }
 
