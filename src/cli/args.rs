@@ -118,7 +118,6 @@ pub enum Cmd {
 
     /// Print version.
     Version,
-
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -437,7 +436,6 @@ pub enum SkillCmd {
     /// Print a skill with a formatted header.
     Show { name: String },
 }
-
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────
 
