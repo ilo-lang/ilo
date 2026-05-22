@@ -1995,6 +1995,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 format!("expected type, got {}", tok.user_facing_name()),
                 "valid types: n, t, b, U32, U64, I64, L n, R n t, F n>n, W (World), or a record type name"
                     .to_string(),
+                "valid types: n, t, b, L n, R n t, F n>n, W (World), or a record type name".to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
@@ -4388,6 +4389,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     || name == "world"
                     || name == "world-no-net"
                 {
+                if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" {
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
@@ -4447,6 +4449,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "e"
                 || name == "world"
                 || name == "world-no-net")
+                || name == "world")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -5258,6 +5261,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     || name == "e"
                     || name == "world"
                     || name == "world-no-net" =>
+                    || name == "world" =>
             {
                 let name = name.clone();
                 self.advance();

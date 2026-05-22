@@ -430,6 +430,8 @@ impl std::fmt::Display for Value {
                     f,
                     "World {{net: {net}, read: {read}, write: {write}, run: {run}}}"
                 )
+            Value::World { net, read, write, run } => {
+                write!(f, "World {{net: {net}, read: {read}, write: {write}, run: {run}}}")
             }
             Value::FnRef(name) => write!(f, "<fn:{}>", name),
             Value::Closure { fn_name, captures } => {
@@ -8250,6 +8252,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 run,
                 ..
             } => {
+            crate::caps::Caps::Restricted { net, read, write, run } => {
                 let cap_allowed = |p: &crate::caps::Policy| {
                     matches!(p, crate::caps::Policy::All)
                         || matches!(p, crate::caps::Policy::List(v) if !v.is_empty())
@@ -8301,6 +8304,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             write,
             run,
         });
+                (cap_allowed(net), cap_allowed(read), cap_allowed(write), cap_allowed(run))
+            }
+        };
+        return Ok(Value::World { net, read, write, run });
     }
 
     // env-all -> R M t t: snapshot the full process environment as a
@@ -9645,6 +9652,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
             write,
             run,
         } => {
+        Value::World { net, read, write, run } => {
             let mut map = serde_json::Map::with_capacity(4);
             map.insert("net".to_string(), serde_json::Value::Bool(*net));
             map.insert("read".to_string(), serde_json::Value::Bool(*read));
@@ -10564,6 +10572,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                     write,
                     run,
                 } => {
+                Value::World { net, read, write, run } => {
                     let v = match field.as_str() {
                         "net" => Value::Bool(net),
                         "read" => Value::Bool(read),
@@ -10578,6 +10587,11 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                                 ),
                             ));
                         }
+                        other if *safe => Value::Nil,
+                        other => return Err(RuntimeError::new(
+                            "ILO-R005",
+                            format!("no field '{other}' on World (known: net, read, write, run)"),
+                        )),
                     };
                     Ok(v)
                 }

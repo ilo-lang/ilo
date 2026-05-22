@@ -32,6 +32,7 @@ pub enum Ty {
     World {
         net_known: Option<bool>,
     },
+    World,
     Unknown,
     /// 32-bit unsigned integer — stored as f64 in tree-walker; exact up to 2^32.
     U32,
@@ -72,6 +73,7 @@ impl std::fmt::Display for Ty {
                 let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
                 write!(f, "{{{}}}", parts.join(" "))
             }
+            Ty::World => write!(f, "World"),
             Ty::Unknown => write!(f, "_"),
             Ty::U32 => write!(f, "U32"),
             Ty::U64 => write!(f, "U64"),
@@ -242,6 +244,7 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
             } else if name == "World" {
                 // `World` is the builtin capability token type (ILO-68).
                 Ty::World { net_known: None }
+                Ty::World
             } else if name.len() == 1
                 && name.chars().next().is_some_and(|c| c.is_lowercase())
                 && !matches!(name.as_str(), "n" | "t" | "b")
@@ -390,6 +393,11 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
         // Named("World") and Ty::World unify — user writes `w:World` in
         // function signatures which parses as Type::Named("World") → Ty::Named("World").
         (Ty::Named(n), Ty::World { .. }) | (Ty::World { .. }, Ty::Named(n)) if n == "World" => true,
+        // World is only compatible with itself.
+        (Ty::World, Ty::World) => true,
+        // Named("World") and Ty::World unify — user writes `w:World` in
+        // function signatures which parses as Type::Named("World") → Ty::Named("World").
+        (Ty::Named(n), Ty::World) | (Ty::World, Ty::Named(n)) if n == "World" => true,
         _ => false,
     }
 }
@@ -4047,6 +4055,8 @@ fn builtin_check_args(
                 },
                 errors,
             )
+            // proof-of-authority parameter.
+            (Ty::World, errors)
         }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t
@@ -4642,6 +4652,7 @@ impl VerifyContext {
             }
             Ty::Named(_) => {}
             Ty::World { .. } => {} // builtin capability token — always valid
+            Ty::World => {} // builtin capability token — always valid
             Ty::List(inner) => self.validate_named_type_recursive(inner, ctx),
             Ty::Result(ok, err) => {
                 self.validate_named_type_recursive(ok, ctx);
@@ -6290,6 +6301,7 @@ impl VerifyContext {
                         }
                     }
                     Ty::World { .. } => {
+                    Ty::World => {
                         // World.{net,read,write,run} → Bool
                         match field.as_str() {
                             "net" | "read" | "write" | "run" => Ty::Bool,
@@ -6298,6 +6310,7 @@ impl VerifyContext {
                                     .iter()
                                     .map(|s| s.to_string())
                                     .collect();
+                                let known: Vec<String> = ["net", "read", "write", "run"].iter().map(|s| s.to_string()).collect();
                                 let hint = closest_match(other, known.iter())
                                     .map(|s| format!("did you mean '{s}'?"));
                                 self.err(
