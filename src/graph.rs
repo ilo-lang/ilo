@@ -190,7 +190,11 @@ fn collect_stmts(
                 collect_stmts(body, calls, types);
             }
             Stmt::ForRange {
-                start, end, step, body, ..
+                start,
+                end,
+                step,
+                body,
+                ..
             } => {
                 collect_calls(start, calls, types);
                 collect_calls(end, calls, types);
