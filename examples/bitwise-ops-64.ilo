@@ -1,0 +1,46 @@
+-- bitwise-ops-64.ilo — exercises all 7 64-bit bitwise builtins (ILO-395).
+-- All ops work on f64 values interpreted as u64 (mod 2^64).
+--
+-- NOTE: f64 can exactly represent integers up to 2^53. Values >= 2^53 may
+-- lose precision on the f64↔u64 round-trip. Keep inputs within safe range
+-- or use values that round-trip cleanly (powers of 2, small integers).
+
+-- band64 x y — bitwise AND (64-bit)
+and-demo>n;band64 12 10
+
+-- bor64 x y — bitwise OR (64-bit)
+or-demo>n;bor64 12 10
+
+-- bxor64 x y — bitwise XOR (64-bit)
+xor-demo>n;bxor64 12 10
+
+-- bnot64 x — bitwise NOT (64-bit); mask result to avoid non-f64-safe output
+not-demo>n;band64 (bnot64 0) 255
+
+-- bshl64 x n — shift left (64-bit); 1 << 33 stays within 2^53
+shl-demo>n;bshl64 1 33
+
+-- bshr64 x n — logical shift right (64-bit)
+shr-demo>n;bshr64 8589934592 33
+
+-- brot64 x n — rotate left 64-bit; 1 rotated left 1 = 2
+rot-demo>n;brot64 1 1
+
+-- Demonstrate 64-bit mixing step (within safe integer range)
+-- Uses values well below 2^53 to avoid precision loss
+mix-demo>n;x=4294967295;bxor64 (brot64 x 13) (bshr64 x 7)
+
+-- run: and-demo
+-- out: 8
+-- run: or-demo
+-- out: 14
+-- run: xor-demo
+-- out: 6
+-- run: not-demo
+-- out: 255
+-- run: shl-demo
+-- out: 8589934592
+-- run: shr-demo
+-- out: 1
+-- run: rot-demo
+-- out: 2
