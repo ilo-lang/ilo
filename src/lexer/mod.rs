@@ -73,6 +73,11 @@ pub enum Token {
     PipeOp,
     #[token("??")]
     NilCoalesce,
+    /// `<-` — use-chain bind operator. `x <- expr ; rest` desugars to
+    /// `?expr{~x: rest; ^e: ^e}`, flattening multi-step R-T-E chains.
+    /// Must precede the single-char `<` token so logos picks the longer match.
+    #[token("<-")]
+    ArrowLeft,
     // `!!` panic-unwrap. Must precede single-char `!` so logos picks the
     // longer match. Symmetric with `!` over R / O, but on Err / nil aborts
     // with diagnostic + exit 1 instead of propagating to the enclosing fn.
@@ -249,6 +254,7 @@ impl Token {
             Token::PlusEq => "`+=`".into(),
             Token::PipeOp => "`>>`".into(),
             Token::NilCoalesce => "`??`".into(),
+            Token::ArrowLeft => "`<-`".into(),
             Token::BangBang => "`!!`".into(),
 
             // Single-char operators
