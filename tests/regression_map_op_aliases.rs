@@ -90,7 +90,8 @@ fn map_values_alias() {
 fn map_aliases_mixed_with_canonical() {
     // Uses map-set to build, mhas to check, map-del to remove,
     // then confirms key is gone with mhas.
-    let src = "main>b;m=mmap;m=map-set m \"hi\" 1;ok=mhas m \"hi\";m=map-del m \"hi\";mhas m \"hi\"";
+    let src =
+        "main>b;m=mmap;m=map-set m \"hi\" 1;ok=mhas m \"hi\";m=map-del m \"hi\";mhas m \"hi\"";
     assert_eq!(run(src, "main"), "false");
 }
 
