@@ -9464,7 +9464,11 @@ fn par_map_run(
     let concurrency = concurrency.max(1);
     let mut results: Vec<Value> = (0..items.len()).map(|_| Value::Nil).collect();
     // Process in chunks of `concurrency`, preserving order.
-    for (chunk_base, chunk) in items.chunks(concurrency).enumerate().map(|(i, c)| (i * concurrency, c)) {
+    for (chunk_base, chunk) in items
+        .chunks(concurrency)
+        .enumerate()
+        .map(|(i, c)| (i * concurrency, c))
+    {
         std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(chunk.len());
             for item in chunk.iter() {
@@ -15483,7 +15487,8 @@ mod tests {
     #[test]
     fn par_map_default_concurrency_two_arg_form() {
         // 2-arg form (no explicit n): should still work
-        let src = r#"sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let src =
+            r#"sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
         let result = run_str(src, Some("main"), vec![]);
         assert_eq!(
             result,
