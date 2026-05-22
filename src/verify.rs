@@ -247,6 +247,48 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
     }
 }
 
+/// Check whether an anonymous-record type structurally satisfies a named
+/// record type: every field declared on the named type must be present in
+/// the anon record with a compatible type.  Extra fields on the anon record
+/// are permitted (structural / width subtyping).
+fn anon_satisfies_named(
+    anon_fields: &[(String, Ty)],
+    type_name: &str,
+    types: &HashMap<String, TypeDef>,
+) -> bool {
+    let Some(type_def) = types.get(type_name) else {
+        return false;
+    };
+    let anon_map: HashMap<&str, &Ty> = anon_fields
+        .iter()
+        .map(|(n, t)| (n.as_str(), t))
+        .collect();
+    type_def
+        .fields
+        .iter()
+        .all(|(name, expected_ty)| {
+            anon_map
+                .get(name.as_str())
+                .is_some_and(|actual_ty| compatible(actual_ty, expected_ty))
+        })
+}
+
+/// Like `compatible`, but additionally allows an `AnonRecord` to satisfy a
+/// `Named` record type via structural subtyping (see `anon_satisfies_named`).
+fn compatible_ext(
+    a: &Ty,
+    b: &Ty,
+    types: &HashMap<String, TypeDef>,
+) -> bool {
+    match (a, b) {
+        // anon record supplied where a named record type is expected
+        (Ty::AnonRecord(fields), Ty::Named(name)) | (Ty::Named(name), Ty::AnonRecord(fields)) => {
+            anon_satisfies_named(fields, name, types)
+        }
+        _ => compatible(a, b),
+    }
+}
+
 /// Build a targeted hint for a ternary whose branches have mismatched
 /// types. The verifier emits ILO-T003 with this hint to nudge agents
 /// toward the cheapest fix rather than the generic
@@ -4220,7 +4262,7 @@ impl VerifyContext {
 
                 let body_ty = self.verify_body(name, &mut scope, body);
                 let expected = convert_type_with_aliases(return_type, &self.aliases);
-                if !compatible(&body_ty, &expected) {
+                if !compatible_ext(&body_ty, &expected, &self.types) {
                     let hint = match (&body_ty, &expected) {
                         (Ty::Number, Ty::Text) => {
                             Some("use 'str' to convert: str <expr>".to_string())
@@ -5115,7 +5157,7 @@ impl VerifyContext {
                     for (i, ((param_name, param_ty), arg_ty)) in
                         sig_params.iter().zip(arg_types.iter()).enumerate()
                     {
-                        if !compatible(param_ty, arg_ty) {
+                        if !compatible_ext(param_ty, arg_ty, &self.types) {
                             let hint = match (param_ty, arg_ty) {
                                 (Ty::Text, Ty::Number) => {
                                     Some("use 'str' to convert number to text".to_string())
@@ -5156,7 +5198,7 @@ impl VerifyContext {
                         for (i, (param_ty, arg_ty)) in
                             param_types.iter().zip(arg_types.iter()).enumerate()
                         {
-                            if !compatible(param_ty, arg_ty) {
+                            if !compatible_ext(param_ty, arg_ty, &self.types) {
                                 self.err(
                                     "ILO-T007",
                                     func,
@@ -6817,6 +6859,50 @@ mod tests {
                 .iter()
                 .any(|e| e.message.contains("undefined type 'ghost'"))
         );
+    }
+
+    // ---- Anon record → named record structural subtyping ----
+
+    #[test]
+    fn anon_record_satisfies_named_param() {
+        // greet p:person; passing {name:"jane" age:30} should be accepted
+        let result =
+            parse_and_verify("type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30}");
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn anon_record_satisfies_named_param_with_extra_fields() {
+        // anon record has extra field 'note' — still acceptable (width subtyping)
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30 note:\"hi\"}",
+        );
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn anon_record_missing_required_field_rejected() {
+        // anon record is missing 'age' — should produce a type error
+        let result =
+            parse_and_verify("type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\"}");
+        assert!(result.is_err(), "expected type error for missing field");
+    }
+
+    #[test]
+    fn anon_record_wrong_field_type_rejected() {
+        // anon record has 'age' as text instead of number — should fail
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:\"old\"}",
+        );
+        assert!(result.is_err(), "expected type error for wrong field type");
+    }
+
+    #[test]
+    fn anon_record_as_return_type_of_named() {
+        // function declared to return 'person' but returns anon record — should be accepted
+        let result =
+            parse_and_verify("type person{name:t;age:n} mk>person;{name:\"bob\" age:25}");
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
     }
 
     // ---- Field access errors ----
