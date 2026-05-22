@@ -17,10 +17,7 @@ fn ilo() -> Command {
 }
 
 fn run_file(path: &str) -> String {
-    let out = ilo()
-        .args(["run", path])
-        .output()
-        .expect("spawn ilo");
+    let out = ilo().args(["run", path]).output().expect("spawn ilo");
     assert!(
         out.status.success(),
         "ilo failed for {path}:\nstdout: {}\nstderr: {}",
