@@ -26,7 +26,9 @@ fn ilo() -> Command {
 
 fn conformance_dir() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest).join("conformance").join("diagnostics")
+    PathBuf::from(manifest)
+        .join("conformance")
+        .join("diagnostics")
 }
 
 /// Run `ilo explain <code> --json` and return the pretty-printed JSON output.
@@ -77,8 +79,7 @@ fn assert_golden(code: &str) {
     let expected_raw = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("missing golden file {}: {e}\nRun `cargo test --features golden -- --bless` to create it", path.display()));
 
-    let expected: serde_json::Value =
-        normalise_json(&expected_raw, &format!("{}", path.display()));
+    let expected: serde_json::Value = normalise_json(&expected_raw, &format!("{}", path.display()));
 
     if actual != expected {
         // Print a readable diff by comparing pretty-printed strings line by line.
@@ -216,20 +217,35 @@ fn provenance_surface_is_valid() {
     let raw = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("missing {}: {e}", path.display()));
 
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("invalid JSON in provenance-surface.json: {e}"));
+    let v: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("invalid JSON in provenance-surface.json: {e}"));
 
-    assert_eq!(v["schemaVersion"], 1, "provenance-surface.json must have schemaVersion: 1");
+    assert_eq!(
+        v["schemaVersion"], 1,
+        "provenance-surface.json must have schemaVersion: 1"
+    );
 
     let features = v["features"].as_array().expect("features must be an array");
     assert!(!features.is_empty(), "features array must not be empty");
 
     // Each feature must have the required keys
     for (i, f) in features.iter().enumerate() {
-        assert!(f["feature"].is_string(), "features[{i}].feature must be a string");
-        assert!(f["compiler_path"].is_string(), "features[{i}].compiler_path must be a string");
-        assert!(f["function"].is_string(), "features[{i}].function must be a string");
-        assert!(f["error_codes"].is_array(), "features[{i}].error_codes must be an array");
+        assert!(
+            f["feature"].is_string(),
+            "features[{i}].feature must be a string"
+        );
+        assert!(
+            f["compiler_path"].is_string(),
+            "features[{i}].compiler_path must be a string"
+        );
+        assert!(
+            f["function"].is_string(),
+            "features[{i}].function must be a string"
+        );
+        assert!(
+            f["error_codes"].is_array(),
+            "features[{i}].error_codes must be an array"
+        );
     }
 }
 
@@ -241,15 +257,13 @@ fn all_golden_files_have_required_keys() {
     let entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .and_then(|x| x.to_str())
-                == Some("json")
-        })
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
         .collect();
 
-    assert!(!entries.is_empty(), "no golden files found in conformance/diagnostics/");
+    assert!(
+        !entries.is_empty(),
+        "no golden files found in conformance/diagnostics/"
+    );
 
     for entry in entries {
         let path = entry.path();
