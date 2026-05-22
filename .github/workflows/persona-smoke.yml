@@ -45,7 +45,7 @@ jobs:
         run: pip install tiktoken
 
       - name: Install ilo binary
-        run: bash scripts/ensure-ilo.sh
+        run: bash skills/ilo/scripts/ensure-ilo.sh
 
       - name: Print skill-module token sizes
         # Always emit the token report in CI so cap progress is visible in the
