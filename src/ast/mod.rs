@@ -612,7 +612,11 @@ fn resolve_aliases_stmt(stmt: &mut Stmt) {
             }
         }
         Stmt::ForRange {
-            start, end, step, body, ..
+            start,
+            end,
+            step,
+            body,
+            ..
         } => {
             resolve_aliases_expr(start);
             resolve_aliases_expr(end);
