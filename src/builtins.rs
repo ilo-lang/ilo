@@ -511,6 +511,42 @@ pub enum Builtin {
     Hstack,
     ColumnStack,
     Hist,
+
+    // Signal/math cluster (0.13.0). All tree-bridge eligible: pure numeric
+    // list / complex-pair ops, no FnRef args, no I/O, no Result wrapper.
+    // Appended last to preserve every existing on-wire tag.
+    //
+    // `convolve xs:L n ys:L n > L n` — discrete linear convolution of two
+    // real-valued sequences. Output length = `len xs + len ys - 1`. O(n*m)
+    // direct sum; suitable for short kernels. Mirrors NumPy `np.convolve`.
+    // Both empty → error ILO-R009.
+    Convolve,
+    // `searchsorted xs:L n targets:L n > L n` — batch sorted-list insertion
+    // points. Equivalent to `map (t:n>n; bisect xs t) targets` but more
+    // efficient (avoids lambda overhead per target). Numpy
+    // `np.searchsorted(a, v)` equivalent with `bisect_left` semantics.
+    Searchsorted,
+    // `cabs pair:L n > n` — complex magnitude sqrt(re² + im²).
+    // Accepts a 2-element [re, im] list. Closes the
+    // `sqrt (+ (* re re) (* im im))` recipe that fft-peak personas reach for.
+    Cabs,
+    // `cmul a:L n b:L n > L n` — complex multiply of two [re, im] pairs.
+    // Returns a new 2-element [re, im] list. Closes the 4-multiply
+    // complex product expansion in signal processing and FFT convolution.
+    Cmul,
+    // `pairwise f:F xs:L a > L b` — apply binary function f to each
+    // adjacent pair (xs[i], xs[i+1]). Output length = `len xs - 1`. Returns
+    // `[]` on empty or singleton list. Collapses the
+    // `map (i:n>_;f (at xs i) (at xs (+ i 1))) (range 0 (- (len xs) 1))`
+    // recipe. Useful for finite differences, running deltas, and
+    // neighbour comparisons.
+    Pairwise,
+    // `pdist2 xs:L n ys:L n > L n` — squared Euclidean distance between
+    // paired points, element-wise. Equivalent to
+    // `map (i:n>n; pow (- (at xs i) (at ys i)) 2) (range 0 (len xs))`.
+    // Lists must have the same length; mismatch raises ILO-R009. Closes the
+    // distance-matrix loop that pairwise-distance personas write.
+    Pdist2,
 }
 
 impl Builtin {
@@ -688,6 +724,12 @@ impl Builtin {
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
             "bisect" => Some(Builtin::Bisect),
+            "convolve" => Some(Builtin::Convolve),
+            "searchsorted" => Some(Builtin::Searchsorted),
+            "cabs" => Some(Builtin::Cabs),
+            "cmul" => Some(Builtin::Cmul),
+            "pairwise" => Some(Builtin::Pairwise),
+            "pdist2" => Some(Builtin::Pdist2),
             "dirname" => Some(Builtin::Dirname),
             "basename" => Some(Builtin::Basename),
             "pathjoin" => Some(Builtin::Pathjoin),
@@ -914,6 +956,12 @@ impl Builtin {
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
             Builtin::Bisect => "bisect",
+            Builtin::Convolve => "convolve",
+            Builtin::Searchsorted => "searchsorted",
+            Builtin::Cabs => "cabs",
+            Builtin::Cmul => "cmul",
+            Builtin::Pairwise => "pairwise",
+            Builtin::Pdist2 => "pdist2",
             Builtin::Dirname => "dirname",
             Builtin::Basename => "basename",
             Builtin::Pathjoin => "pathjoin",
@@ -1370,6 +1418,15 @@ impl Builtin {
         Builtin::Hstack,
         Builtin::ColumnStack,
         Builtin::Hist,
+        // Signal/math cluster (0.13.0). All tree-bridge eligible: pure numeric
+        // list / complex-pair ops, no FnRef args (except pairwise), no I/O.
+        // Appended last to preserve every existing on-wire tag.
+        Builtin::Convolve,
+        Builtin::Searchsorted,
+        Builtin::Cabs,
+        Builtin::Cmul,
+        Builtin::Pairwise,
+        Builtin::Pdist2,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1405,7 +1462,14 @@ impl Builtin {
             | Builtin::Vstack
             | Builtin::Hstack
             | Builtin::ColumnStack
-            | Builtin::Hist => "experimental",
+            | Builtin::Hist
+            // Signal/math cluster (0.13.0) — experimental until released.
+            | Builtin::Convolve
+            | Builtin::Searchsorted
+            | Builtin::Cabs
+            | Builtin::Cmul
+            | Builtin::Pairwise
+            | Builtin::Pdist2 => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1792,6 +1856,12 @@ mod tests {
             "hstack",
             "column-stack",
             "hist",
+            "convolve",
+            "searchsorted",
+            "cabs",
+            "cmul",
+            "pairwise",
+            "pdist2",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -2070,6 +2140,12 @@ mod tests {
             "hstack",
             "column-stack",
             "hist",
+            "convolve",
+            "searchsorted",
+            "cabs",
+            "cmul",
+            "pairwise",
+            "pdist2",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

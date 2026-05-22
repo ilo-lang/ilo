@@ -954,6 +954,20 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("hstack", &["list"], "list"),
     ("column-stack", &["list"], "list"),
     ("hist", &["list", "n"], "L n"),
+    // Signal/math cluster (0.13.0).
+    // convolve xs ys — discrete linear convolution, output len xs+len ys-1.
+    ("convolve", &["L n", "L n"], "L n"),
+    // searchsorted xs targets — batch bisect_left over a sorted list.
+    ("searchsorted", &["L n", "L n"], "L n"),
+    // cabs [re,im] — complex magnitude sqrt(re²+im²).
+    ("cabs", &["list"], "n"),
+    // cmul [re,im] [re,im] — complex multiply; returns [re,im].
+    ("cmul", &["list", "list"], "list"),
+    // pairwise f xs — apply binary f to each adjacent pair; output len xs-1.
+    // FnRef first arg; per-builtin arm handles HOF dispatch.
+    ("pairwise", &["F", "list"], "list"),
+    // pdist2 xs ys — element-wise squared Euclidean distance.
+    ("pdist2", &["L n", "L n"], "L n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -3120,6 +3134,30 @@ fn builtin_check_args(
                     Ty::List(inner) => *inner.clone(),
                     _ => Ty::Unknown,
                 },
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(ret_elem)), errors)
+        }
+        "pairwise" => {
+            // pairwise fn:F a a b xs:L a → L b
+            // Apply binary fn to each adjacent pair; output length = len xs - 1.
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'pairwise' first arg must be a function (F ...), got {fn_ty}"
+                    ),
+                    hint: Some("pass a binary function name: pairwise f xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: L of the function's return type, or L Unknown.
+            let ret_elem = match arg_types.first() {
+                Some(Ty::Fn(_, ret)) => *ret.clone(),
                 _ => Ty::Unknown,
             };
             (Ty::List(Box::new(ret_elem)), errors)

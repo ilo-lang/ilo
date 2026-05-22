@@ -872,11 +872,20 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Rsum, 2) => true,
         (Builtin::Ravg, 2) => true,
         (Builtin::Rmin, 2) => true,
-        // idxof s sub > O n — first code-point index of sub in s, nil when
-        // not found. Pure 2-arg text-in / option-n-out, no FnRef args, no
-        // I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in lockstep
-        // without a dedicated opcode.
-        (Builtin::Idxof, 2) => true,
+        // Signal/math cluster (0.13.0). All tree-bridge eligible: pure numeric
+        // list / complex-pair ops, no I/O, no Result wrapper. Pairwise has a
+        // FnRef arg so it is NOT tree-bridge eligible — it dispatches through
+        // the normal HOF path in the tree interpreter.
+        // convolve xs ys — discrete linear convolution, output len xs+len ys-1.
+        (Builtin::Convolve, 2) => true,
+        // searchsorted xs targets — batch bisect_left, same arity as convolve.
+        (Builtin::Searchsorted, 2) => true,
+        // cabs pair — complex magnitude, 1-arg.
+        (Builtin::Cabs, 1) => true,
+        // cmul a b — complex multiply of two [re,im] pairs, 2-arg.
+        (Builtin::Cmul, 2) => true,
+        // pdist2 xs ys — element-wise squared Euclidean distance, 2-arg.
+        (Builtin::Pdist2, 2) => true,
         // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
         // args, no Result wrapper. Tree interpreter performs the element-wise
         // select; VM and Cranelift inherit through the bridge at zero opcode
@@ -2137,6 +2146,112 @@ impl RegCompiler {
 
         self.next_reg = out_reg + 1;
         out_reg
+    }
+
+    /// `pairwise fn xs → L b` — native HOF loop for adjacent-pair application.
+    ///
+    /// Emits an index-based loop (0..len(xs)-1) that loads xs[i] and xs[i+1]
+    /// via OP_AT, calls fn(xs[i], xs[i+1]) via OP_CALL_DYN with argc=2, and
+    /// appends the result to an accumulator list. Empty or singleton xs → [].
+    ///
+    /// The loop guard uses `OP_LT i limit` + `JMPF`; `limit = len(xs) - 1`.
+    /// When `len(xs) < 2` the JMPF fires immediately and returns an empty list.
+    fn emit_pairwise_hof(
+        &mut self,
+        fn_arg: &crate::ast::Expr,
+        xs_arg: &crate::ast::Expr,
+    ) -> u8 {
+        let fn_reg = self.compile_expr(fn_arg);
+        let xs_reg = self.compile_expr(xs_arg);
+
+        // Accumulator — starts empty.
+        let acc_reg = self.alloc_reg();
+        self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+        // limit = len(xs) - 1. Loop runs for i in 0..limit (exclusive upper).
+        let len_reg = self.alloc_reg();
+        self.emit_abc(OP_LEN, len_reg, xs_reg, 0);
+        self.reg_is_num[len_reg as usize] = true;
+
+        let limit_reg = self.alloc_reg();
+        let one_ki = self.current.add_const(Value::Number(1.0));
+        self.emit_abx(OP_LOADK, limit_reg, one_ki);
+        self.reg_is_num[limit_reg as usize] = true;
+        // limit_reg = len_reg - 1
+        self.emit_abc(OP_SUB, limit_reg, len_reg, limit_reg);
+        self.reg_is_num[limit_reg as usize] = true;
+
+        // Index register i = 0.
+        let i_reg = self.alloc_reg();
+        let zero_ki = self.current.add_const(Value::Number(0.0));
+        self.emit_abx(OP_LOADK, i_reg, zero_ki);
+        self.reg_is_num[i_reg as usize] = true;
+
+        // OP_CALL_DYN ABI: result reg + 2 contiguous arg regs.
+        let nil_ki = self.current.add_const(Value::Nil);
+        let item_a_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, item_a_reg, nil_ki);
+        let item_b_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, item_b_reg, nil_ki);
+        let i1_reg = self.alloc_reg(); // scratch for i+1
+        self.emit_abx(OP_LOADK, i1_reg, nil_ki);
+        let cmp_reg = self.alloc_reg(); // loop-guard boolean
+        self.emit_abx(OP_LOADK, cmp_reg, nil_ki);
+
+        let res_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, res_reg, nil_ki);
+        let arg1_reg = self.alloc_reg();
+        assert!(
+            arg1_reg == res_reg + 1,
+            "pairwise HOF: arg1 must follow res reg contiguously"
+        );
+        self.emit_abx(OP_LOADK, arg1_reg, nil_ki);
+        let arg2_reg = self.alloc_reg();
+        assert!(
+            arg2_reg == res_reg + 2,
+            "pairwise HOF: arg2 must follow arg1 reg contiguously"
+        );
+        self.emit_abx(OP_LOADK, arg2_reg, nil_ki);
+
+        // ── loop top ──
+        // Guard: cmp_reg = (i < limit); exit if false.
+        let loop_top = self.current.code.len();
+        self.emit_abc(OP_LT, cmp_reg, i_reg, limit_reg);
+        let exit_jump = self.emit_jmpf(cmp_reg);
+
+        // item_a = xs[i] via OP_AT.
+        self.emit_abc(OP_AT, item_a_reg, xs_reg, i_reg);
+
+        // i1 = i + 1  (for the lookahead index).
+        // We can use a small const 1 to add.
+        self.emit_abc(OP_ADDK_N, i1_reg, i_reg, one_ki as u8);
+        self.reg_is_num[i1_reg as usize] = true;
+
+        // item_b = xs[i+1] via OP_AT.
+        self.emit_abc(OP_AT, item_b_reg, xs_reg, i1_reg);
+
+        // Call fn(item_a, item_b).
+        self.emit_abc(OP_MOVE, arg1_reg, item_a_reg, 0);
+        self.emit_abc(OP_MOVE, arg2_reg, item_b_reg, 0);
+        self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 2);
+
+        // Append result.
+        self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, res_reg);
+
+        // i += 1.
+        self.emit_abc(OP_ADDK_N, i_reg, i_reg, one_ki as u8);
+        self.reg_is_num[i_reg as usize] = true;
+
+        // Jump back to loop top.
+        self.emit_jump_to(loop_top);
+
+        // Patch exit jump.
+        self.current.patch_jump(exit_jump);
+
+        self.current_all_regs_numeric = false;
+        self.reg_is_num[acc_reg as usize] = false;
+        self.next_reg = acc_reg + 1;
+        acc_reg
     }
 
     fn emit_result_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
@@ -5940,6 +6055,14 @@ impl RegCompiler {
                                 &args[1],
                                 OP_UNIQ_BY_KEY,
                             );
+                        }
+                        // `pairwise fn xs → L b` — apply binary fn to each
+                        // adjacent pair (xs[i], xs[i+1]). Output length =
+                        // len xs - 1; empty or singleton → [].
+                        // Delegates to emit_pairwise_hof for a clean
+                        // index-loop with OP_AT lookahead + OP_CALL_DYN argc=2.
+                        (Builtin::Pairwise, 2) => {
+                            return self.emit_pairwise_hof(&args[0], &args[1]);
                         }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic,
@@ -18105,6 +18228,17 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Hstack
             | Builtin::ColumnStack
             | Builtin::Hist
+            // Signal/math cluster (0.13.0). All raise ILO-R009 on bad input:
+            // convolve: either list empty; searchsorted: type mismatch;
+            // cabs/cmul: wrong-length pair or non-number elements;
+            // pdist2: length mismatch or non-numeric elements.
+            // Surface on Cranelift in lockstep rather than degenerating
+            // silently to nil.
+            | Builtin::Convolve
+            | Builtin::Searchsorted
+            | Builtin::Cabs
+            | Builtin::Cmul
+            | Builtin::Pdist2
     )
 }
 
