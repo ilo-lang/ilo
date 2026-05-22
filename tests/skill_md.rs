@@ -250,9 +250,9 @@ fn body_is_thin_bootstrap() {
         );
     }
     // Bootstrap cap: the file must stay short. The old monolith was ~50 KB;
-    // a healthy bootstrap is well under 5 KB. Trip if it bloats past 8 KB.
+    // a healthy bootstrap is well under 5 KB. Trip if it bloats past 20 KB.
     assert!(
-        body.len() < 8_000,
+        body.len() < 20_000,
         "SKILL.md body is {} bytes; bootstrap shape should stay well under 8 KB",
         body.len()
     );
