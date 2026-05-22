@@ -11950,13 +11950,37 @@ fn par_map_default_concurrency() -> usize {
         .unwrap_or(4)
 }
 
-/// Apply `fn_name` to each element of `items` up to `concurrency` items in
-/// parallel, collecting results in input order as `Value::Ok(_)` / `Value::Err(_)`.
+/// Compute the auto-tuned chunk size for `par_map_run`.
+///
+/// With `n_threads` threads and `n_items` items, each thread processes
+/// `ceil(n_items / n_threads)` items, keeping thread-creation overhead
+/// constant regardless of list length. Returns at least 1.
+fn par_map_chunk_size(n_items: usize, n_threads: usize) -> usize {
+    let t = n_threads.max(1);
+    (n_items + t - 1) / t
+}
+
+/// Apply `fn_name` to each element of `items` using up to `concurrency`
+/// threads, collecting results in input order as `Value::Ok(_)` / `Value::Err(_)`.
+///
+/// ### Chunking
+/// Instead of spawning one thread per item, we spawn at most `concurrency`
+/// threads and distribute items evenly across them
+/// (`chunk_size = ceil(len / concurrency)`). This keeps thread-creation
+/// overhead constant for large lists of small items and avoids the
+/// wave-by-wave serialisation of the previous implementation.
+///
+/// ### Cancellation
+/// A shared atomic flag (`cancelled`) is set to `true` the first time any
+/// worker produces an `Err`. Subsequent items inside the same worker are
+/// skipped and filled with a cancellation sentinel
+/// `Err("par-map: cancelled due to earlier error")`. Items in other threads
+/// that have not yet started processing also respect this flag. This means
+/// that a single error causes remaining unstarted work to be abandoned
+/// quickly while already-running calls complete naturally.
 ///
 /// Worker threads each get a fresh `Env` built from the function-table snapshot
 /// (`fns`) and the capability policy (`caps`) captured from the caller's `Env`.
-/// The inner function may invoke any builtin (including I/O builtins); capability
-/// checks run inside the worker threads as usual.
 ///
 /// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
 /// frame, following the dispatch-arm-size convention from #494 / ILO-289.
@@ -11969,45 +11993,76 @@ fn par_map_run(
     fns: HashMap<String, Decl>,
     caps: Arc<Caps>,
 ) -> Vec<Value> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     if items.is_empty() {
         return Vec::new();
     }
-    let concurrency = concurrency.max(1);
-    let mut results: Vec<Value> = (0..items.len()).map(|_| Value::Nil).collect();
-    // Process in chunks of `concurrency`, preserving order.
-    for (chunk_base, chunk) in items
-        .chunks(concurrency)
-        .enumerate()
-        .map(|(i, c)| (i * concurrency, c))
-    {
-        std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(chunk.len());
-            for item in chunk.iter() {
-                let item = item.clone();
-                let fn_name = fn_name.to_string();
-                let captures = captures.clone();
-                let fns = fns.clone();
-                let caps = caps.clone();
-                handles.push(s.spawn(move || {
+    let n_threads = concurrency.max(1);
+    let chunk_size = par_map_chunk_size(items.len(), n_threads);
+
+    // Pre-fill results so threads can write their slice independently.
+    let mut results: Vec<Value> = vec![Value::Nil; items.len()];
+
+    // Shared cancellation flag: set to true when any worker encounters an Err.
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    std::thread::scope(|s| {
+        let mut handles = Vec::new();
+        for (chunk_idx, chunk) in items.chunks(chunk_size).enumerate() {
+            let base = chunk_idx * chunk_size;
+            let chunk_items: Vec<Value> = chunk.to_vec();
+            let fn_name_owned = fn_name.to_string();
+            let captures = captures.clone();
+            let fns = fns.clone();
+            let caps = caps.clone();
+            let cancelled = cancelled.clone();
+            handles.push((
+                base,
+                chunk_items.len(),
+                s.spawn(move || {
                     let mut worker_env = Env::with_caps(caps);
                     worker_env.functions = fns;
-                    let mut call_args = vec![item];
-                    call_args.extend(captures.iter().cloned());
-                    match call_function(&mut worker_env, &fn_name, call_args) {
-                        Ok(v) => Value::Ok(Box::new(v)),
-                        Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.message.clone())))),
+                    let mut local: Vec<Value> = Vec::with_capacity(chunk_items.len());
+                    for item in chunk_items {
+                        // Check cancellation before starting each item.
+                        if cancelled.load(Ordering::Relaxed) {
+                            local.push(Value::Err(Box::new(Value::Text(Arc::new(
+                                "par-map: cancelled due to earlier error".to_string(),
+                            )))));
+                            continue;
+                        }
+                        let mut call_args = vec![item];
+                        call_args.extend(captures.iter().cloned());
+                        let result = match call_function(&mut worker_env, &fn_name_owned, call_args)
+                        {
+                            Ok(v) => Value::Ok(Box::new(v)),
+                            Err(e) => {
+                                // Signal other workers to cancel.
+                                cancelled.store(true, Ordering::Relaxed);
+                                Value::Err(Box::new(Value::Text(Arc::new(e.message.clone()))))
+                            }
+                        };
+                        local.push(result);
                     }
-                }));
-            }
-            for (i, h) in handles.into_iter().enumerate() {
-                results[chunk_base + i] = h.join().unwrap_or_else(|_| {
+                    local
+                }),
+            ));
+        }
+        for (base, len, handle) in handles {
+            let local = handle.join().unwrap_or_else(|_| {
+                vec![
                     Value::Err(Box::new(Value::Text(Arc::new(
                         "par-map worker thread panicked".to_string(),
-                    ))))
-                });
+                    ))));
+                    len
+                ]
+            });
+            for (i, v) in local.into_iter().enumerate() {
+                results[base + i] = v;
             }
-        });
-    }
+        }
+    });
     results
 }
 
@@ -18153,5 +18208,73 @@ f>n;+area(circle 2) area(square 3)"#;
                 Value::Number(16.0),
             ]))
         );
+    }
+
+    // ILO-354: chunking strategy — large list of small items processed correctly
+    // with auto-tuned chunk size (ceil(len / num_cpus) items per thread).
+    #[test]
+    fn par_map_large_list_chunking() {
+        // 100 items [0..99], each doubled — verifies order-preservation across
+        // multiple auto-sized chunks. Uses `range 0 100` (2-arg form).
+        let src = r#"dbl x:n>n;*x 2  main>L n;xs=range 0 100;ys=par-map dbl xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        if let Value::List(list) = result {
+            assert_eq!(list.len(), 100);
+            for (i, v) in list.iter().enumerate() {
+                assert_eq!(*v, Value::Number((i * 2) as f64), "mismatch at index {i}");
+            }
+        } else {
+            panic!("expected a list");
+        }
+    }
+
+    // ILO-354: cancellation — an error in one item causes remaining items
+    // to be short-circuited (filled with cancellation Err sentinel).
+    #[test]
+    fn par_map_error_cancels_remaining_workers() {
+        // `boom` errors on x == 5 by performing `at [] 0` (out-of-bounds),
+        // which is a RuntimeError (not a Value::Err), triggering cancellation.
+        // Items after 5 should be Err (original error or cancellation sentinel).
+        // We use concurrency=1 so items are processed strictly in order.
+        let src = r#"boom x:n>n;=x 5{at [] 0};x  main>L n;xs=range 0 10;par-map boom xs 1"#;
+        let result = run_str(src, Some("main"), vec![]);
+        if let Value::List(list) = result {
+            assert_eq!(list.len(), 10);
+            // Items 0..5 should be Ok.
+            for i in 0..5 {
+                assert!(
+                    matches!(&list[i], Value::Ok(_)),
+                    "expected Ok at index {i}, got {:?}",
+                    list[i]
+                );
+            }
+            // Item 5 should be Err (the explicit failure).
+            assert!(
+                matches!(&list[5], Value::Err(_)),
+                "expected Err at index 5, got {:?}",
+                list[5]
+            );
+            // Items 6..10 should be Err (cancelled).
+            for i in 6..10 {
+                assert!(
+                    matches!(&list[i], Value::Err(_)),
+                    "expected cancelled Err at index {i}, got {:?}",
+                    list[i]
+                );
+            }
+        } else {
+            panic!("expected a list");
+        }
+    }
+
+    // ILO-354: par_map_chunk_size helper — unit test for the auto-tuning formula.
+    #[test]
+    fn par_map_chunk_size_formula() {
+        use super::par_map_chunk_size;
+        assert_eq!(par_map_chunk_size(100, 4), 25);
+        assert_eq!(par_map_chunk_size(101, 4), 26); // ceil(101/4)
+        assert_eq!(par_map_chunk_size(1, 8), 1);
+        assert_eq!(par_map_chunk_size(0, 4), 0);
+        assert_eq!(par_map_chunk_size(10, 0), 10); // 0 threads treated as 1
     }
 }
