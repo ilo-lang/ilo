@@ -9222,20 +9222,14 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 Value::Text(s) => s.to_string(),
                 v => format!("{v}"),
             };
-            Err(RuntimeError::new(
-                "ILO-R020",
-                format!("todo: {msg}"),
-            ))
+            Err(RuntimeError::new("ILO-R020", format!("todo: {msg}")))
         }
         Expr::Panic(reason) => {
             let msg = match eval_expr(env, reason)? {
                 Value::Text(s) => s.to_string(),
                 v => format!("{v}"),
             };
-            Err(RuntimeError::new(
-                "ILO-R021",
-                format!("panic: {msg}"),
-            ))
+            Err(RuntimeError::new("ILO-R021", format!("panic: {msg}")))
         }
     }
 }
