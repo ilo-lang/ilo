@@ -7290,4 +7290,43 @@ f a:t b:t>t;join a b"#,
     // every time `cargo test --release --features cranelift` runs inside an
     // isolated worktree (the AOT tests link successfully iff the lookup
     // honours `.cargo/config.toml`).
+
+    // ── ILO-401: Cranelift codegen for sum-type bytecode ─────────────────────
+
+    /// Cranelift must accept bytecode produced from a sum-type program.
+    /// The VM compiler emits only standard opcodes (OP_RECNEW, OP_RECFLD,
+    /// OP_EQ, OP_LOADK) for variants; this test confirms those opcodes flow
+    /// through the full Cranelift IR-generation path without a bailout.
+    #[test]
+    fn codegen_sum_type_variants_emit_object() {
+        // sum type with payload variants (circle, square) and a no-payload variant (point)
+        let bytes = compile_to_object_bytes(
+            "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)",
+        );
+        assert!(
+            bytes.is_ok(),
+            "Cranelift sum-type codegen failed: {:?}",
+            bytes.err()
+        );
+        let obj = bytes.unwrap();
+        assert!(!obj.is_empty(), "object file must not be empty");
+    }
+
+    /// Cranelift must accept sum-type programs with zero-payload variants used
+    /// as bare values (not called with arguments).
+    #[test]
+    fn codegen_sum_type_zero_payload_variant_emit_object() {
+        let bytes = compile_to_object_bytes(
+            "type color = red | green | blue\n\
+             pick c:color>t;?c{red:\"r\";green:\"g\";blue:\"b\"}\n\
+             main>t;pick red",
+        );
+        assert!(
+            bytes.is_ok(),
+            "Cranelift zero-payload variant codegen failed: {:?}",
+            bytes.err()
+        );
+    }
 }
