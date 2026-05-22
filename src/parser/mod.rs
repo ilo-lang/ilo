@@ -37,6 +37,22 @@ fn effective_max_ast_depth() -> usize {
     if v == 0 { DEFAULT_MAX_AST_DEPTH } else { v }
 }
 
+/// Transient parsing-mode flags that must be saved and restored whenever the
+/// parser descends into a syntactically isolated sub-expression (list elements,
+/// parenthesised groups, inline-lambda bodies, paren-form call argument lists).
+///
+/// All fields default to `false` / their "outermost scope" value.  Use
+/// `Parser::push_ctx` to snapshot the current context, mutate it for a
+/// sub-parse, and `Parser::pop_ctx` (or the return value of `push_ctx`) to
+/// restore the previous state.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ParseContext {
+    /// When true, an Ident followed by another whitespace-separated atom is
+    /// parsed as a bare Ref (list element) rather than a function call.
+    /// Set only inside list-literal element parsing.
+    pub no_whitespace_call: bool,
+}
+
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
@@ -68,10 +84,9 @@ pub struct Parser {
     /// For each known function, the ordered parameter names. Used to resolve
     /// labelled args (`label:value`) to their positional index at parse time.
     fn_param_names: HashMap<String, Vec<String>>,
-    /// When true, an Ident followed by another whitespace-separated atom is
-    /// parsed as a bare Ref (list element) rather than a function call.
-    /// Set only inside list-literal element parsing.
-    no_whitespace_call: bool,
+    /// Transient parsing-mode flags. Saved/restored via `push_ctx`/`pop_ctx`
+    /// whenever the parser enters a syntactically isolated sub-expression.
+    ctx: ParseContext,
     /// Synthetic top-level decls emitted by inline-lambda lifting. Appended to
     /// `Program.declarations` after the main parse. Each inline lambda
     /// `(p:t>r;body)` becomes a `Decl::Function { name: "__lit_N", ... }` here
@@ -147,7 +162,7 @@ impl Parser {
             fn_arity,
             fn_param_is_fn,
             fn_param_names,
-            no_whitespace_call: false,
+            ctx: ParseContext::default(),
             lifted_decls: Vec::new(),
             lambda_counter: 0,
             parse_failed_fns: HashMap::new(),
@@ -183,6 +198,28 @@ impl Parser {
         if self.depth > 0 {
             self.depth -= 1;
         }
+    }
+
+    /// Snapshot the current [`ParseContext`], apply `f` to mutate it for a
+    /// sub-parse scope, and return the saved snapshot.  Restore it afterwards
+    /// with [`pop_ctx`][Self::pop_ctx].
+    ///
+    /// ```ignore
+    /// let saved = self.push_ctx(|c| c.no_whitespace_call = true);
+    /// let result = self.parse_something();
+    /// self.pop_ctx(saved);
+    /// ```
+    #[inline]
+    fn push_ctx(&mut self, f: impl FnOnce(&mut ParseContext)) -> ParseContext {
+        let saved = self.ctx;
+        f(&mut self.ctx);
+        saved
+    }
+
+    /// Restore a [`ParseContext`] previously saved by [`push_ctx`][Self::push_ctx].
+    #[inline]
+    fn pop_ctx(&mut self, saved: ParseContext) {
+        self.ctx = saved;
     }
 
     /// Returns `Some(span)` if an unindented newline (top-level declaration
@@ -1157,8 +1194,7 @@ statement boundary; bind the chain to a local first. For example, split \
         self.expect(&Token::LParen)?;
         // Restore normal whitespace-call mode inside the parens so that
         // postfix calls inside args (`spl(row, ",")`) still parse correctly.
-        let prev_no_ws = self.no_whitespace_call;
-        self.no_whitespace_call = false;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
         let mut args: Vec<Expr> = Vec::new();
         let mut has_labelled = false;
         let mut labelled_pairs: Vec<(String, Expr)> = Vec::new();
@@ -1224,7 +1260,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 }
             }
         }
-        self.no_whitespace_call = prev_no_ws;
+        self.pop_ctx(saved_ctx);
         self.expect(&Token::RParen)?;
 
         // If we collected labelled args, resolve them using fn_name
@@ -2748,10 +2784,9 @@ statement boundary; bind the chain to a local first. For example, split \
     /// inside whitespace-list elements still work via parens (`[(f x) y]`
     /// or `[f(x) y]`) — the flag is cleared on paren entry.
     fn parse_list_element(&mut self) -> Result<Expr> {
-        let prev = self.no_whitespace_call;
-        self.no_whitespace_call = true;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = true);
         let result = self.parse_list_element_call_ok();
-        self.no_whitespace_call = prev;
+        self.pop_ctx(saved_ctx);
         result
     }
 
@@ -3594,7 +3629,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             // would parse as `at(xs, 0, at, xs, 2)` (5 args) instead of two
             // calls. Mirroring `parse_call_arg`'s `for i in 0..arity` keeps
             // each list element to a single capped call.
-            if self.no_whitespace_call {
+            if self.ctx.no_whitespace_call {
                 let arity = self.fn_arity.get(&name).copied().unwrap_or(0);
                 if arity == 0 || !self.can_start_operand() {
                     // Diagnostic-only fix for list-literal call traps: variadic
@@ -4419,10 +4454,9 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.advance();
                 // Parenthesised expressions are self-contained — restore
                 // normal whitespace-call behaviour inside.
-                let prev = self.no_whitespace_call;
-                self.no_whitespace_call = false;
+                let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
                 let expr = self.parse_expr();
-                self.no_whitespace_call = prev;
+                self.pop_ctx(saved_ctx);
                 let expr = expr?;
                 self.expect(&Token::RParen)?;
                 // Field access chain on a parenthesised expression:
@@ -4712,8 +4746,7 @@ For variable-position list indexing bind the head first: \
         let start = self.peek_span();
         self.expect(&Token::LParen)?;
         // Parens are self-contained; reset whitespace-call mode inside.
-        let prev_no_ws = self.no_whitespace_call;
-        self.no_whitespace_call = false;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
         let params = self.parse_params()?;
         self.expect(&Token::Greater)?;
         let return_type = self.parse_type()?;
@@ -4726,7 +4759,7 @@ For variable-position list indexing bind the head first: \
         // `)` as part of normal at-body-end logic — instead, parse a
         // semicolon-separated sequence that terminates on RParen.
         let body = self.parse_lambda_body()?;
-        self.no_whitespace_call = prev_no_ws;
+        self.pop_ctx(saved_ctx);
         let end = self.peek_span();
         // If the body completed but the next token is an Ident, the body
         // greedily consumed a prefix-call (`+a kc`) and the remaining
