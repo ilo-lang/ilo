@@ -1354,6 +1354,7 @@ fn emit_type(ty: &Type) -> String {
             format!("Callable[[{}], {}]", ps.join(", "), emit_type(ret))
         }
         Type::Named(_name) => "dict".to_string(),
+        Type::U32 | Type::U64 | Type::I64 => "int".to_string(),
     }
 }
 

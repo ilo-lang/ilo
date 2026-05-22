@@ -56,6 +56,7 @@ fn emit_type_comment(ty: &Type) -> String {
             format!("({}) => {}", ps.join(", "), emit_type_comment(ret))
         }
         Type::Named(name) => name.clone(),
+        Type::U32 | Type::U64 | Type::I64 => "number".to_string(),
     }
 }
 

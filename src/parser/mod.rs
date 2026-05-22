@@ -1916,6 +1916,18 @@ statement boundary; bind the chain to a local first. For example, split \
                 let return_type = types.pop().expect("F type requires at least a return type");
                 Ok(Type::Fn(types, Box::new(return_type)))
             }
+            Some(Token::U32Type) => {
+                self.advance();
+                Ok(Type::U32)
+            }
+            Some(Token::U64Type) => {
+                self.advance();
+                Ok(Type::U64)
+            }
+            Some(Token::I64Type) => {
+                self.advance();
+                Ok(Type::I64)
+            }
             Some(Token::Ident(name)) => {
                 self.advance();
                 Ok(Type::Named(name))
@@ -1930,7 +1942,7 @@ statement boundary; bind the chain to a local first. For example, split \
             Some(tok) => Err(self.error_hint(
                 "ILO-P007",
                 format!("expected type, got {}", tok.user_facing_name()),
-                "valid types: n, t, b, L n, R n t, F n>n, W (World), or a record type name"
+                "valid types: n, t, b, U32, U64, I64, L n, R n t, F n>n, W (World), or a record type name"
                     .to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
@@ -1953,6 +1965,9 @@ statement boundary; bind the chain to a local first. For example, split \
             Some(Token::FnType) => true,
             Some(Token::WorldType) => true,
             Some(Token::LParen) => true,
+            Some(Token::U32Type) => true,
+            Some(Token::U64Type) => true,
+            Some(Token::I64Type) => true,
             _ => false,
         }
     }

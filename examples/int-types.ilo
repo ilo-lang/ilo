@@ -1,0 +1,52 @@
+-- Integer type annotations: U32, U64, I64 (ILO-394)
+--
+-- U32 / U64 / I64 are accepted wherever a type annotation is required.
+-- The tree-walker engine stores all values as f64 internally (cheap path).
+--
+-- Precision notes:
+--   U32  — exact for all values ≤ 2^32 (4 294 967 295)
+--   U64  — exact for integers ≤ 2^53 (9 007 199 254 740 992); f64 precision
+--           limit applies above that threshold
+--   I64  — exact for integers in ±2^53; f64 precision limit beyond that
+
+-- --- U32 arithmetic ---
+add-u32 a:U32 b:U32>U32
+  + a b
+
+-- --- U64 large value ---
+add-u64 a:U64 b:U64>U64
+  + a b
+
+-- --- I64 signed arithmetic ---
+sub-i64 a:I64 b:I64>I64
+  - a b
+
+-- --- Bitwise ops on U32-annotated values ---
+-- band / bor / bxor all operate on the f64 value coerced to u32 internally.
+mask-bits a:U32 b:U32>U32
+  band a b
+
+-- --- Mixed: U32 compatible with n (both are f64 at runtime) ---
+double x:U32>n
+  * x 2
+
+-- --- U32 alias ---
+alias word U32
+
+add-word a:word b:word>word
+  + a b
+
+-- --- U32 in List / Optional type position ---
+list-len xs:L U32>U32
+  len xs
+
+unwrap-u32 x:O U32>U32
+  ?? x 0
+
+-- entry point for quick smoke test
+main>n
+  -- add-u32: 3 + 4 = 7
+  -- add-u64: 100000 + 200000 = 300000
+  -- sub-i64: 3 - 10 = -7
+  -- mask-bits: 12 & 10 = 8 (binary: 1100 & 1010 = 1000)
+  mask-bits 12 10

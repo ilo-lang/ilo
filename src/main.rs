@@ -1441,6 +1441,9 @@ fn type_to_ilo(ty: &ast::Type) -> String {
             format!("F {} {}", ps.join(" "), type_to_ilo(ret))
         }
         ast::Type::Named(name) => name.clone(),
+        ast::Type::U32 => "U32".to_string(),
+        ast::Type::U64 => "U64".to_string(),
+        ast::Type::I64 => "I64".to_string(),
     }
 }
 
