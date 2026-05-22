@@ -8503,6 +8503,7 @@ fn expr_refers_to(name: &str, expr: &Expr) -> bool {
                 || expr_refers_to(name, else_expr)
         }
         Expr::MakeClosure { captures, .. } => captures.iter().any(|c| expr_refers_to(name, c)),
+        Expr::Todo(inner) | Expr::Panic(inner) => expr_refers_to(name, inner),
         Expr::Literal(_) => false,
     }
 }
@@ -9227,6 +9228,20 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 fn_name: fn_name.clone(),
                 captures: cap_vals,
             })
+        }
+        Expr::Todo(reason) => {
+            let msg = match eval_expr(env, reason)? {
+                Value::Text(s) => s.to_string(),
+                v => format!("{v}"),
+            };
+            Err(RuntimeError::new("ILO-R020", format!("todo: {msg}")))
+        }
+        Expr::Panic(reason) => {
+            let msg = match eval_expr(env, reason)? {
+                Value::Text(s) => s.to_string(),
+                v => format!("{v}"),
+            };
+            Err(RuntimeError::new("ILO-R021", format!("panic: {msg}")))
         }
     }
 }
@@ -15862,5 +15877,37 @@ mod tests {
         // Regression: exit must be Number, not Text (run uses Text for code).
         let src = r#"f>b;r=run2!! "true" [];?r.exit{0:true;_:false}"#;
         assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
+    }
+
+    // ---- todo / panic typed expressions (ILO-410) ----
+
+    #[test]
+    fn todo_expr_produces_runtime_error() {
+        let prog = parse_program(r#"f>n;todo "not yet""#);
+        let result = run(&prog, None, vec![]);
+        match result {
+            Err(e) => {
+                assert_eq!(e.code, "ILO-R020", "expected ILO-R020, got {}", e.code);
+                assert!(e.message.contains("not yet"), "message was: {}", e.message);
+            }
+            Ok(v) => panic!("expected runtime error from todo, got value: {:?}", v),
+        }
+    }
+
+    #[test]
+    fn panic_expr_produces_runtime_error() {
+        let prog = parse_program(r#"f>n;panic "unreachable""#);
+        let result = run(&prog, None, vec![]);
+        match result {
+            Err(e) => {
+                assert_eq!(e.code, "ILO-R021", "expected ILO-R021, got {}", e.code);
+                assert!(
+                    e.message.contains("unreachable"),
+                    "message was: {}",
+                    e.message
+                );
+            }
+            Ok(v) => panic!("expected runtime error from panic, got value: {:?}", v),
+        }
     }
 }

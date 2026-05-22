@@ -4782,6 +4782,21 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 let expr = self.parse_field_chain(expr, None)?;
                 Ok(expr)
             }
+            // Gleam-style `todo "reason"` / `panic "reason"` typed expressions.
+            // Parsed as contextual keywords: the ident "todo" or "panic" followed
+            // by a mandatory text argument. Satisfy any return type at the verifier
+            // and abort at runtime with the given message.
+            Some(Token::Ident(ref name)) if name == "todo" || name == "panic" => {
+                let is_todo = name == "todo";
+                self.advance();
+                // The reason argument is required.
+                let reason = self.parse_expr_inner()?;
+                if is_todo {
+                    return Ok(Expr::Todo(Box::new(reason)));
+                } else {
+                    return Ok(Expr::Panic(Box::new(reason)));
+                }
+            }
             Some(Token::Ident(name)) => {
                 self.advance();
                 // Zero-arg builtins used as operands (arguments to other calls)
@@ -5331,6 +5346,9 @@ For variable-position list indexing bind the head first: \
                 for cap in captures {
                     self.collect_free_in_expr(cap, params, local, free);
                 }
+            }
+            Expr::Todo(inner) | Expr::Panic(inner) => {
+                self.collect_free_in_expr(inner, params, local, free);
             }
         }
     }
