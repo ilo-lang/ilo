@@ -6585,7 +6585,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         if let Err(msg) = env.caps.check_run(cmd.as_str()) {
             return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
         }
-        return Ok(run_spawn_structured_with_stdin(cmd.as_str(), &argv, &stdin_text));
+        return Ok(run_spawn_structured_with_stdin(
+            cmd.as_str(),
+            &argv,
+            &stdin_text,
+        ));
     }
     if builtin == Some(Builtin::RunBg) && args.len() == 2 {
         // run-bg cmd:t args:L t  >  R n t
@@ -11027,11 +11031,7 @@ pub(crate) fn run_spawn_with_stdin(_cmd: &str, _argv: &[String], _stdin: &str) -
 }
 
 #[cfg(target_family = "wasm")]
-pub(crate) fn run_spawn_structured_with_stdin(
-    _cmd: &str,
-    _argv: &[String],
-    _stdin: &str,
-) -> Value {
+pub(crate) fn run_spawn_structured_with_stdin(_cmd: &str, _argv: &[String], _stdin: &str) -> Value {
     Value::Err(Box::new(Value::Text(Arc::new(
         "run2: process spawn not available on wasm".to_string(),
     ))))

@@ -4096,10 +4096,7 @@ fn builtin_check_args(
                     });
                 }
             }
-            (
-                Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)),
-                errors,
-            )
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
         "sleep" => {
             // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,

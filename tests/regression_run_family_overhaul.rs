@@ -81,7 +81,10 @@ fn run3_empty_stdin_works_cross_engine() {
     let src = r#"f>t;m=run!! "cat" ["-"] "";??mget m "code" """#;
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f"]);
-        assert_eq!(out, "0", "{engine}: expected code=0 with empty stdin, got {out:?}");
+        assert_eq!(
+            out, "0",
+            "{engine}: expected code=0 with empty stdin, got {out:?}"
+        );
     }
 }
 
@@ -147,9 +150,10 @@ fn run_bg_returns_pid_as_number_cross_engine() {
     let src = r#"f>n;run-bg!! "true" []"#;
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f"]);
-        let pid: f64 = out.trim().parse().unwrap_or_else(|_| {
-            panic!("{engine}: expected numeric pid, got {out:?}")
-        });
+        let pid: f64 = out
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{engine}: expected numeric pid, got {out:?}"));
         assert!(pid > 0.0, "{engine}: expected pid > 0, got {pid}");
     }
 }
@@ -198,10 +202,7 @@ fn run2_3_verifies_cleanly() {
     // run2 arity-3 must verify cleanly. The return type is inferred from
     // the run2 call so we use a wildcard return annotation to keep it simple.
     let out = ilo()
-        .args([
-            "--ast",
-            r#"f cmd:t argv:L t inp:t>_;run2 cmd argv inp"#,
-        ])
+        .args(["--ast", r#"f cmd:t argv:L t inp:t>_;run2 cmd argv inp"#])
         .output()
         .expect("ilo --ast failed");
     assert!(
