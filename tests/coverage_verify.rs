@@ -48,8 +48,15 @@ fn len_wrong_type() {
 }
 
 #[test]
+fn str_text_passthrough() {
+    // str is now polymorphic: text input is identity, no error
+    assert_ok("main>t;str \"hi\"", "main");
+}
+
+#[test]
 fn str_wrong_type() {
-    assert_err("main>t;str \"hi\"", "ILO-T013", "main");
+    // bool is not accepted by str
+    assert_err("main x:b>t;str x", "ILO-T013", "main");
 }
 
 #[test]

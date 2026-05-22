@@ -3381,10 +3381,7 @@ fn wr_run(env: &mut Env, args: Vec<Value>) -> Result<Value> {
                     other => {
                         return Err(RuntimeError::new(
                             "ILO-R009",
-                            format!(
-                                "wr: data for {fmt} must be a list of rows, got {:?}",
-                                other
-                            ),
+                            format!("wr: data for {fmt} must be a list of rows, got {:?}", other),
                         ));
                     }
                 };
@@ -3515,7 +3512,13 @@ fn fmt_run(args: &[Value]) -> Result<Value> {
 
 /// `#[inline(never)]` — flt fn [ctx] xs > L a
 #[inline(never)]
-fn flt_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, ctx: Option<Value>, items: Arc<Vec<Value>>) -> Result<Value> {
+fn flt_run(
+    env: &mut Env,
+    fn_name: &str,
+    captures: Vec<Value>,
+    ctx: Option<Value>,
+    items: Arc<Vec<Value>>,
+) -> Result<Value> {
     let mut keep: Vec<bool> = Vec::with_capacity(items.len());
     for item in items.iter() {
         let mut call_args = match &ctx {
@@ -3557,7 +3560,12 @@ fn flt_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, ctx: Option<Value
 
 /// `#[inline(never)]` — grp fn xs > M t (L a)
 #[inline(never)]
-fn grp_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, items: Arc<Vec<Value>>) -> Result<Value> {
+fn grp_run(
+    env: &mut Env,
+    fn_name: &str,
+    captures: Vec<Value>,
+    items: Arc<Vec<Value>>,
+) -> Result<Value> {
     let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
         std::collections::HashMap::new();
     for item in items.iter() {
@@ -3597,7 +3605,12 @@ fn grp_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, items: Arc<Vec<Va
 
 /// `#[inline(never)]` — uniqby fn xs > L a
 #[inline(never)]
-fn uniqby_run(env: &mut Env, fn_name: &str, captures: Vec<Value>, items: Arc<Vec<Value>>) -> Result<Value> {
+fn uniqby_run(
+    env: &mut Env,
+    fn_name: &str,
+    captures: Vec<Value>,
+    items: Arc<Vec<Value>>,
+) -> Result<Value> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<Value> = Vec::new();
     for item in items.iter() {
@@ -3812,9 +3825,7 @@ fn del_hed_opt_run(env: &mut Env, builtin: Option<Builtin>, args: Vec<Value>) ->
         }
         match req.send() {
             Ok(resp) => match resp.as_str() {
-                Ok(body) => {
-                    Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
-                }
+                Ok(body) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string()))))),
                 Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                     "response is not valid UTF-8: {e}"
                 )))))),
@@ -4303,9 +4314,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 };
                 Ok(Value::Text(Arc::new(s)))
             }
+            Value::Text(_) => Ok(args[0].clone()),
             other => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("str requires a number, got {:?}", other),
+                format!("str requires a number or text, got {:?}", other),
             )),
         };
     }
@@ -4397,9 +4409,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Clamp) && args.len() == 3 {
         return match (&args[0], &args[1], &args[2]) {
-            (Value::Number(x), Value::Number(lo), Value::Number(hi)) => {
-                Ok(clamp_run(*x, *lo, *hi))
-            }
+            (Value::Number(x), Value::Number(lo), Value::Number(hi)) => Ok(clamp_run(*x, *lo, *hi)),
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "clamp requires three numbers".to_string(),
@@ -4409,13 +4419,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Min) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.min(*b))),
-            _ => Err(RuntimeError::new("ILO-R009", "min requires two numbers".to_string())),
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "min requires two numbers".to_string(),
+            )),
         };
     }
     if builtin == Some(Builtin::Max) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.max(*b))),
-            _ => Err(RuntimeError::new("ILO-R009", "max requires two numbers".to_string())),
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "max requires two numbers".to_string(),
+            )),
         };
     }
     if builtin == Some(Builtin::Argmax) && args.len() == 1 {
@@ -7635,21 +7651,36 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Rsum) && args.len() == 2 {
         let n_f = match &args[0] {
             Value::Number(n) => *n,
-            other => return Err(RuntimeError::new("ILO-R009", format!("rsum: first arg n must be a number, got {:?}", other))),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rsum: first arg n must be a number, got {:?}", other),
+                ));
+            }
         };
         return rolling_window_run("rsum", Builtin::Rsum, n_f, &args[1]);
     }
     if builtin == Some(Builtin::Ravg) && args.len() == 2 {
         let n_f = match &args[0] {
             Value::Number(n) => *n,
-            other => return Err(RuntimeError::new("ILO-R009", format!("ravg: first arg n must be a number, got {:?}", other))),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ravg: first arg n must be a number, got {:?}", other),
+                ));
+            }
         };
         return rolling_window_run("ravg", Builtin::Ravg, n_f, &args[1]);
     }
     if builtin == Some(Builtin::Rmin) && args.len() == 2 {
         let n_f = match &args[0] {
             Value::Number(n) => *n,
-            other => return Err(RuntimeError::new("ILO-R009", format!("rmin: first arg n must be a number, got {:?}", other))),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rmin: first arg n must be a number, got {:?}", other),
+                ));
+            }
         };
         return rolling_window_run("rmin", Builtin::Rmin, n_f, &args[1]);
     }
@@ -10922,12 +10953,9 @@ mod tests {
 
     #[test]
     fn err_str_wrong_type() {
-        let err = run_str_err(
-            r#"f x:t>t;str x"#,
-            Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
-        );
-        assert!(err.contains("str requires a number"));
+        // str now accepts text (identity) and number; bool triggers the error
+        let err = run_str_err(r#"f x:_ >t;str x"#, Some("f"), vec![Value::Bool(true)]);
+        assert!(err.contains("str requires"));
     }
 
     #[test]
