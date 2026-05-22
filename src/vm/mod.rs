@@ -676,6 +676,17 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // parity for free. Returns R RunResult t; auto-unwrap (`run2!`)
         // supported via `tree_bridge_returns_result`.
         (Builtin::Run2, 2) => true,
+        // `run cmd argv stdin` — arity-3 extension of `run` that pipes
+        // stdin text into the child. Same bridge contract: tree interpreter
+        // handles spawn + IO; VM/Cranelift get parity for free. Returns
+        // R (M t t) t; auto-unwrap supported.
+        (Builtin::Run, 3) => true,
+        // `run2 cmd argv stdin` — arity-3 extension of `run2` with stdin.
+        // Returns R RunResult t; auto-unwrap supported.
+        (Builtin::Run2, 3) => true,
+        // `run-bg cmd argv` — fire-and-forget spawn. Returns R n t (the pid).
+        // Tree-bridge eligible: no FnRef args, returns Result.
+        (Builtin::RunBg, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -928,6 +939,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::EnvAll
             | Builtin::Run
             | Builtin::Run2
+            | Builtin::RunBg
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl
@@ -37214,6 +37226,9 @@ main>n
             (Builtin::TzOffset, 2),
             (Builtin::Run, 2),
             (Builtin::Run2, 2),
+            (Builtin::Run, 3),
+            (Builtin::Run2, 3),
+            (Builtin::RunBg, 2),
             (Builtin::EnvAll, 0),
             (Builtin::Jkeys, 2),
             (Builtin::Rdin, 0),
@@ -37278,6 +37293,7 @@ main>n
             Builtin::EnvAll,
             Builtin::Run,
             Builtin::Run2,
+            Builtin::RunBg,
             Builtin::Jkeys,
             Builtin::Rdin,
             Builtin::Rdinl,

@@ -4,6 +4,12 @@
 
 ### Added
 
+- **run-family overhaul (ILO-35).** Three new process-spawn shapes for 0.13.0:
+  - `run cmd argv stdin:t > R (M t t) t` — arity-3 extension of `run` that pipes a text string into the child's stdin. Same no-shell-no-glob security model, same 10 MiB output cap, same `code`/`stdout`/`stderr` result Map as the 2-arg form. Unblocks any persona that needs to pass data to a filter command (`jq`, `awk`, `cat`, `wc`, `python -c`, etc.) without writing a temp file.
+  - `run2 cmd argv stdin:t > R RunResult t` — arity-3 extension of `run2` with the same stdin-pipe mechanic. Returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit:n`) for clean dot-access. Non-zero exit is NOT an error; Err only on spawn failure.
+  - `run-bg cmd argv > R n t` — fire-and-forget background spawn. Returns `Ok(pid:n)` immediately without waiting for the child; child inherits the parent's stdout/stderr and reads `/dev/null` on stdin. Use when you want to start a long-running server or worker and continue executing ilo code. Err only on spawn failure (cmd not found, permission denied, etc.). The returned pid is a positive integer.
+  All three are tree-bridge eligible so VM and Cranelift JIT/AOT backends inherit them through `OP_CALL_BUILTIN_TREE` without new opcodes. All three are `experimental` stability.
+
 - `ILO-P102` diagnostic for top-level `name=expr` bindings outside any function declaration. Catches the "forgot the `main>_;` wrapper" misparse that k-means and linear-regression personas hit when chaining imperative bindings at the top level. Without the wrapper the parser used to either die on the bare `=` (a bare `ILO-P003`) or, when a prior `name>type;body` decl was in scope, slurp the whole chain into that fn's body and emit a wall of misleading `ILO-T005` cascades anchored on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the `main>_;` wrapper. Parser-only change; identical output across VM and JIT.
 ### Fixed
 

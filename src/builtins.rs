@@ -239,6 +239,14 @@ pub enum Builtin {
     // clean dot-access: r.stdout, r.stderr, r.exit (n, not t). Non-zero
     // exit is NOT an error; Err only on spawn failure. Tree-bridge eligible.
     Run2,
+    // `run-bg cmd:t args:L t > R n t` — fire-and-forget background spawn.
+    // Launches the child process and immediately returns `Ok(pid:n)` without
+    // waiting for it to finish. stdout/stderr are inherited from the parent
+    // (agents usually redirect via shell or the child itself). Err only on
+    // spawn failure. The returned pid is a positive integer; callers that
+    // need to reap the child can pass it to a platform wait(2) equivalent.
+    // Tree-bridge eligible.
+    RunBg,
 
     // Map (associative array)
     Mmap,
@@ -609,6 +617,7 @@ impl Builtin {
             "rdjl" => Some(Builtin::Rdjl),
             "run" => Some(Builtin::Run),
             "run2" => Some(Builtin::Run2),
+            "run-bg" => Some(Builtin::RunBg),
             "get" => Some(Builtin::Get),
             // 0.12.0 rename: `post` → `pst`. Brings post into line with the
             // I/O compression family (rd, wr, srt, flt, fld, fmt). Clean
@@ -832,6 +841,7 @@ impl Builtin {
             Builtin::Rdjl => "rdjl",
             Builtin::Run => "run",
             Builtin::Run2 => "run2",
+            Builtin::RunBg => "run-bg",
             Builtin::Get => "get",
             Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
@@ -1201,6 +1211,11 @@ impl Builtin {
         // loose M t t that `run` returns, giving clean dot-access. Appended
         // last to preserve every existing on-wire tag; tree-bridge eligible.
         Builtin::Run2,
+        // `run-bg cmd:t args:L t > R n t` — fire-and-forget background spawn.
+        // Returns Ok(pid:n) immediately; child inherits parent stdout/stderr.
+        // Err only on spawn failure. Appended last to preserve every existing
+        // on-wire tag; tree-bridge eligible.
+        Builtin::RunBg,
         // Numeric prelude (0.12.1). Three list constructors hit repeatedly by
         // linear-regression (linspace for evenly-spaced sample points),
         // distance-matrix (ones for a design-matrix column), and monte-carlo
@@ -1319,6 +1334,7 @@ impl Builtin {
             | Builtin::PstTo
             | Builtin::TzOffset
             | Builtin::Run2
+            | Builtin::RunBg
             | Builtin::RgxallMulti
             | Builtin::Fmod
             | Builtin::DtparseRel

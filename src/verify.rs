@@ -688,9 +688,15 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("opt", &["t", "M t t"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
     ("run", &["t", "L t"], "R (M t t) t"),
+    // run arity-3: same as 2-arg form but pipes stdin text to the child.
+    ("run", &["t", "L t", "t"], "R (M t t) t"),
     // run2: structured spawn — typed Record instead of loose Map.
     ("run2", &["t", "L t"], "R RunResult t"),
-    ("rd", &["t"], "R t t"),
+    // run2 arity-3: run2 with stdin piped.
+    ("run2", &["t", "L t", "t"], "R RunResult t"),
+    // run-bg: fire-and-forget spawn; returns pid as n.
+    ("run-bg", &["t", "L t"], "R n t"),
+    ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("rd-json", &["t"], "R ? t"),
     ("lsd", &["t"], "R (L t) t"),
@@ -4079,6 +4085,44 @@ fn builtin_check_args(
                 errors,
             )
         }
+        "run-bg" => {
+            // run-bg cmd:t args:L t  >  R n t
+            // Fire-and-forget spawn — returns Ok(pid:n) immediately.
+            // Err only on spawn failure (cmd not found, permission denied).
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'run-bg' expects t (cmd), got {arg}"),
+                    hint: Some(
+                        "first arg is the program path or name, \
+                         e.g. run-bg \"myserver\" [\"--port\" \"8080\"]"
+                            .to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let list_text = Ty::List(Box::new(Ty::Text));
+                if !compatible(arg, &list_text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'run-bg' args slot expects L t, got {arg}"),
+                        hint: Some(
+                            "second arg is the argv list, e.g. run-bg \"server\" [\"--port\" \"9000\"]"
+                                .to_string(),
+                        ),
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
         "sleep" => {
             // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,
             // returns nil so it composes naturally as a statement in any block).
@@ -5300,6 +5344,9 @@ impl VerifyContext {
                         args.len() == 3 || args.len() == 4
                     } else if callee == "rd" {
                         args.len() == 1 || args.len() == 2
+                    } else if callee == "run" || callee == "run2" {
+                        // arity-2: cmd argv; arity-3: cmd argv stdin
+                        args.len() == 2 || args.len() == 3
                     } else if callee == "wr" {
                         args.len() == 2 || args.len() == 3
                     } else if matches!(callee.as_str(), "get" | "del" | "hed" | "opt" | "getx") {
@@ -5335,6 +5382,8 @@ impl VerifyContext {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
                             "1 or 2".to_string()
+                        } else if callee == "run" || callee == "run2" {
+                            "2 or 3".to_string()
                         } else {
                             expected_arity.to_string()
                         };

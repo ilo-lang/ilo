@@ -6478,6 +6478,165 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(run_spawn_structured(cmd.as_str(), &argv));
     }
+    if builtin == Some(Builtin::Run) && args.len() == 3 {
+        // run cmd:t args:L t stdin:t  >  R (M t t) t
+        //
+        // Arity-3 extension: pipe `stdin` text into the child's stdin.
+        // Identical semantics to the 2-arg form except stdin is piped
+        // instead of /dev/null. Non-zero exit is NOT an error.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        let stdin_text = match &args[2] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run stdin arg must be t (text), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_with_stdin(cmd.as_str(), &argv, &stdin_text));
+    }
+    if builtin == Some(Builtin::Run2) && args.len() == 3 {
+        // run2 cmd:t args:L t stdin:t  >  R RunResult t
+        //
+        // Arity-3 extension of run2: pipe `stdin` text into the child's
+        // stdin. Returns the same typed RunResult record.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run2 argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        let stdin_text = match &args[2] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 stdin arg must be t (text), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_structured_with_stdin(
+            cmd.as_str(),
+            &argv,
+            &stdin_text,
+        ));
+    }
+    if builtin == Some(Builtin::RunBg) && args.len() == 2 {
+        // run-bg cmd:t args:L t  >  R n t
+        //
+        // Fire-and-forget background spawn. Returns Ok(pid:n) immediately
+        // without waiting for the child. Child inherits parent stdout/stderr.
+        // Err only on spawn failure (cmd not found, permission denied, etc.).
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-bg requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run-bg argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-bg argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_bg(cmd.as_str(), &argv));
+    }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(Arc::new(s.trim().to_string()))),
@@ -10590,6 +10749,298 @@ pub(crate) fn run_spawn(_cmd: &str, _argv: &[String]) -> Value {
 pub(crate) fn run_spawn_structured(_cmd: &str, _argv: &[String]) -> Value {
     Value::Err(Box::new(Value::Text(Arc::new(
         "run2: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+/// `run cmd argv stdin_text > R (M t t) t` — like `run_spawn` but pipes
+/// `stdin_text` into the child's stdin instead of /dev/null.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_with_stdin(cmd: &str, argv: &[String], stdin_text: &str) -> Value {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    // Write stdin synchronously before draining stdout/stderr to avoid
+    // deadlock on small inputs (the child reads stdin then closes it).
+    // For large stdin blobs a dedicated thread would be safer; the 10 MiB
+    // output cap already bounds child output, and stdin writes > pipe buffer
+    // will block here — acceptable for the 0.13.0 initial shape.
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        if let Err(e) = stdin_pipe.write_all(stdin_text.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: failed to write stdin: {e}"
+            )))));
+        }
+        // Drop closes the pipe, signalling EOF to the child.
+    }
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: wait failed: {e}"
+            )))));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+    let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(sig) = status.signal() {
+                return format!("signal:{sig}");
+            }
+        }
+        "unknown".to_string()
+    });
+
+    let mut m: HashMap<MapKey, Value> = HashMap::with_capacity(3);
+    m.insert(
+        MapKey::Text("stdout".to_string()),
+        Value::Text(Arc::new(stdout)),
+    );
+    m.insert(
+        MapKey::Text("stderr".to_string()),
+        Value::Text(Arc::new(stderr)),
+    );
+    m.insert(
+        MapKey::Text("code".to_string()),
+        Value::Text(Arc::new(code)),
+    );
+    Value::Ok(Box::new(Value::Map(Arc::new(m))))
+}
+
+/// `run2 cmd argv stdin_text > R RunResult t` — like `run_spawn_structured`
+/// but pipes `stdin_text` into the child's stdin.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_structured_with_stdin(
+    cmd: &str,
+    argv: &[String],
+    stdin_text: &str,
+) -> Value {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        if let Err(e) = stdin_pipe.write_all(stdin_text.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: failed to write stdin: {e}"
+            )))));
+        }
+    }
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: wait failed: {e}"
+            )))));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+    let exit_code: f64 = status.code().map(|c| c as f64).unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if status.signal().is_some() {
+                return -1.0;
+            }
+        }
+        -1.0
+    });
+
+    let mut fields = HashMap::with_capacity(3);
+    fields.insert("stdout".to_string(), Value::Text(Arc::new(stdout)));
+    fields.insert("stderr".to_string(), Value::Text(Arc::new(stderr)));
+    fields.insert("exit".to_string(), Value::Number(exit_code));
+    Value::Ok(Box::new(Value::Record {
+        type_name: "RunResult".to_string(),
+        fields,
+    }))
+}
+
+/// `run-bg cmd argv > R n t` — fire-and-forget background spawn.
+///
+/// Spawns the child and immediately returns `Ok(pid:n)` without waiting.
+/// Child inherits the parent's stdout and stderr. stdin is /dev/null.
+/// Err only on spawn failure (cmd not found, permission denied, etc.).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_bg(cmd: &str, argv: &[String]) -> Value {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    match command.spawn() {
+        Ok(child) => {
+            let pid = child.id() as f64;
+            // Detach: drop the Child handle without waiting so the child
+            // runs independently. The OS will reap it as an orphan.
+            Value::Ok(Box::new(Value::Number(pid)))
+        }
+        Err(e) => Value::Err(Box::new(Value::Text(Arc::new(format!(
+            "run-bg: failed to spawn {cmd:?}: {e}"
+        ))))),
+    }
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_with_stdin(_cmd: &str, _argv: &[String], _stdin: &str) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_structured_with_stdin(_cmd: &str, _argv: &[String], _stdin: &str) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run2: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_bg(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run-bg: process spawn not available on wasm".to_string(),
     ))))
 }
 

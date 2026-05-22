@@ -51,6 +51,11 @@ pub struct ParseContext {
     /// parsed as a bare Ref (list element) rather than a function call.
     /// Set only inside list-literal element parsing.
     pub no_whitespace_call: bool,
+    /// When true, a `{` that looks like a brace-lambda (`{params> stmts}`) is
+    /// NOT treated as an operand start. Set when parsing the collection /
+    /// range-bound expression in a foreach/for-range statement so that
+    /// `@x xs{body}` is never mis-parsed as `@x (xs {lambda})`.
+    pub no_brace_lambda_operand: bool,
 }
 
 pub struct Parser {
@@ -3222,6 +3227,13 @@ statement boundary; bind the chain to a local first. For example, split \
         // token starts an operand, so `@j 0..len xs{...}` parses cleanly as
         // `0..Call(len,[xs])`. See tests/regression_range_expr.rs for the
         // cross-engine matrix.
+        //
+        // With brace-lambda syntax, `{params> stmts}` is a valid operand —
+        // but NOT here: the `{...}` after the collection/range-end is always
+        // the loop body, never a brace-lambda argument.  Set the context flag
+        // so `can_start_atom` treats `{` as a non-operand in this position,
+        // restoring the pre-brace-lambda behaviour for foreach/range heads.
+        let saved_ctx = self.push_ctx(|c| c.no_brace_lambda_operand = true);
         let start_expr = self.parse_expr_inner()?;
         // Check for range syntax: start..end
         if self.peek() == Some(&Token::DotDot) {
@@ -3234,6 +3246,7 @@ statement boundary; bind the chain to a local first. For example, split \
             } else {
                 None
             };
+            self.pop_ctx(saved_ctx);
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
@@ -3243,6 +3256,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 body,
             });
         }
+        self.pop_ctx(saved_ctx);
         let body = self.parse_brace_body()?;
         Ok(Stmt::ForEach {
             binding,
@@ -5058,8 +5072,11 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         if self.is_anon_record_literal() {
             return true;
         }
-        // Brace-lambda `{params> stmts}` is also a valid atom start.
-        if self.looks_like_brace_lambda() {
+        // Brace-lambda `{params> stmts}` is also a valid atom start, unless
+        // the caller has disabled brace-lambda consumption (e.g. foreach
+        // collection expressions where `@x xs{body}` must not parse `xs` as
+        // a call with the loop body as a brace-lambda argument).
+        if !self.ctx.no_brace_lambda_operand && self.looks_like_brace_lambda() {
             return true;
         }
         matches!(
