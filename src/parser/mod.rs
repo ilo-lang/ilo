@@ -883,7 +883,6 @@ statement boundary; bind the chain to a local first. For example, split \
                         "ILO-P016",
                         "expected a predicate name (wasm/native/test) after `use ?`, got EOF"
                             .into(),
-                        "expected a predicate name (wasm/native/test) after `use ?`, got EOF".into(),
                     ));
                 }
             };
@@ -904,7 +903,6 @@ statement boundary; bind the chain to a local first. For example, split \
                     self.advance();
                     p
                 }
-                Some(Token::Text(p)) => { self.advance(); p }
                 Some(tok) => {
                     return Err(self.error(
                         "ILO-P016",
@@ -926,7 +924,6 @@ statement boundary; bind the chain to a local first. For example, split \
                 Some(Token::Colon) => {
                     self.advance();
                 }
-                Some(Token::Colon) => { self.advance(); }
                 Some(tok) => {
                     return Err(self.error(
                         "ILO-P016",
@@ -942,7 +939,6 @@ statement boundary; bind the chain to a local first. For example, split \
                         format!(
                             "expected `:` after true-branch path in `use ?{pred_name}`, got EOF"
                         ),
-                        format!("expected `:` after true-branch path in `use ?{pred_name}`, got EOF"),
                     ));
                 }
             };
@@ -952,7 +948,6 @@ statement boundary; bind the chain to a local first. For example, split \
                     self.advance();
                     p
                 }
-                Some(Token::Text(p)) => { self.advance(); p }
                 Some(tok) => {
                     return Err(self.error(
                         "ILO-P016",
@@ -977,6 +972,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 predicate: Some(predicate),
                 alt_path: Some(false_path),
                 reexport: false,
+                lazy: false,
                 span: start.merge(end),
             });
         }
@@ -989,10 +985,6 @@ statement boundary; bind the chain to a local first. For example, split \
         // Detected by whether the next token is a string literal or an ident followed by `:`.
         // The special ident `re` triggers the re-export form; any other ident triggers the alias form.
         let (alias, path, reexport) = match self.peek().cloned() {
-        // Detect named-module form: `use alias:"path"` — ident immediately
-        // followed by `:` then a string literal.
-        // Distinguished from the plain form `use "path"` by the leading ident.
-        let (alias, path) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
                 // Plain form: `use "path"`
                 self.advance();
@@ -1069,6 +1061,24 @@ statement boundary; bind the chain to a local first. For example, split \
 
         // Optional `[name1 name2 ...]` scoped import list.
         // Incompatible with alias form; required for re-export form.
+        // Detect lazy import: `use lazy:"./path"` — `lazy` is a reserved
+        // modifier, not a real alias. The effective alias is derived from the
+        // path stem (last path component without extension), e.g.
+        // `use lazy:"./big-module"` → alias `big-module`, lazy = true.
+        let (alias, lazy) = match alias {
+            Some(ref a) if a == "lazy" => {
+                // Derive alias from the path stem.
+                let stem = std::path::Path::new(&path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&path)
+                    .to_string();
+                (Some(stem), true)
+            }
+            other => (other, false),
+        };
+
+        // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
         let only = if self.peek() == Some(&Token::LBracket) {
             if alias.is_some() {
                 return Err(self.error(
@@ -1116,6 +1126,7 @@ statement boundary; bind the chain to a local first. For example, split \
             predicate: None,
             alt_path: None,
             reexport,
+            lazy,
             span: start.merge(end),
         })
     }
@@ -9577,7 +9588,6 @@ mod tests {
             alias,
             ..
         } = &prog.declarations[0]
-        let Decl::Use { path, alt_path, predicate, only, alias, .. } = &prog.declarations[0]
         else {
             panic!("expected Use, got {:?}", prog.declarations)
         };
@@ -9598,7 +9608,6 @@ mod tests {
             ..
         } = &prog.declarations[0]
         else {
-        let Decl::Use { predicate, path, alt_path, .. } = &prog.declarations[0] else {
             panic!("expected Use")
         };
         assert_eq!(*predicate, Some(UsePredicate::Native));
@@ -9622,7 +9631,6 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.code == "ILO-P016" && e.message.contains("unknown")),
-            errors.iter().any(|e| e.code == "ILO-P016" && e.message.contains("unknown")),
             "expected ILO-P016 unknown predicate, got: {errors:?}"
         );
     }
@@ -9643,6 +9651,45 @@ mod tests {
             errors.iter().any(|e| e.code == "ILO-P016"),
             "expected ILO-P016 for missing colon: {errors:?}"
         );
+    }
+
+    // --- lazy use (ILO-400) ---
+
+    #[test]
+    fn parse_use_lazy_sets_lazy_flag_and_stem_alias() {
+        // `use lazy:"./big-module.ilo"` → lazy=true, alias="big-module"
+        let prog = parse_str(r#"use lazy:"./big-module.ilo""#);
+        let Decl::Use {
+            path, alias, lazy, ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use, got {:?}", prog.declarations)
+        };
+        assert_eq!(path, "./big-module.ilo");
+        assert_eq!(alias.as_deref(), Some("big-module"));
+        assert!(*lazy, "lazy flag must be true");
+    }
+
+    #[test]
+    fn parse_use_lazy_no_extension() {
+        // Path without extension: stem is the whole basename
+        let prog = parse_str(r#"use lazy:"./utils""#);
+        let Decl::Use { alias, lazy, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(alias.as_deref(), Some("utils"));
+        assert!(*lazy, "lazy flag must be true");
+    }
+
+    #[test]
+    fn parse_use_non_lazy_alias_unchanged() {
+        // Non-lazy alias: `use m:"lib.ilo"` should leave lazy=false
+        let prog = parse_str(r#"use m:"lib.ilo""#);
+        let Decl::Use { alias, lazy, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(alias.as_deref(), Some("m"));
+        assert!(!lazy, "lazy must be false for non-lazy import");
     }
 
     #[test]
