@@ -535,6 +535,18 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("readbuf", "rdb"),
     ("write", "wr"),
     ("writelines", "wrl"),
+    // Map ops — long-form hyphen aliases for the canonical short names.
+    // ilo identifiers use hyphens, not underscores, so only hyphen forms
+    // are valid surface syntax.
+    ("map-get", "mget"),
+    ("map-set", "mset"),
+    ("map-has", "mhas"),
+    ("map-del", "mdel"),
+    // Alias-of-alias: map-keys / map-values resolve to the canonical
+    // short forms `mkeys` / `mvals` directly (no two-hop needed since
+    // resolve_alias is a single table lookup).
+    ("map-keys", "mkeys"),
+    ("map-values", "mvals"),
 ];
 
 /// If `name` is a long-form alias, return the canonical short form.
