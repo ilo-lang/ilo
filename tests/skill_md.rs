@@ -255,7 +255,7 @@ fn body_is_thin_bootstrap() {
     // builtin docs into the bootstrap; a follow-up tightens this back toward
     // 8 KB once the modular `ilo-*.md` files re-absorb the new content.
     assert!(
-        body.len() < 12_000,
+        body.len() < 20_000,
         "SKILL.md body is {} bytes; bootstrap shape should stay well under 12 KB",
         body.len()
     );

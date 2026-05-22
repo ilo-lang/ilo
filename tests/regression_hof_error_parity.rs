@@ -122,10 +122,32 @@ fn flatmap_callback_at_oob_raises_on_every_engine() {
 // `fix/srt-rsrt-ctx-collection-nil`; subsumed here because the root cause
 // is the same dropped-error edge in `jit_call_builtin_tree` and the
 // User-arm of `jit_call_dyn`.
+//
+// PR B of ILO-45 lifted rsrt 3-arg from the tree-bridge to native VM +
+// Cranelift dispatch. The `mget` misuse now raises directly with its
+// native code (ILO-R004 "key must be text or finite number") rather than
+// being remapped to the generic bridge code (ILO-R009). User-observable
+// behaviour is unchanged: every engine surfaces a runtime error. Assert
+// the shared substring rather than the exact code.
 #[test]
 fn rsrt_3arg_map_ctx_mget_misuse_raises_on_every_engine() {
     let src = "mn>L t;scores=mset (mset (mset mmap \"a\" 3) \"b\" 1) \"c\" 2;words=[\"a\",\"b\",\"c\"];rsrt (ctx:M t n w:t>n;v=mget ctx w;??v 0) scores words";
-    assert_callback_error(src, "mn", "ILO-R009");
+    for engine in ENGINES_ALL {
+        let out = ilo()
+            .args([src, engine, "mn"])
+            .output()
+            .expect("failed to spawn ilo");
+        assert!(
+            !out.status.success(),
+            "engine={engine}: expected rsrt callback failure to surface, got success\nstdout={}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("mget") && stderr.contains("key"),
+            "engine={engine}: expected `mget` + `key` in stderr, got:\n{stderr}"
+        );
+    }
 }
 
 // 3-arg closure-bind `srt fn ctx xs` with a list context. The named user-fn
