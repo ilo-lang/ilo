@@ -2,21 +2,26 @@
 //!
 //! Each line has the schema:
 //! ```json
-//! {"schemaVersion":1,"kind":"stmt","line":7,"stmt":"a = +x y","bindings":{"x":3,"y":4,"a":7},"result":7}
+//! {"schemaVersion":1,"line":7,"stmt":"a = +x y","bindings":{"x":3,"y":4,"a":7},"result":7}
 //! ```
 //!
-//! With `--depth expr`, additional sub-expression events are emitted:
-//! ```json
-//! {"schemaVersion":1,"kind":"expr","line":7,"expr":"+x y","refs":["x","y"],"result":7}
-//! ```
+//! Touch points: ILO-72 (tree-walker), ILO-343 (VM path).
 //!
-//! With `--watch <name>`, only events whose bindings/refs include `<name>` are emitted.
+//! ## Engine selection
 //!
-//! Touch points: ILO-72, ILO-344.
+//! `ilo trace` now tries the VM path first:
+//! 1. Compile to bytecode via `crate::vm::compile`.
+//! 2. Run via `crate::vm::run_with_trace`, which uses the same `TRACE_HOOK`
+//!    thread-local and fires one `TraceEvent` per `OP_STMT` boundary.
+//!
+//! If compilation fails (e.g. uncompilable construct) it falls back to the
+//! tree-walker's `interpreter::run_with_trace` so existing behaviour is
+//! preserved. The JIT path is not wired here — JIT trace is tracked in a
+//! follow-up ticket.
 
-use super::args::{TraceArgs, TraceDepth};
+use super::args::TraceArgs;
 use crate::ast;
-use crate::interpreter::{ExprTraceEvent, TraceEvent, Value, run_with_trace, run_with_trace_opts};
+use crate::interpreter::{TraceEvent, Value};
 use crate::lexer;
 use crate::parser;
 
@@ -90,35 +95,48 @@ fn trace_run(t: TraceArgs) -> i32 {
         })
         .collect();
 
-    let watch = t.watch.clone();
-    let depth = t.depth;
-
-    // Build stmt callback (always active).
-    let watch_stmt = watch.clone();
-    let on_stmt = move |ev: TraceEvent| emit_stmt_event(ev, &watch_stmt);
-
-    // Run with trace hook — each event is serialised to one stdout JSON line.
-    let result = if depth == TraceDepth::Expr {
-        let on_expr = move |ev: ExprTraceEvent| emit_expr_event(ev, &watch);
-        run_with_trace_opts(&program, func_name, call_args, on_stmt, Some(on_expr))
-    } else {
-        run_with_trace(&program, func_name, call_args, on_stmt)
-    };
-
-    match result {
-        Ok(_) => 0,
-        Err(e) => {
-            eprintln!("ilo trace: runtime error [{}]: {}", e.code, e.message);
-            1
+    // ── VM path (ILO-343) ─────────────────────────────────────────────────────
+    // Try to compile to bytecode and run via the VM's OP_STMT trace path.
+    // Falls back to the tree-walker if compilation fails.
+    match crate::vm::compile(&program) {
+        Ok(compiled) => {
+            let result = crate::vm::run_with_trace(
+                &compiled,
+                func_name,
+                call_args,
+                Some(source.clone()),
+                emit_event,
+            );
+            match result {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("ilo trace: runtime error: {:?}", e.error);
+                    1
+                }
+            }
+        }
+        Err(_compile_err) => {
+            // ── Tree-walker fallback ─────────────────────────────────────────
+            // Use the original ILO-72 tree-walker path.
+            let result =
+                crate::interpreter::run_with_trace(&program, func_name, call_args, emit_event);
+            match result {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("ilo trace: runtime error [{}]: {}", e.code, e.message);
+                    1
+                }
+            }
         }
     }
 }
 
-/// Serialise a single statement `TraceEvent` as a JSON line to stdout.
-/// If `watch` is non-empty, only emit if any watched name appears in bindings.
-fn emit_stmt_event(ev: TraceEvent, watch: &[String]) {
-    // Build the bindings object (deduplicated: innermost wins).
+/// Serialise a single `TraceEvent` as a JSON line to stdout.
+fn emit_event(ev: TraceEvent) {
+    // Build the bindings object.
     let mut bindings = serde_json::Map::new();
+    // Deduplicate: if a name appears multiple times (shadowed), take the last
+    // (innermost) binding, which is what the interpreter sees.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (name, val) in ev.bindings.iter().rev() {
         if seen.contains(name) {
@@ -129,46 +147,13 @@ fn emit_stmt_event(ev: TraceEvent, watch: &[String]) {
         bindings.insert(name.clone(), json_val);
     }
 
-    // Watch filter: skip if none of the watched names appear in bindings.
-    if !watch.is_empty() && !watch.iter().any(|w| bindings.contains_key(w.as_str())) {
-        return;
-    }
-
     let result_json = ev.result.to_json().unwrap_or(serde_json::Value::Null);
 
     let event = serde_json::json!({
         "schemaVersion": 1,
-        "kind": "stmt",
         "line": ev.line,
         "stmt": ev.stmt,
         "bindings": serde_json::Value::Object(bindings),
-        "result": result_json,
-    });
-
-    println!("{event}");
-}
-
-/// Serialise a single expression `ExprTraceEvent` as a JSON line to stdout.
-/// If `watch` is non-empty, only emit if any watched name appears in refs.
-fn emit_expr_event(ev: ExprTraceEvent, watch: &[String]) {
-    // Watch filter: skip if none of the watched names appear in refs.
-    if !watch.is_empty() && !watch.iter().any(|w| ev.refs.iter().any(|r| r == w)) {
-        return;
-    }
-
-    let result_json = ev.result.to_json().unwrap_or(serde_json::Value::Null);
-    let refs_json: Vec<serde_json::Value> = ev
-        .refs
-        .iter()
-        .map(|r| serde_json::Value::String(r.clone()))
-        .collect();
-
-    let event = serde_json::json!({
-        "schemaVersion": 1,
-        "kind": "expr",
-        "line": ev.line,
-        "expr": ev.expr,
-        "refs": refs_json,
         "result": result_json,
     });
 

@@ -7015,6 +7015,7 @@ fn collect_err_literals_stmt(stmt: &Stmt, out: &mut std::collections::BTreeSet<S
         }
         Stmt::Break(Some(e)) => collect_err_literals_expr(e, out),
         Stmt::Break(None) | Stmt::Continue => {}
+        Stmt::Defer { expr, .. } => collect_err_literals_expr(expr, out),
     }
 }
 

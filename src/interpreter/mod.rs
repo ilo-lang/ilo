@@ -40,11 +40,11 @@ pub struct ExprTraceEvent {
 // statement. Set to `Some` by `run_with_trace` and cleared on return.
 std::thread_local! {
     #[allow(clippy::type_complexity)]
-    static TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(TraceEvent)>>> =
+    pub(crate) static TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(TraceEvent)>>> =
         const { std::cell::RefCell::new(None) };
 
     // Source text used to look up statement spans; set alongside TRACE_HOOK.
-    static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
+    pub(crate) static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
 
     // Expression-level hook (depth=expr).
@@ -55,6 +55,24 @@ std::thread_local! {
     // Current statement span — updated by eval_body so eval_expr can use it.
     static CURRENT_STMT_SPAN: std::cell::RefCell<Span> =
         const { std::cell::RefCell::new(Span { start: 0, end: 0 }) };
+}
+
+/// Returns true if a trace hook is currently installed.
+/// Used by the VM's OP_STMT handler to skip event collection on the hot path.
+#[inline]
+pub(crate) fn trace_hook_active() -> bool {
+    TRACE_HOOK.with(|h| h.borrow().is_some())
+}
+
+/// Fire the installed trace hook with a pre-built event.
+/// No-op if no hook is installed (guard is inside TRACE_HOOK.with).
+#[inline]
+pub(crate) fn fire_trace_hook(ev: TraceEvent) {
+    TRACE_HOOK.with(|h| {
+        if let Some(ref mut hook) = *h.borrow_mut() {
+            hook(ev);
+        }
+    });
 }
 
 /// Run `program` with a per-statement trace callback.
