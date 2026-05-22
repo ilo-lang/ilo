@@ -919,6 +919,100 @@ fn diag_to_json(d: &Diagnostic) -> serde_json::Value {
     serde_json::from_str(&s).unwrap_or(serde_json::json!({"message": s}))
 }
 
+/// Apply a `fix_plan` (as received from the `applyFix` serv method) to a
+/// source string in-process and return the patched source.
+///
+/// The `fix_plan` value must have the shape emitted by `diagnostic::json`:
+/// `{"edits": [{"line_range": [s, e], "before": "...", "after": "..."}], "path": "..."}`.
+fn apply_fix_plan_to_source(source: &str, fix_plan: &serde_json::Value) -> Result<String, String> {
+    let edits = fix_plan["edits"]
+        .as_array()
+        .ok_or_else(|| "fix_plan.edits must be an array".to_string())?;
+
+    if edits.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    // Build line-offset table (1-based lines → byte offsets).
+    let line_offsets: Vec<usize> = {
+        let mut offsets = vec![0usize];
+        for (i, b) in source.bytes().enumerate() {
+            if b == b'\n' {
+                offsets.push(i + 1);
+            }
+        }
+        offsets
+    };
+
+    // Parse edits and sort descending by line_start so we apply bottom-up.
+    struct Edit {
+        line_start: usize,
+        line_end: usize,
+        before: String,
+        after: String,
+    }
+
+    let mut parsed: Vec<Edit> = edits
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let range = e["line_range"]
+                .as_array()
+                .ok_or_else(|| format!("edits[{i}].line_range must be an array"))?;
+            let line_start = range
+                .first()
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| format!("edits[{i}].line_range[0] must be a number"))? as usize;
+            let line_end = range
+                .get(1)
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| format!("edits[{i}].line_range[1] must be a number"))? as usize;
+            let before = e["before"]
+                .as_str()
+                .ok_or_else(|| format!("edits[{i}].before must be a string"))?
+                .to_string();
+            let after = e["after"]
+                .as_str()
+                .ok_or_else(|| format!("edits[{i}].after must be a string"))?
+                .to_string();
+            Ok(Edit { line_start, line_end, before, after })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    parsed.sort_by(|a, b| b.line_start.cmp(&a.line_start).then(b.line_end.cmp(&a.line_end)));
+
+    // Deduplicate overlapping line ranges.
+    let mut applied_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut patched = source.to_string();
+    let mut apply_count = 0usize;
+
+    for edit in &parsed {
+        let overlaps = applied_ranges
+            .iter()
+            .any(|&(s, e)| !(edit.line_end < s || edit.line_start > e));
+        if overlaps {
+            continue;
+        }
+        applied_ranges.push((edit.line_start, edit.line_end));
+
+        let s_line = edit.line_start.saturating_sub(1);
+        let e_line = edit.line_end.saturating_sub(1);
+        let byte_start = line_offsets.get(s_line).copied().unwrap_or(0);
+        let byte_end = line_offsets.get(e_line + 1).copied().unwrap_or(patched.len());
+
+        let window = &patched[byte_start..byte_end.min(patched.len())];
+        if let Some(rel) = window.find(edit.before.as_str()) {
+            let abs_start = byte_start + rel;
+            let abs_end = abs_start + edit.before.len();
+            patched.replace_range(abs_start..abs_end, &edit.after);
+            apply_count += 1;
+        }
+    }
+
+    let _ = apply_count;
+    Ok(patched)
+}
+
 /// Process a single serve request line and return the JSON response.
 fn process_serv_request(
     line: &str,
@@ -929,6 +1023,44 @@ fn process_serv_request(
     >,
     #[cfg(feature = "tools")] rt: std::sync::Arc<tokio::runtime::Runtime>,
 ) -> serde_json::Value {
+    // ── Peek at `method` to dispatch applyFix before the run path ────────────
+    let raw: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::json!({
+                "schemaVersion": 1,
+                "error": {"phase": "request", "message": format!("invalid JSON: {e}")}
+            });
+        }
+    };
+
+    if raw.get("method").and_then(|m| m.as_str()) == Some("applyFix") {
+        // ── applyFix: apply a fix_plan to a source string in-process ─────────
+        let source = match raw["source"].as_str() {
+            Some(s) => s,
+            None => {
+                return serde_json::json!({
+                    "schemaVersion": 1,
+                    "error": {"phase": "request", "message": "applyFix requires `source` (string)"}
+                });
+            }
+        };
+        let fix_plan = &raw["fix_plan"];
+        if fix_plan.is_null() || !fix_plan.is_object() {
+            return serde_json::json!({
+                "schemaVersion": 1,
+                "error": {"phase": "request", "message": "applyFix requires `fix_plan` (object)"}
+            });
+        }
+        return match apply_fix_plan_to_source(source, fix_plan) {
+            Ok(patched) => serde_json::json!({"schemaVersion": 1, "ok": patched}),
+            Err(msg) => serde_json::json!({
+                "schemaVersion": 1,
+                "error": {"phase": "request", "message": msg}
+            }),
+        };
+    }
+
     #[derive(serde::Deserialize)]
     struct Req {
         program: String,
@@ -937,7 +1069,7 @@ fn process_serv_request(
         func: Option<String>,
     }
 
-    let req: Req = match serde_json::from_str(line) {
+    let req: Req = match serde_json::from_value(raw) {
         Ok(r) => r,
         Err(e) => {
             return serde_json::json!({
@@ -951,6 +1083,10 @@ fn process_serv_request(
     let source = req.program.clone();
 
     // Lex
+    let enrich_serv = |d: Diagnostic| -> Diagnostic {
+        d.with_source(source.clone()).derive_fix_plan()
+    };
+
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
         Err(e) => {
@@ -958,7 +1094,7 @@ fn process_serv_request(
                 "schemaVersion": 1,
                 "error": {
                     "phase": "lex",
-                    "diagnostics": [diag_to_json(&Diagnostic::from(&e))]
+                    "diagnostics": [diag_to_json(&enrich_serv(Diagnostic::from(&e)))]
                 }
             });
         }
@@ -985,7 +1121,7 @@ fn process_serv_request(
     if !parse_errors.is_empty() {
         let diags: Vec<_> = parse_errors
             .iter()
-            .map(|e| diag_to_json(&Diagnostic::from(e)))
+            .map(|e| diag_to_json(&enrich_serv(Diagnostic::from(e))))
             .collect();
         return serde_json::json!({"schemaVersion": 1, "error": {"phase": "parse", "diagnostics": diags}});
     }
@@ -1003,7 +1139,7 @@ fn process_serv_request(
         let diags: Vec<_> = vr
             .errors
             .iter()
-            .map(|e| diag_to_json(&Diagnostic::from(e).with_source(source.clone())))
+            .map(|e| diag_to_json(&enrich_serv(Diagnostic::from(e))))
             .collect();
         return serde_json::json!({"schemaVersion": 1, "error": {"phase": "verify", "diagnostics": diags}});
     }
@@ -1047,7 +1183,7 @@ fn process_serv_request(
             }
         },
         Err(e) => {
-            let d = Diagnostic::from(&e).with_source(source);
+            let d = enrich_serv(Diagnostic::from(&e));
             serde_json::json!({"schemaVersion": 1, "error": {"phase": "runtime", "diagnostics": [diag_to_json(&d)]}})
         }
     }
@@ -6220,6 +6356,110 @@ mod tests {
         // mcp_tool_decls are prepended before verify; an empty slice should still work
         let resp = run_serv(r#"{"program": "f>n;1"}"#);
         assert_eq!(resp["ok"].as_f64(), Some(1.0));
+    }
+
+    // ── serv fix_plan enrichment ──────────────────────────────────────────────
+
+    #[test]
+    fn serv_diag_includes_fix_plan_for_fixable_code() {
+        // ILO-L002: underscore in identifier — has a mechanical fix_plan (lex phase)
+        let resp = run_serv(r#"{"program": "f>n;let word_count=5;word_count"}"#);
+        let phase = resp["error"]["phase"].as_str().unwrap_or("");
+        assert!(
+            phase == "lex" || phase == "verify" || phase == "parse",
+            "unexpected phase: {resp}"
+        );
+        let diags = resp["error"]["diagnostics"].as_array().expect("diagnostics array");
+        // At least one diagnostic should carry a fix_plan
+        let has_fix_plan = diags.iter().any(|d| d.get("fix_plan").is_some());
+        assert!(has_fix_plan, "expected at least one fix_plan in diagnostics: {resp}");
+    }
+
+    #[test]
+    fn serv_diag_fix_plan_has_edits() {
+        let resp = run_serv(r#"{"program": "f>n;let word_count=5;word_count"}"#);
+        let diags = resp["error"]["diagnostics"].as_array().unwrap();
+        let fixable = diags.iter().find(|d| d.get("fix_plan").is_some()).unwrap();
+        let edits = fixable["fix_plan"]["edits"].as_array().expect("fix_plan.edits");
+        assert!(!edits.is_empty(), "fix_plan.edits should be non-empty");
+        let edit = &edits[0];
+        assert!(edit["line_range"].is_array());
+        assert!(edit["before"].is_string());
+        assert!(edit["after"].is_string());
+    }
+
+    // ── applyFix serv method ──────────────────────────────────────────────────
+
+    #[test]
+    fn serv_apply_fix_missing_source_returns_error() {
+        let resp = run_serv(r#"{"method": "applyFix", "fix_plan": {"edits": []}}"#);
+        assert_eq!(resp["error"]["phase"], "request", "unexpected response: {resp}");
+    }
+
+    #[test]
+    fn serv_apply_fix_missing_fix_plan_returns_error() {
+        let resp = run_serv(r#"{"method": "applyFix", "source": "f>n;1"}"#);
+        assert_eq!(resp["error"]["phase"], "request", "unexpected response: {resp}");
+    }
+
+    #[test]
+    fn serv_apply_fix_empty_edits_returns_source_unchanged() {
+        let resp = run_serv(r#"{"method": "applyFix", "source": "f>n;1", "fix_plan": {"edits": []}}"#);
+        assert!(resp.get("ok").is_some(), "expected ok, got: {resp}");
+        assert_eq!(resp["ok"].as_str(), Some("f>n;1"));
+    }
+
+    #[test]
+    fn serv_apply_fix_applies_single_edit() {
+        // Replace first occurrence of "bad_name" with "bad-name" on line 1.
+        // Use a source with a single occurrence to avoid the "only first match" subtlety.
+        let source = "f bad_name:n>n;bad_name";
+        let req = serde_json::json!({
+            "method": "applyFix",
+            "source": source,
+            "fix_plan": {
+                "edits": [{
+                    "line_range": [1, 1],
+                    "before": "bad_name",
+                    "after": "bad-name"
+                }]
+            }
+        });
+        let resp = run_serv(&req.to_string());
+        assert!(resp.get("ok").is_some(), "expected ok, got: {resp}");
+        let patched = resp["ok"].as_str().unwrap();
+        assert!(patched.contains("bad-name"), "expected replacement, got: {patched}");
+    }
+
+    #[test]
+    fn serv_apply_fix_round_trip_with_check_fix_plan() {
+        // Full round-trip: get fix_plan from a diagnostic error, apply it.
+        // Use a source where only one identifier triggers ILO-L002 so the
+        // single edit produced by derive_fix_plan is sufficient.
+        let source = "f>n;let x=5;x";
+        // Introduce a fixable issue: use a type alias that needs renaming (ILO-T003/T004)
+        // Actually use an underscore param name which lexer catches at the parameter site.
+        // Simplest: ask check to produce a fix_plan on a known-fixable program.
+        let source = "f bad_val:n>n;bad_val";
+        let check_resp = run_serv(&format!(r#"{{"program": {source:?}}}"#));
+        assert!(
+            check_resp.get("error").is_some(),
+            "expected error with fix_plan, got: {check_resp}"
+        );
+        let diags = check_resp["error"]["diagnostics"].as_array().unwrap();
+        let fixable = diags.iter().find(|d| d.get("fix_plan").is_some()).unwrap();
+        let fix_plan = fixable["fix_plan"].clone();
+
+        let apply_req = serde_json::json!({
+            "method": "applyFix",
+            "source": source,
+            "fix_plan": fix_plan
+        });
+        let apply_resp = run_serv(&apply_req.to_string());
+        assert!(apply_resp.get("ok").is_some(), "expected ok from applyFix, got: {apply_resp}");
+        let patched = apply_resp["ok"].as_str().unwrap();
+        // The patch renames the first occurrence; no underscore at the original location
+        assert!(patched.contains("bad-val"), "expected renamed identifier: {patched}");
     }
 
     // ── tool_ok_type ──────────────────────────────────────────────────────────
