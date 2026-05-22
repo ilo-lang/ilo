@@ -3612,7 +3612,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         Some(cli::Cmd::Check(c)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
-            check_cmd(&c.source, mode, explicit_json, c.strict)
+            check_cmd(&c.source, mode, explicit_json, c.strict, c.show_effects)
         }
         Some(cli::Cmd::Explain(e)) => {
             let as_json = cli.global.explicit_json();
@@ -4175,7 +4175,7 @@ fn resolve_engine_func_name<'a>(
 /// out rather than reused so a future verify-only invocation path
 /// (e.g. an `--check-only` flag on `run`) can call into the same logic
 /// without disturbing the run hot path.
-fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: bool) -> i32 {
+fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: bool, show_effects: bool) -> i32 {
     // Read source from file or treat as inline code.
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
         match std::fs::read_to_string(source_arg) {
@@ -4281,7 +4281,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     // cumulative so the caller sees every issue in one pass, not a
     // fix-one-rerun-find-next loop. Verifier itself is robust to
     // partially-broken ASTs.
-    let verify_result = verify::verify(&program);
+    let verify_result = verify::verify_with_effects(&program, show_effects);
     for w in &verify_result.warnings {
         report_diagnostic(&enrich(Diagnostic::from(w)), mode);
         had_warnings = true;
@@ -4291,6 +4291,24 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
             report_diagnostic(&enrich(Diagnostic::from(e)), mode);
         }
         had_errors = true;
+    }
+
+    // Print effect sets when --show-effects is requested.
+    if show_effects && !verify_result.effects.is_empty() {
+        println!("Effect sets:");
+        for fx in &verify_result.effects {
+            let declared_str = match &fx.declared {
+                None => String::new(),
+                Some(v) if v.is_empty() => " (declared: ^)".to_string(),
+                Some(v) => format!(" (declared: ^{})", v.join("|")),
+            };
+            let inferred_str = if fx.inferred.is_empty() {
+                "none".to_string()
+            } else {
+                fx.inferred.join("|")
+            };
+            println!("  {}: {}{}", fx.name, inferred_str, declared_str);
+        }
     }
 
     if had_errors || (strict && had_warnings) {
@@ -7189,6 +7207,7 @@ mod tests {
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
+            effect_set: None,
             body: vec![],
             span: ast::Span { start: 0, end: 0 },
         };
@@ -7596,6 +7615,7 @@ mod tests {
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
+            effect_set: None,
             body: vec![],
             span: ast::Span { start: 0, end: 0 },
         };
@@ -9533,6 +9553,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![],
                 span: Span::UNKNOWN,
             },

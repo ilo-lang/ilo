@@ -13395,6 +13395,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
+                    effect_set: None,
                     body: inner_body,
                     span: Span::UNKNOWN,
                 },
@@ -13406,6 +13407,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
+                    effect_set: None,
                     body: vec![
                         Spanned::unknown(Stmt::Let {
                             name: "d".to_string(),
@@ -13475,6 +13477,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
+                    effect_set: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Err(Box::new(
                         Expr::Literal(Literal::Text("deep".to_string())),
                     ))))],
@@ -13488,6 +13491,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
+                    effect_set: None,
                     body: unwrap_body("c"),
                     span: Span::UNKNOWN,
                 },
@@ -13499,6 +13503,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
+                    effect_set: None,
                     body: unwrap_body("b"),
                     span: Span::UNKNOWN,
                 },

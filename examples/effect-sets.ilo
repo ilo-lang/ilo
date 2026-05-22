@@ -1,0 +1,28 @@
+-- Effect sets (ILO-361): declare which error variants a function may raise.
+-- Syntax: append `^variant|variant` after the return type.
+-- The verifier infers the actual errors from the body and warns on mismatch.
+-- Use `ilo check --show-effects <file>` to see inferred effect sets.
+
+-- No annotation — effect set is unconstrained (existing behaviour unchanged).
+safe-div a:n b:n>R n t
+  =b 0 ^"zero"
+  ~/a b
+
+-- Single declared variant matches the body — no warning.
+parse-positive s:t>R n t ^invalid
+  v=num! s
+  <v 0 ^"invalid"
+  ~v
+
+-- Multiple variants — body raises either on different paths.
+lookup id:n>R n t ^not-found|invalid
+  <id 1 ^"invalid"
+  =id 99 ^"not-found"
+  ~*id 10
+
+-- run: safe-div 10 2
+-- out: 5
+-- run: parse-positive "3"
+-- out: 3
+-- run: parse-positive "-1"
+-- out: nil
