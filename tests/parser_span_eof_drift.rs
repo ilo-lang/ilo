@@ -152,10 +152,7 @@ fn single_prefix_binop_orphaned_third_arg() {
 #[test]
 fn nested_prefix_binop_still_parses() {
     // `++a b c` = Add(Add(a, b), c) — valid, 3 atoms for 2 operators.
-    let path = write_src(
-        "nested_happy",
-        "main>n;a=1.0;b=2.0;c=3.0;r=++a b c;r",
-    );
+    let path = write_src("nested_happy", "main>n;a=1.0;b=2.0;c=3.0;r=++a b c;r");
     let out = ilo().arg(&path).arg("main").output().expect("run ilo");
     let _ = std::fs::remove_file(&path);
     assert!(
