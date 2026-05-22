@@ -4735,10 +4735,8 @@ impl VerifyContext {
                 inferred.remove("<dynamic>");
                 let declared_set: std::collections::BTreeSet<String> =
                     declared.iter().cloned().collect();
-                let mut undeclared: Vec<String> = inferred
-                    .difference(&declared_set)
-                    .cloned()
-                    .collect();
+                let mut undeclared: Vec<String> =
+                    inferred.difference(&declared_set).cloned().collect();
                 undeclared.sort();
                 if !undeclared.is_empty() {
                     let last_span = body.last().map(|s| s.span);
@@ -6971,7 +6969,12 @@ fn collect_err_literals_stmt(stmt: &Stmt, out: &mut std::collections::BTreeSet<S
         Stmt::Expr(e) | Stmt::Return(e) => collect_err_literals_expr(e, out),
         Stmt::Let { value, .. } => collect_err_literals_expr(value, out),
         Stmt::Destructure { value, .. } => collect_err_literals_expr(value, out),
-        Stmt::Guard { condition, body, else_body, .. } => {
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
             collect_err_literals_expr(condition, out);
             collect_err_literals(body, out);
             if let Some(eb) = else_body {
@@ -6982,11 +6985,19 @@ fn collect_err_literals_stmt(stmt: &Stmt, out: &mut std::collections::BTreeSet<S
             collect_err_literals_expr(condition, out);
             collect_err_literals(body, out);
         }
-        Stmt::ForEach { collection, body, .. } => {
+        Stmt::ForEach {
+            collection, body, ..
+        } => {
             collect_err_literals_expr(collection, out);
             collect_err_literals(body, out);
         }
-        Stmt::ForRange { start, end, step, body, .. } => {
+        Stmt::ForRange {
+            start,
+            end,
+            step,
+            body,
+            ..
+        } => {
             collect_err_literals_expr(start, out);
             collect_err_literals_expr(end, out);
             if let Some(s) = step {
@@ -7067,7 +7078,11 @@ fn collect_err_literals_expr(expr: &Expr, out: &mut std::collections::BTreeSet<S
             }
         }
         Expr::MakeClosure { .. } | Expr::Literal(_) | Expr::Ref(_) => {}
-        Expr::Ternary { condition, then_expr, else_expr } => {
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_err_literals_expr(condition, out);
             collect_err_literals_expr(then_expr, out);
             collect_err_literals_expr(else_expr, out);
@@ -7133,7 +7148,11 @@ pub fn verify_with_effects(program: &Program, show_effects: bool) -> VerifyResul
     };
 
     let (warnings, errors) = ctx.errors.into_iter().partition(|e| e.is_warning);
-    VerifyResult { errors, warnings, effects }
+    VerifyResult {
+        errors,
+        warnings,
+        effects,
+    }
 }
 
 #[cfg(test)]
@@ -11797,7 +11816,15 @@ mod tests {
             let tokens = crate::lexer::lex(code).expect("lex");
             let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
                 .into_iter()
-                .map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end }))
+                .map(|(t, r)| {
+                    (
+                        t,
+                        crate::ast::Span {
+                            start: r.start,
+                            end: r.end,
+                        },
+                    )
+                })
                 .collect();
             let (program, _) = crate::parser::parse(token_spans);
             infer_effects(&program)
@@ -11812,28 +11839,41 @@ mod tests {
     fn effect_set_declared_matches_inferred_no_warning() {
         // No warning when declared set matches inferred
         let result = parse_and_verify_full(r#"f a:n>R n t ^zero;=a 0 ^"zero";~a"#);
-        let effect_warnings: Vec<_> = result.warnings.iter()
+        let effect_warnings: Vec<_> = result
+            .warnings
+            .iter()
             .filter(|w| w.code == "ILO-E001")
             .collect();
-        assert!(effect_warnings.is_empty(), "should have no effect mismatch warning: {:?}", effect_warnings);
+        assert!(
+            effect_warnings.is_empty(),
+            "should have no effect mismatch warning: {:?}",
+            effect_warnings
+        );
     }
 
     #[test]
     fn effect_set_declared_mismatch_emits_warning() {
         // Warning when declared set misses an inferred variant
         let result = parse_and_verify_full(r#"f a:n>R n t ^other;=a 0 ^"zero";~a"#);
-        let effect_warnings: Vec<_> = result.warnings.iter()
+        let effect_warnings: Vec<_> = result
+            .warnings
+            .iter()
             .filter(|w| w.code == "ILO-E001")
             .collect();
         assert_eq!(effect_warnings.len(), 1, "expected 1 ILO-E001 warning");
-        assert!(effect_warnings[0].message.contains("zero"), "should mention 'zero'");
+        assert!(
+            effect_warnings[0].message.contains("zero"),
+            "should mention 'zero'"
+        );
     }
 
     #[test]
     fn effect_set_no_annotation_no_warning() {
         // Without annotation, no effect mismatch warning is emitted
         let result = parse_and_verify_full(r#"f a:n>R n t;=a 0 ^"zero";~a"#);
-        let effect_warnings: Vec<_> = result.warnings.iter()
+        let effect_warnings: Vec<_> = result
+            .warnings
+            .iter()
             .filter(|w| w.code == "ILO-E001")
             .collect();
         assert!(effect_warnings.is_empty());
@@ -11846,7 +11886,15 @@ mod tests {
         let tokens = crate::lexer::lex(code).expect("lex");
         let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
             .into_iter()
-            .map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end }))
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
             .collect();
         let (program, _) = crate::parser::parse(token_spans);
         let effects = infer_effects(&program);

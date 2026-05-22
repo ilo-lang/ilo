@@ -12631,7 +12631,9 @@ mod tests {
     fn parse_effect_set_single_variant() {
         // `f a:n>R n t ^zero;...` — single declared variant
         let prog = parse_str(r#"f a:n>R n t ^zero;=a 0 ^"zero";~a"#);
-        let Decl::Function { effect_set, .. } = &prog.declarations[0] else { panic!() };
+        let Decl::Function { effect_set, .. } = &prog.declarations[0] else {
+            panic!()
+        };
         assert_eq!(effect_set.as_deref(), Some(["zero".to_string()].as_slice()));
     }
 
@@ -12639,7 +12641,9 @@ mod tests {
     fn parse_effect_set_multiple_variants() {
         // `f a:n>R n t ^invalid|timeout;...`
         let prog = parse_str(r#"f a:n>R n t ^invalid|timeout;=a 0 ^"invalid";~a"#);
-        let Decl::Function { effect_set, .. } = &prog.declarations[0] else { panic!() };
+        let Decl::Function { effect_set, .. } = &prog.declarations[0] else {
+            panic!()
+        };
         let set = effect_set.as_ref().expect("expected Some");
         assert_eq!(set, &["invalid".to_string(), "timeout".to_string()]);
     }
@@ -12648,7 +12652,9 @@ mod tests {
     fn parse_no_effect_set_is_none() {
         // No `^` clause → effect_set is None
         let prog = parse_str("f x:n>n;x");
-        let Decl::Function { effect_set, .. } = &prog.declarations[0] else { panic!() };
+        let Decl::Function { effect_set, .. } = &prog.declarations[0] else {
+            panic!()
+        };
         assert!(effect_set.is_none());
     }
 }

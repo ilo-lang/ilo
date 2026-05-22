@@ -4175,7 +4175,13 @@ fn resolve_engine_func_name<'a>(
 /// out rather than reused so a future verify-only invocation path
 /// (e.g. an `--check-only` flag on `run`) can call into the same logic
 /// without disturbing the run hot path.
-fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: bool, show_effects: bool) -> i32 {
+fn check_cmd(
+    source_arg: &str,
+    mode: OutputMode,
+    _explicit_json: bool,
+    strict: bool,
+    show_effects: bool,
+) -> i32 {
     // Read source from file or treat as inline code.
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
         match std::fs::read_to_string(source_arg) {
