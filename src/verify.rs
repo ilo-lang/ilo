@@ -19,10 +19,12 @@ pub enum Ty {
     /// Function type: params then return. `F n n` = Fn(vec![Number], Number).
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
-    /// Structural record type inferred from an anonymous record literal `{f:v ...}`.
-    /// Two `AnonRecord` types are compatible when they have exactly the same field
-    /// names and compatible field types (order-independent).
     AnonRecord(Vec<(String, Ty)>),
+    /// The `World` capability token type (ILO-68).
+    /// Functions that perform I/O accept a `w:World` parameter as explicit
+    /// proof of capability. The verifier treats `World` as a distinct named
+    /// type; it is never compatible with any other type.
+    World,
     Unknown,
 }
 
@@ -52,6 +54,7 @@ impl std::fmt::Display for Ty {
                 write!(f, " {ret}")
             }
             Ty::Named(name) => write!(f, "{name}"),
+            Ty::World => write!(f, "World"),
             Ty::AnonRecord(fields) => {
                 let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
                 write!(f, "{{{}}}", parts.join(" "))
@@ -210,6 +213,9 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
         Type::Named(name) => {
             if let Some(resolved) = aliases.get(name) {
                 resolved.clone()
+            } else if name == "World" {
+                // `World` is the builtin capability token type (ILO-68).
+                Ty::World
             } else if name.len() == 1
                 && name.chars().next().is_some_and(|c| c.is_lowercase())
                 && !matches!(name.as_str(), "n" | "t" | "b")
@@ -345,18 +351,11 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
                 && compatible(ar, br)
         }
         (Ty::Named(a), Ty::Named(b)) => a == b,
-        // Two anonymous records unify when they have the same field names (order-independent)
-        // and compatible field types.
-        (Ty::AnonRecord(a_fields), Ty::AnonRecord(b_fields)) => {
-            if a_fields.len() != b_fields.len() {
-                return false;
-            }
-            let b_map: std::collections::HashMap<&str, &Ty> =
-                b_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
-            a_fields
-                .iter()
-                .all(|(n, t)| b_map.get(n.as_str()).is_some_and(|bt| compatible(t, bt)))
-        }
+        // World is only compatible with itself.
+        (Ty::World, Ty::World) => true,
+        // Named("World") and Ty::World unify — user writes `w:World` in
+        // function signatures which parses as Type::Named("World") → Ty::Named("World").
+        (Ty::Named(n), Ty::World) | (Ty::World, Ty::Named(n)) if n == "World" => true,
         _ => false,
     }
 }
@@ -749,6 +748,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
+    ("world", &[], "World"),
     ("jpth", &["t", "t"], "R ? t"),
     ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
@@ -3918,6 +3918,14 @@ fn builtin_check_args(
                 errors,
             )
         }
+        "world" => {
+            // world > World — return the current capability World token.
+            // Zero args (enforced by BUILTINS arity table).
+            // The World value encodes the four CLI cap flags (net/read/write/run)
+            // as booleans; functions that perform I/O accept it as an explicit
+            // proof-of-authority parameter.
+            (Ty::World, errors)
+        }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t
             // argv-list process spawn. Result Err only on spawn failure
@@ -4456,6 +4464,7 @@ impl VerifyContext {
                 );
             }
             Ty::Named(_) => {}
+            Ty::World => {} // builtin capability token — always valid
             Ty::List(inner) => self.validate_named_type_recursive(inner, ctx),
             Ty::Result(ok, err) => {
                 self.validate_named_type_recursive(ok, ctx);
@@ -5979,6 +5988,28 @@ impl VerifyContext {
                             }
                         } else {
                             Ty::Unknown
+                        }
+                    }
+                    Ty::World => {
+                        // World.{net,read,write,run} → Bool
+                        match field.as_str() {
+                            "net" | "read" | "write" | "run" => Ty::Bool,
+                            other => {
+                                let known: Vec<String> = ["net", "read", "write", "run"]
+                                    .iter()
+                                    .map(|s| s.to_string())
+                                    .collect();
+                                let hint = closest_match(other, known.iter())
+                                    .map(|s| format!("did you mean '{s}'?"));
+                                self.err(
+                                    "ILO-T019",
+                                    func,
+                                    format!("no field '{other}' on type 'World' (known: net, read, write, run)"),
+                                    hint,
+                                    Some(span),
+                                );
+                                Ty::Unknown
+                            }
                         }
                     }
                     Ty::Unknown => Ty::Unknown,

@@ -149,6 +149,9 @@ pub enum Builtin {
     Wrl,
     Prnt,
     Env,
+    /// `world > World` — return the current capability World value.
+    /// Zero args; reads from the runtime's active `Caps`.
+    WorldCap,
     Ls,
     Walk,
     Glob,
@@ -528,6 +531,7 @@ impl Builtin {
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
+            "world" => Some(Builtin::WorldCap),
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
@@ -735,6 +739,7 @@ impl Builtin {
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
+            Builtin::WorldCap => "world",
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
@@ -931,6 +936,7 @@ impl Builtin {
         Builtin::Wrl,
         Builtin::Prnt,
         Builtin::Env,
+        Builtin::WorldCap,
         Builtin::Trm,
         Builtin::Upr,
         Builtin::Lwr,
