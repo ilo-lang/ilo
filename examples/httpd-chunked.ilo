@@ -1,0 +1,26 @@
+-- `ilo httpd` chunked transfer-encoding example (ILO-379).
+--
+-- Usage:
+--   ilo httpd examples/httpd-chunked.ilo          -- serves on :8080
+--   ilo httpd --port 3000 examples/httpd-chunked.ilo
+--   curl -N http://localhost:8080/
+--
+-- The response `body` field may be a function (zero-arg) returning a list.
+-- When `ilo httpd` detects a FnRef or Closure as the body, it calls the
+-- function, collects the returned list, and writes each element as a
+-- separate HTTP/1.1 chunked-encoding block (Transfer-Encoding: chunked).
+-- This allows large or dynamically-generated responses without buffering
+-- the entire body before sending headers.
+--
+-- Shape chosen:
+--   type Response{status:n; headers:M t t; body:t | L t | F>L t}
+--   When body is F>L t (zero-arg fn returning list), chunked mode fires.
+
+type rsp{status:n;body:_}
+
+-- Zero-arg function that returns the chunks as a list.
+body-chunks>L t
+  ["Hello" ", " "world" "\n" "from " "ilo " "httpd" " chunked!\n"]
+
+handler req:_>rsp
+  rsp status:200 body:body-chunks

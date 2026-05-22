@@ -1154,16 +1154,50 @@ fn handle_http_connection(
         other => other,
     };
 
-    let (status, resp_headers, resp_body) = match &resp {
+    // Body shape: either a plain string or a list of chunks for chunked transfer.
+    enum BodyShape {
+        Plain(String),
+        Chunked(Vec<String>),
+    }
+
+    let (status, resp_headers, body_shape) = match &resp {
         Value::Record { fields, .. } => {
             let status = match fields.get("status") {
                 Some(Value::Number(n)) => *n as u16,
                 _ => 200,
             };
-            let resp_body = match fields.get("body") {
-                Some(Value::Text(s)) => (**s).clone(),
-                Some(other) => other.to_string(),
-                None => String::new(),
+            // body may be:
+            //   Text   → plain body (existing behaviour)
+            //   List   → chunked: each element is a chunk
+            //   FnRef/Closure → call it (no args) expecting a List, then chunk
+            let body_shape = match fields.get("body") {
+                Some(Value::Text(s)) => BodyShape::Plain((**s).clone()),
+                Some(Value::List(items)) => {
+                    let chunks = items.iter().map(|v| v.to_string()).collect();
+                    BodyShape::Chunked(chunks)
+                }
+                Some(Value::FnRef(name)) => {
+                    match interpreter::run(program, Some(name.as_str()), vec![]) {
+                        Ok(Value::List(items)) => {
+                            let chunks = items.iter().map(|v| v.to_string()).collect();
+                            BodyShape::Chunked(chunks)
+                        }
+                        Ok(other) => BodyShape::Plain(other.to_string()),
+                        Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
+                    }
+                }
+                Some(Value::Closure { fn_name, .. }) => {
+                    match interpreter::run(program, Some(fn_name.as_str()), vec![]) {
+                        Ok(Value::List(items)) => {
+                            let chunks = items.iter().map(|v| v.to_string()).collect();
+                            BodyShape::Chunked(chunks)
+                        }
+                        Ok(other) => BodyShape::Plain(other.to_string()),
+                        Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
+                    }
+                }
+                Some(other) => BodyShape::Plain(other.to_string()),
+                None => BodyShape::Plain(String::new()),
             };
             let resp_headers: Vec<(String, String)> = match fields.get("headers") {
                 Some(Value::Map(m)) => m
@@ -1182,11 +1216,11 @@ fn handle_http_connection(
                     .collect(),
                 _ => vec![],
             };
-            (status, resp_headers, resp_body)
+            (status, resp_headers, body_shape)
         }
         // Handler returned bare text — wrap as 200 OK text/plain
-        Value::Text(s) => (200u16, vec![], (**s).clone()),
-        other => (200u16, vec![], other.to_string()),
+        Value::Text(s) => (200u16, vec![], BodyShape::Plain((**s).clone())),
+        other => (200u16, vec![], BodyShape::Plain(other.to_string())),
     };
 
     let status_text = match status {
@@ -1205,19 +1239,46 @@ fn handle_http_connection(
         .iter()
         .any(|(k, _)| k.to_lowercase() == "content-type");
 
-    let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
-    if !has_content_type {
-        header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+    match body_shape {
+        BodyShape::Plain(resp_body) => {
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str(&format!("Content-Length: {}\r\n", resp_body.len()));
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            writer.write_all(resp_body.as_bytes())?;
+        }
+        BodyShape::Chunked(chunks) => {
+            // RFC 7230 §4.1 chunked transfer encoding.
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str("Transfer-Encoding: chunked\r\n");
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            for chunk in &chunks {
+                let data = chunk.as_bytes();
+                if !data.is_empty() {
+                    writer.write_all(format!("{:x}\r\n", data.len()).as_bytes())?;
+                    writer.write_all(data)?;
+                    writer.write_all(b"\r\n")?;
+                }
+            }
+            // Terminating chunk
+            writer.write_all(b"0\r\n\r\n")?;
+        }
     }
-    for (k, v) in &resp_headers {
-        header_block.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    header_block.push_str(&format!("Content-Length: {}\r\n", resp_body.len()));
-    header_block.push_str("Connection: close\r\n");
-    header_block.push_str("\r\n");
-
-    writer.write_all(header_block.as_bytes())?;
-    writer.write_all(resp_body.as_bytes())?;
 
     eprintln!("{} {} {} -> {}", peer, method, path, status);
     Ok(())
@@ -10495,5 +10556,103 @@ mod tests {
             &global,
         );
         assert_eq!(code, 0);
+    }
+
+    // ── handle_http_connection: chunked transfer encoding ────────────────────
+
+    /// Spin up a loopback listener, send a minimal HTTP request, capture the
+    /// raw response, and verify Transfer-Encoding: chunked is present along
+    /// with the expected chunk data.
+    #[test]
+    fn httpd_chunked_response_writes_chunked_encoding() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        // Handler: returns a Response with body as a list (chunk mode).
+        // ilo source: handler that returns a record whose body is a list.
+        // We use a zero-arg function reference as the body value.
+        let src = r#"
+body-chunks>L t
+  ["hello" " " "world"]
+
+type rsp{status:n;body:_}
+handler req:_>rsp
+  rsp status:200 body:body-chunks
+"#;
+        let program = Arc::new(make_program(src));
+
+        // Bind a loopback listener on an OS-assigned port.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn the handler thread.
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+
+        // Send a minimal HTTP/1.1 request.
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+
+        jh.join().unwrap();
+
+        // Verify Transfer-Encoding: chunked header is present.
+        assert!(
+            response.contains("Transfer-Encoding: chunked"),
+            "expected chunked header, got:\n{}", response
+        );
+        // Verify the chunked body contains the expected text.
+        assert!(response.contains("hello"), "expected 'hello' in body:\n{}", response);
+        assert!(response.contains("world"), "expected 'world' in body:\n{}", response);
+        // Verify the terminating chunk is present.
+        assert!(response.ends_with("0\r\n\r\n"), "expected terminating chunk:\n{}", response);
+        // Content-Length must NOT be present in chunked responses.
+        assert!(
+            !response.contains("Content-Length"),
+            "Content-Length must be absent in chunked response:\n{}", response
+        );
+    }
+
+    /// Plain body (Text) responses continue to use Content-Length (regression guard).
+    #[test]
+    fn httpd_plain_response_uses_content_length() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        let src = r#"
+type rsp{status:n;body:t}
+handler req:_>rsp
+  rsp status:200 body:"hello plain"
+"#;
+        let program = Arc::new(make_program(src));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        jh.join().unwrap();
+
+        assert!(response.contains("Content-Length: 11"), "expected Content-Length:\n{}", response);
+        assert!(!response.contains("Transfer-Encoding"), "must not have TE:\n{}", response);
+        assert!(response.contains("hello plain"), "expected body:\n{}", response);
     }
 }
