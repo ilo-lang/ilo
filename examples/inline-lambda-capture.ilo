@@ -18,7 +18,7 @@ above xs:L n thr:n>L n;flt (x:n>b;>x thr) xs
 near xs:L n target:n>L n;srt (x:n>n;abs -x target) xs
 
 -- Bump every element by a captured amount.
-bump xs:L n by:n>L n;map (x:n>n;+x by) xs
+bump xs:L n amt:n>L n;map (x:n>n;+x amt) xs
 
 -- Two captures: filter to values between lo and hi (inclusive).
 between xs:L n lo:n hi:n>L n;flt (x:n>b;&(>=x lo) <=x hi) xs

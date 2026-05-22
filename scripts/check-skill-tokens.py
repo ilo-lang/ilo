@@ -3,16 +3,17 @@
 Enforce the modular-skill token budget.
 
 Each `skills/ilo/ilo-*.md` module must encode to <= 1,000 tokens under
-`cl100k_base`, with one exception: `ilo-language` is the foundational
-module every agent loads first, so it carries a higher 1,500-token cap
-to accommodate core syntax that doesn't split cleanly. The aggregate
-across all modules must be <= 8,500.
+`cl100k_base`. Modules that are currently above this baseline carry an
+explicit per-module override in `PER_MODULE_OVERRIDES`; those overrides are
+set to measured size + ~50-token headroom (aggressive cap, ILO-382). Growth
+past an override requires an editorial trim or a module split — not a bump.
+The aggregate across all modules must be <= 12,500.
 
 The budget exists because the whole point of splitting the monolithic
 ~16,000-token compact spec into modules was to let agents load only the
 slices their current task needs (typical: 1-2 modules ~ 2,000 tokens). If
-a category module drifts past 1,000 tokens, the per-task economics regress,
-so the guard is a CI gate, not advisory.
+a category module drifts, the per-task economics regress, so the guard is
+a CI gate, not advisory.
 
 `ilo-builtins` was split into four category files (core, math, io, text)
 to give headroom as the language grows (PR: skill-split-by-category).
@@ -43,16 +44,24 @@ SKILL_NAMES = [
 ]
 
 PER_MODULE_LIMIT = 1000
-# `ilo-language` is the foundational module every agent loads first; it
-# carries a higher cap because core syntax doesn't split cleanly into
-# smaller files. `ilo-builtins-io` is the next most-touched module —
-# HTTP, JSON, env, time, and process all live there; agent dogfooding
-# hits this cap on every other doc PR. Bumped to match its density.
+# Per-module overrides: actual measured size + ~50-token headroom.
+# These are aggressive caps picked empirically from the current corpus
+# (ILO-382). Any growth past these limits requires an editorial trim
+# or a module split — not a cap bump.
+#
+# Measured baseline (cl100k_base, 2026-05-22):
+#   ilo-language:       1654  ilo-builtins-core:  1071
+#   ilo-builtins-math:  1409  ilo-builtins-io:    1947
+#   ilo-builtins-text:  1140  ilo-agent:          1219
 PER_MODULE_OVERRIDES = {
-    "ilo-language": 1500,
-    "ilo-builtins-io": 1500,
+    "ilo-language": 1700,
+    "ilo-builtins-core": 1125,
+    "ilo-builtins-math": 1460,
+    "ilo-builtins-io": 2000,
+    "ilo-builtins-text": 1190,
+    "ilo-agent": 1270,
 }
-TOTAL_LIMIT = 15000
+TOTAL_LIMIT = 12500
 
 
 def main() -> int:

@@ -1,0 +1,7 @@
+{
+  "code": "ILO-L003",
+  "long": "## ILO-L003: uppercase identifier\n\nilo identifiers must be lowercase. Single uppercase letters (`L`, `R`)\nare reserved for the built-in `List` and `Result` type constructors.\n\n**Example that triggers this:**\n\n    MyFunc x:n>n;x\n\n**Fix:**\n\n    my-func x:n>n;x\n",
+  "phase": "lex",
+  "schemaVersion": 1,
+  "short": "uppercase identifier — use lowercase"
+}

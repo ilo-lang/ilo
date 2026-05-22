@@ -32,9 +32,9 @@ jobs:
     - name: Install tiktoken
       run: pip install tiktoken
     - name: Enforce modular-skill token budget (cl100k_base)
-      # Each ilo-*.md skill must be ≤ 1,000 tokens, with one exception:
-      # ilo-language (the foundational module) is capped at ≤ 1,500.
-      # Aggregate across all modules ≤ 8,500. The in-binary
+      # Aggressive per-module caps set in ILO-382 (measured baseline + ~50-token
+      # headroom). See scripts/check-skill-tokens.py for per-module overrides.
+      # Aggregate across all modules ≤ 12,500. The in-binary
       # tests/skill_modular.rs enforces a byte proxy for the same limit,
       # but this step is the canonical check using the same tokeniser
       # an agent host uses to size the context window.

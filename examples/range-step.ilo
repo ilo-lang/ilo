@@ -1,0 +1,19 @@
+-- Stepped range iteration: `@i start..end by step{body}`
+-- Iterates i = start, start+step, start+2*step, ... while i < end.
+-- v1: positive integer steps only.
+
+-- Collect even indices 0..10 by 2 → [0,2,4,6,8]
+evens >L n;out=[];@i 0..10 by 2{out=+=out i};out
+
+-- Collect multiples of 3 up to n
+by3 n:n>L n;out=[];@i 0..n by 3{out=+=out i};out
+
+-- Sum every other element
+sum-step xs:L n step:n>n;s=0;n=len xs;@i 0..n by step{s=+s at xs i};s
+
+-- run: evens
+-- out: [0, 2, 4, 6, 8]
+-- run: by3 12
+-- out: [0, 3, 6, 9]
+-- run: sum-step [10,20,30,40,50] 2
+-- out: 90

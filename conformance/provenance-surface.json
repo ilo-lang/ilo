@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "description": "Maps each ilo surface feature to the compiler function that owns it and the fixture that exercises it. Generated as part of ILO-363 (Phase 4 provenance matrix).",
+  "features": [
+    {
+      "feature": "lexer/unexpected-character",
+      "compiler_path": "src/lexer/mod.rs",
+      "function": "lex",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/errors.rs::lex_error_unknown_char",
+      "error_codes": ["ILO-L001"]
+    },
+    {
+      "feature": "lexer/underscore-identifier",
+      "compiler_path": "src/lexer/mod.rs",
+      "function": "lex",
+      "example_path": null,
+      "test": "tests/errors.rs::lex_error_underscore",
+      "error_codes": ["ILO-L002"]
+    },
+    {
+      "feature": "lexer/uppercase-identifier",
+      "compiler_path": "src/lexer/mod.rs",
+      "function": "lex",
+      "example_path": null,
+      "test": "tests/errors.rs::lex_error_uppercase",
+      "error_codes": ["ILO-L003"]
+    },
+    {
+      "feature": "parser/function-declaration",
+      "compiler_path": "src/parser/mod.rs",
+      "function": "parse_program",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-P001", "ILO-P002", "ILO-P003"]
+    },
+    {
+      "feature": "parser/parameter-types",
+      "compiler_path": "src/parser/mod.rs",
+      "function": "parse_program",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-P004", "ILO-P005"]
+    },
+    {
+      "feature": "parser/return-type-annotation",
+      "compiler_path": "src/parser/mod.rs",
+      "function": "parse_program",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-P006", "ILO-P007"]
+    },
+    {
+      "feature": "parser/type-declarations",
+      "compiler_path": "src/parser/mod.rs",
+      "function": "parse_program",
+      "example_path": "examples/anon-record.ilo",
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-P008", "ILO-P009", "ILO-P010"]
+    },
+    {
+      "feature": "verifier/undefined-variable",
+      "compiler_path": "src/verify.rs",
+      "function": "verify_body",
+      "example_path": null,
+      "test": "tests/errors.rs::error_t004_undefined_variable",
+      "error_codes": ["ILO-T004"]
+    },
+    {
+      "feature": "verifier/undefined-function",
+      "compiler_path": "src/verify.rs",
+      "function": "verify_body",
+      "example_path": null,
+      "test": "tests/errors.rs::error_t005_undefined_function",
+      "error_codes": ["ILO-T005"]
+    },
+    {
+      "feature": "verifier/arity-mismatch",
+      "compiler_path": "src/verify.rs",
+      "function": "verify_body",
+      "example_path": null,
+      "test": "tests/errors.rs::error_t006_arity_mismatch",
+      "error_codes": ["ILO-T006"]
+    },
+    {
+      "feature": "verifier/type-mismatch-argument",
+      "compiler_path": "src/verify.rs",
+      "function": "check_binop",
+      "example_path": null,
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-T007", "ILO-T008", "ILO-T009"]
+    },
+    {
+      "feature": "verifier/duplicate-definition",
+      "compiler_path": "src/verify.rs",
+      "function": "verify",
+      "example_path": null,
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-T001", "ILO-T002"]
+    },
+    {
+      "feature": "verifier/undefined-type",
+      "compiler_path": "src/verify.rs",
+      "function": "verify",
+      "example_path": null,
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-T003"]
+    },
+    {
+      "feature": "runtime/division-by-zero",
+      "compiler_path": "src/interpreter/mod.rs",
+      "function": "eval_binop",
+      "example_path": null,
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-R003"]
+    },
+    {
+      "feature": "runtime/undefined-function",
+      "compiler_path": "src/interpreter/mod.rs",
+      "function": "eval_call",
+      "example_path": null,
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-R001", "ILO-R002"]
+    },
+    {
+      "feature": "runtime/field-not-found",
+      "compiler_path": "src/interpreter/mod.rs",
+      "function": "eval_field",
+      "example_path": "examples/anon-record.ilo",
+      "test": "tests/errors.rs",
+      "error_codes": ["ILO-R005"]
+    },
+    {
+      "feature": "cli/run",
+      "compiler_path": "src/main.rs",
+      "function": "run_file",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/cli_integration.rs",
+      "error_codes": []
+    },
+    {
+      "feature": "cli/explain",
+      "compiler_path": "src/main.rs",
+      "function": "explain_cmd",
+      "example_path": null,
+      "test": "src/main.rs::cli_explain_valid_code_exits_zero_with_text",
+      "error_codes": []
+    },
+    {
+      "feature": "cli/check",
+      "compiler_path": "src/main.rs",
+      "function": "check_cmd",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/cli_integration.rs",
+      "error_codes": []
+    },
+    {
+      "feature": "list/map",
+      "compiler_path": "src/builtins.rs",
+      "function": "builtin_map",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/regression_hof_map.rs",
+      "error_codes": []
+    },
+    {
+      "feature": "list/filter",
+      "compiler_path": "src/builtins.rs",
+      "function": "builtin_flt",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/regression_len_flt_count_fused.rs",
+      "error_codes": []
+    },
+    {
+      "feature": "list/fold",
+      "compiler_path": "src/builtins.rs",
+      "function": "builtin_fld",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/regression_hof_3b.rs",
+      "error_codes": []
+    },
+    {
+      "feature": "record/field-access",
+      "compiler_path": "src/interpreter/mod.rs",
+      "function": "eval_field",
+      "example_path": "examples/anon-record.ilo",
+      "test": "tests/regression_record_field_order.rs",
+      "error_codes": ["ILO-T018", "ILO-T019"]
+    },
+    {
+      "feature": "match/exhaustiveness",
+      "compiler_path": "src/verify.rs",
+      "function": "check_match_exhaustiveness",
+      "example_path": "examples/bool-ternary.ilo",
+      "test": "tests/regression_match_result_exhaustive.rs",
+      "error_codes": []
+    },
+    {
+      "feature": "string/interpolation",
+      "compiler_path": "src/interpreter/mod.rs",
+      "function": "eval_interpolation",
+      "example_path": "examples/arithmetic.ilo",
+      "test": "tests/regression_string_interp.rs",
+      "error_codes": []
+    }
+  ]
+}
