@@ -9578,6 +9578,23 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
     results
 }
 
+/// Public re-export for the VM's native `OP_PARMAP` handler (ILO-352).
+pub fn par_map_default_concurrency_pub() -> usize {
+    par_map_default_concurrency()
+}
+
+/// Compute the auto-tuned chunk size for `OP_PARMAP` (ILO-352 / ILO-354).
+///
+/// Distributes `n_items` across at most `n_threads` threads, each processing
+/// `ceil(n_items / n_threads)` items. Returns at least 1.
+pub fn par_map_chunk_size_pub(n_items: usize, n_threads: usize) -> usize {
+    let t = n_threads.max(1);
+    if n_items == 0 {
+        return 1;
+    }
+    (n_items + t - 1) / t
+}
+
 /// Default concurrency for `par-map` when no explicit `n` is given.
 ///
 /// Reads the `ILO_PAR_MAP_CONCURRENCY` environment variable first; falls back

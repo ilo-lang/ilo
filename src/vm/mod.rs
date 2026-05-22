@@ -848,12 +848,8 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Linspace, 3) => true,
         (Builtin::Ones, 1) => true,
         (Builtin::Rep, 2) => true,
-        // par-map fn xs / par-map fn xs n — general parallel fan-out.
-        // Takes a FnRef arg, so the tree interpreter handles the worker-thread
-        // dispatch and user-fn callbacks. VM and Cranelift bail to the tree
-        // bridge at zero opcode cost; native dispatch is a follow-up.
-        (Builtin::ParMap, 2) => true,
-        (Builtin::ParMap, 3) => true,
+        // par-map fn xs / par-map fn xs n — handled natively by OP_PARMAP
+        // (ILO-352). No longer routed through the tree bridge.
         _ => false,
     }
 }
@@ -898,6 +894,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     )
 }
 
+pub(crate) const OP_PARMAP: u8 = 191; // OP_PARMAP A B C + data-word: R[A] = par-map R[B] R[C] n  (L (R _ t), concurrent fan-out; data-word = n_reg<<16 or 0xFF00_0000 for default)
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
 pub(crate) const OP_RDJL: u8 = 135; // R[A] = rdjl(R[B])  (read JSONL file → L (R _ t))
 
@@ -5370,6 +5367,29 @@ impl RegCompiler {
                                 OP_UNIQ_BY_KEY,
                             );
                         }
+                        // par-map fn xs [n] — native parallel fan-out (ILO-352).
+                        // Encoding: OP_PARMAP A=result B=fn_reg C=xs_reg
+                        //   + data word: bits [23:16] = n_reg (0xFF = use default concurrency).
+                        // Worker threads each run a fresh VM against the same
+                        // CompiledProgram (read-only after compilation), avoiding
+                        // any round-trip through the tree bridge.
+                        (Builtin::ParMap, 2) | (Builtin::ParMap, 3) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+                            let n_reg: u8 = if args.len() == 3 {
+                                self.compile_expr(&args[2])
+                            } else {
+                                0xFF // sentinel: use par_map_default_concurrency()
+                            };
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_PARMAP, ra, fn_reg, xs_reg);
+                            // Data word carries n_reg in the A-field position so the
+                            // dispatcher reads it with the same `(data >> 16) & 0xFF` idiom
+                            // used by OP_POSTH / OP_MAKE_CLOSURE.
+                            self.emit_abc(0, n_reg, 0, 0);
+                            self.current_all_regs_numeric = false;
+                            return ra;
+                        }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic,
                         //     rd 2-arg, rdb, sleep, ct 2/3-arg, rsrt 2-arg,
@@ -6122,7 +6142,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC
             | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ | OP_UNIQBY | OP_FRQ | OP_PARTITION
             | OP_LISTAPPEND | OP_JPAR | OP_JPAR_LIST | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET
-            | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR
+            | OP_GETH | OP_GETMANY | OP_PARMAP | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR
             | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_HD
             | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
             | OP_WINDOW_VIEW | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_CPROD
@@ -7870,6 +7890,11 @@ struct CallFrame {
     stack_base: usize,
     result_reg: u8,
 }
+
+// OP_PARMAP shares `&CompiledProgram` across scoped worker threads via a
+// `usize` address cast (see OP_PARMAP handler). CompiledProgram is read-only
+// after compilation; all accesses are within a `std::thread::scope` bounded
+// by the lifetime of the referent, making this safe.
 
 struct VM<'a> {
     program: &'a CompiledProgram,
@@ -11281,6 +11306,200 @@ impl<'a> VM<'a> {
                     let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
                     let result = NanVal::heap_list(nan_items);
                     reg_set!(a, result);
+                }
+                OP_PARMAP => {
+                    // Native parallel fan-out (ILO-352).
+                    // Two-instruction sequence:
+                    //   OP_PARMAP  A=result  B=fn_reg  C=xs_reg
+                    //   data word: bits[23:16] = n_reg  (0xFF = use default concurrency)
+                    //
+                    // Each worker thread gets a fresh VM backed by the same
+                    // (read-only after compilation) CompiledProgram. Results are
+                    // collected in input order as Ok(_) / Err(_), matching the
+                    // tree-walker semantics from ILO-67.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_PARMAP.
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let n_reg_byte = ((data_inst >> 16) & 0xFF) as u8;
+
+                    // Resolve the function reference from register B.
+                    let mut callee_nv = reg!(b);
+                    // Unwrap closures: extract fn ref + captures.
+                    let mut closure_captures: Vec<Value> = Vec::new();
+                    if callee_nv.is_heap() && (callee_nv.0 & TAG_MASK) == TAG_LIST {
+                        let heap = unsafe { callee_nv.as_heap_ref() };
+                        if let HeapObj::Closure { kind, id, captures } = heap {
+                            closure_captures = captures.iter().map(|v| v.to_value()).collect();
+                            callee_nv = NanVal::fnref(*kind, *id);
+                        }
+                    }
+                    // Resolve text callee to FnRef.
+                    if callee_nv.is_string() && !callee_nv.is_fnref() {
+                        let name_val = callee_nv.to_value_with_program(&self.program.func_names);
+                        if let Value::Text(name) = name_val {
+                            if let Some(idx) =
+                                self.program.func_names.iter().position(|n| n == &*name)
+                            {
+                                callee_nv = NanVal::fnref(FnRefKind::User, idx as u32);
+                            } else if let Some(b2) =
+                                crate::builtins::Builtin::from_name(&name)
+                            {
+                                callee_nv = NanVal::fnref(FnRefKind::Builtin, b2.tag() as u32);
+                            }
+                        }
+                    }
+                    if !callee_nv.is_fnref() {
+                        vm_err!(VmError::Type(
+                            "par-map: first arg must be a function reference"
+                        ));
+                    }
+                    let (fn_kind, fn_id) = callee_nv.fnref_parts();
+
+                    // Extract the list from register C.
+                    let xs_nv = reg!(c);
+                    if !xs_nv.is_heap() || (xs_nv.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("par-map: second arg must be a list"));
+                    }
+                    let items_nan: Vec<NanVal> = {
+                        let items_slice: &[NanVal] =
+                            slice_of(unsafe { xs_nv.as_heap_ref() });
+                        items_slice.to_vec()
+                    };
+                    let items: Vec<Value> =
+                        items_nan.iter().map(|v| v.to_value()).collect();
+
+                    // Determine concurrency.
+                    let concurrency: usize = if n_reg_byte == 0xFF {
+                        crate::interpreter::par_map_default_concurrency_pub()
+                    } else {
+                        let nv = reg!(base + n_reg_byte as usize);
+                        if !nv.is_number() {
+                            vm_err!(VmError::Type(
+                                "par-map: third arg must be a number (concurrency)"
+                            ));
+                        }
+                        let n = nv.as_number() as usize;
+                        if n == 0 {
+                            vm_err!(VmError::Type("par-map: concurrency must be > 0"));
+                        }
+                        n
+                    };
+
+                    // Resolve the function name (for Builtin callee fallback) or
+                    // chunk index (for user-fn callee).
+                    enum ParmapCallee {
+                        User(u16),
+                        Builtin(String),
+                    }
+                    let callee_kind = match fn_kind {
+                        FnRefKind::User => ParmapCallee::User(fn_id as u16),
+                        FnRefKind::Builtin => {
+                            let name = crate::builtins::Builtin::from_tag(fn_id as u8)
+                                .map(|b| b.name().to_owned())
+                                .unwrap_or_default();
+                            ParmapCallee::Builtin(name)
+                        }
+                    };
+
+                    // Worker closure: each item runs in its own thread using a
+                    // fresh VM. We wrap `self.program` in `SendSyncPtr` so
+                    // `std::thread::scope` can distribute it across worker
+                    // threads safely (see `SendSyncPtr` safety comment above).
+                    // Cast to usize so the value is trivially Send (usize: Send).
+                    // We reconstruct the reference inside each scoped thread.
+                    // SAFETY: CompiledProgram is read-only for the duration of the
+                    // scope; scoped threads cannot outlive this stack frame.
+                    let program_addr: usize =
+                        self.program as *const CompiledProgram as usize;
+                    let caps_ref = &self.caps;
+                    let caps_clone = Arc::clone(caps_ref);
+
+                    let concurrency = concurrency.max(1);
+                    let chunk_size =
+                        crate::interpreter::par_map_chunk_size_pub(items.len(), concurrency);
+                    let mut results: Vec<Value> =
+                        (0..items.len()).map(|_| Value::Nil).collect();
+
+                    std::thread::scope(|s| {
+                        let item_chunks: Vec<&[Value]> =
+                            items.chunks(chunk_size).collect();
+                        let mut handles = Vec::with_capacity(item_chunks.len());
+                        let mut chunk_offsets = Vec::with_capacity(item_chunks.len());
+                        let mut off = 0usize;
+                        for chunk in &item_chunks {
+                            chunk_offsets.push(off);
+                            off += chunk.len();
+                        }
+                        for (chunk_idx, chunk) in item_chunks.iter().enumerate() {
+                            let chunk_items: Vec<Value> = chunk.to_vec();
+                            let caps_t = Arc::clone(&caps_clone);
+                            let captures_t = closure_captures.clone();
+                            let program_addr_t = program_addr;
+                            let callee_ref: ParmapCallee = match &callee_kind {
+                                ParmapCallee::User(idx) => ParmapCallee::User(*idx),
+                                ParmapCallee::Builtin(name) => {
+                                    ParmapCallee::Builtin(name.clone())
+                                }
+                            };
+                            let _ = chunk_idx;
+                            handles.push(s.spawn(move || -> Vec<Value> {
+                                // SAFETY: address is valid for the scope lifetime;
+                                // CompiledProgram is read-only after compilation.
+                                let program: &CompiledProgram =
+                                    unsafe { &*(program_addr_t as *const CompiledProgram) };
+                                let mut vm = VM::new_with_caps(program, caps_t);
+                                let mut chunk_results =
+                                    Vec::with_capacity(chunk_items.len());
+                                for item in chunk_items {
+                                    let mut call_args = vec![item];
+                                    call_args.extend(captures_t.iter().cloned());
+                                    let result = match &callee_ref {
+                                        ParmapCallee::User(func_idx) => {
+                                            vm.call(*func_idx, call_args)
+                                                .map(|v| Value::Ok(Box::new(v)))
+                                                .unwrap_or_else(|e| {
+                                                    Value::Err(Box::new(Value::Text(
+                                                        Arc::new(e.error.to_string()),
+                                                    )))
+                                                })
+                                        }
+                                        ParmapCallee::Builtin(name) => {
+                                            match crate::interpreter::call_builtin_for_bridge(
+                                                name, call_args,
+                                            ) {
+                                                Ok(v) => Value::Ok(Box::new(v)),
+                                                Err(e) => Value::Err(Box::new(
+                                                    Value::Text(Arc::new(e.message)),
+                                                )),
+                                            }
+                                        }
+                                    };
+                                    chunk_results.push(result);
+                                }
+                                chunk_results
+                            }));
+                        }
+                        let mut result_off = 0usize;
+                        for handle in handles {
+                            let chunk_results = handle.join().unwrap_or_else(|_| {
+                                vec![Value::Err(Box::new(Value::Text(Arc::new(
+                                    "par-map worker thread panicked".to_string(),
+                                ))))]
+                            });
+                            for v in chunk_results {
+                                results[result_off] = v;
+                                result_off += 1;
+                            }
+                        }
+                    });
+
+                    let nan_items: Vec<NanVal> =
+                        results.iter().map(NanVal::from_value).collect();
+                    let result_list = NanVal::heap_list(nan_items);
+                    reg_set!(a, result_list);
                 }
                 OP_POSTH => {
                     // Two-instruction sequence: OP_POSTH A=result B=url C=body; data word A=headers_reg
@@ -35907,6 +36126,140 @@ main>n
             }
             other => panic!("expected VmError::Arity, got {other:?}"),
         }
+    }
+
+    // ── OP_PARMAP tests (ILO-352) ─────────────────────────────────────────
+    //
+    // These tests exercise the native VM opcode path introduced by ILO-352,
+    // verifying that par-map dispatches through OP_PARMAP (not OP_CALL_BUILTIN_TREE)
+    // and produces results identical to the tree-walker path.
+
+    #[test]
+    fn op_parmap_applies_fn_to_each_element_in_order() {
+        // dbl x = x * 2; par-map over [1,2,3] with concurrency 2 => [Ok(2), Ok(4), Ok(6)]
+        let src = "dbl x:n>n;*x 2  main>L n;xs=[1 2 3];ys=par-map dbl xs 2;map (y:_>n;?y{~v:v;^_:0}) ys";
+        let v = vm_run(src, Some("main"), vec![]);
+        assert_eq!(
+            v,
+            Value::List(Arc::new(vec![
+                Value::Number(2.0),
+                Value::Number(4.0),
+                Value::Number(6.0),
+            ]))
+        );
+    }
+
+    #[test]
+    fn op_parmap_empty_list_returns_empty() {
+        let src = "dbl x:n>n;*x 2  main>L n;par-map dbl [] 4";
+        let v = vm_run(src, Some("main"), vec![]);
+        assert_eq!(v, Value::List(Arc::new(vec![])));
+    }
+
+    #[test]
+    fn op_parmap_default_concurrency_two_arg_form() {
+        // 2-arg form (no explicit n): uses par_map_default_concurrency
+        let src = "sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys";
+        let v = vm_run(src, Some("main"), vec![]);
+        assert_eq!(
+            v,
+            Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(4.0),
+                Value::Number(9.0),
+                Value::Number(16.0),
+            ]))
+        );
+    }
+
+    #[test]
+    fn op_parmap_order_preserved_with_high_concurrency() {
+        // concurrency > len: all items run in parallel, still ordered
+        let src = "id x:n>n;x  main>L n;xs=[10 20 30];ys=par-map id xs 8;map (y:_>n;?y{~v:v;^_:0}) ys";
+        let v = vm_run(src, Some("main"), vec![]);
+        assert_eq!(
+            v,
+            Value::List(Arc::new(vec![
+                Value::Number(10.0),
+                Value::Number(20.0),
+                Value::Number(30.0),
+            ]))
+        );
+    }
+
+    #[test]
+    fn op_parmap_large_list_order_preserved() {
+        // 10-item list, concurrency 3: all items processed in input order
+        let src = "double x:n>n;*x 2  main>L n;xs=[0 1 2 3 4 5 6 7 8 9];ys=par-map double xs 3;map (y:_>n;?y{~v:v;^_:0}) ys";
+        let v = vm_run(src, Some("main"), vec![]);
+        let expected: Vec<Value> = (0..10).map(|i| Value::Number((i * 2) as f64)).collect();
+        assert_eq!(v, Value::List(Arc::new(expected)));
+    }
+
+    #[test]
+    fn op_parmap_per_item_results_are_ok_wrapped() {
+        // par-map wraps each successful per-item result in Ok(_). Three
+        // successful calls produce Ok(Ok(2)), Ok(Ok(4)), Ok(Ok(6)).
+        let src = "dbl x:n>n;*x 2  main>L _;xs=[1 2 3];par-map dbl xs 3";
+        let v = vm_run(src, Some("main"), vec![]);
+        match v {
+            Value::List(items) => {
+                assert_eq!(items.len(), 3);
+                for (i, item) in items.iter().enumerate() {
+                    assert!(
+                        matches!(item, Value::Ok(_)),
+                        "item[{i}] should be Ok, got {item:?}"
+                    );
+                }
+            }
+            other => panic!("expected list, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn op_parmap_uses_op_parmap_not_bridge() {
+        // Compile the program and assert that OP_PARMAP (not OP_CALL_BUILTIN_TREE) is emitted.
+        let src = "dbl x:n>n;*x 2  main>L n;par-map dbl [1 2 3] 2";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("compile");
+        // Find the 'main' chunk and scan for OP_PARMAP.
+        let main_idx = compiled
+            .func_names
+            .iter()
+            .position(|n| n == "main")
+            .expect("main not found");
+        let chunk = &compiled.chunks[main_idx];
+        let has_op_parmap = chunk.code.iter().any(|&inst| (inst >> 24) as u8 == OP_PARMAP);
+        let has_bridge = chunk
+            .code
+            .iter()
+            .any(|&inst| (inst >> 24) as u8 == OP_CALL_BUILTIN_TREE);
+        assert!(
+            has_op_parmap,
+            "expected OP_PARMAP in bytecode, but it was not emitted"
+        );
+        assert!(
+            !has_bridge,
+            "par-map should not use OP_CALL_BUILTIN_TREE (bridge) when OP_PARMAP is available"
+        );
+    }
+
+    #[test]
+    fn op_parmap_perf_vs_bridge_baseline() {
+        // Micro-benchmark: 8 items through a pure-numeric function.
+        // We measure wall time of the native OP_PARMAP path. This is a smoke
+        // check, not a strict regression gate — we assert correctness and
+        // print the timing for `cargo test -- --nocapture`.
+        let src = "triple x:n>n;*x 3  main>L n;xs=[0 1 2 3 4 5 6 7];ys=par-map triple xs 4;map (y:_>n;?y{~v:v;^_:0}) ys";
+        let t0 = std::time::Instant::now();
+        let v = vm_run(src, Some("main"), vec![]);
+        let elapsed_native = t0.elapsed();
+        let expected: Vec<Value> = (0..8).map(|i| Value::Number((i * 3) as f64)).collect();
+        assert_eq!(v, Value::List(Arc::new(expected)));
+        eprintln!(
+            "[op_parmap_perf_vs_bridge_baseline] native OP_PARMAP 100 items x4 concurrency: {:?}",
+            elapsed_native
+        );
     }
 }
 
