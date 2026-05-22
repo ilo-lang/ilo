@@ -23,6 +23,8 @@
 //! to run `ilo add owner/repo`.
 
 use semver::{Version, VersionReq};
+use std::collections::HashSet;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -202,7 +204,21 @@ pub fn resolve_semver_ref(url: &str, constraint_str: &str) -> Result<String, Str
 ///
 /// `spec` is `owner/repo` or `owner/repo@ref`.  On success prints a one-line
 /// summary to stdout and returns `0`; on failure prints to stderr and returns `1`.
+///
+/// Transitive dependencies declared via `use "owner/repo"` in the package's
+/// `.ilo` files are fetched recursively and recorded in `ilo.lock`.
 pub fn cmd_add(spec: &str) -> i32 {
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut stack: Vec<String> = Vec::new();
+    add_recursive(spec, &mut visited, &mut stack)
+}
+
+/// Internal recursive implementation of `ilo add`.
+///
+/// `visited` tracks packages whose fetch has been completed (cycle-break).
+/// `stack` is the current DFS ancestors path used for cycle detection and
+/// error messages.
+fn add_recursive(spec: &str, visited: &mut HashSet<String>, stack: &mut Vec<String>) -> i32 {
     let Some((owner, repo, git_ref)) = parse_package_spec(spec) else {
         eprintln!(
             "error: '{}' is not a valid package spec.\n\
@@ -211,6 +227,31 @@ pub fn cmd_add(spec: &str) -> i32 {
         );
         return 1;
     };
+
+    let slug = format!("{owner}/{repo}");
+
+    // Cycle detection: if we're currently processing this package further up
+    // the call stack, we have a dependency cycle.
+    if stack.contains(&slug) {
+        let cycle: Vec<&str> = stack
+            .iter()
+            .skip_while(|s| s.as_str() != slug.as_str())
+            .map(|s| s.as_str())
+            .collect();
+        eprintln!(
+            "error: dependency cycle detected: {} -> {}",
+            cycle.join(" -> "),
+            slug
+        );
+        return 1;
+    }
+
+    // Already fully resolved in this run — skip.
+    if visited.contains(&slug) {
+        return 0;
+    }
+
+    let git_ref = git_ref.unwrap_or("HEAD");
 
     let url = format!("https://github.com/{owner}/{repo}.git");
 
@@ -325,7 +366,122 @@ pub fn cmd_add(spec: &str) -> i32 {
 
     println!("added {owner}/{repo} @ {sha}");
     println!("  cache: {}", dest.display());
+
+    // Mark as visited before recursing so self-referential packages don't loop.
+    visited.insert(slug.clone());
+
+    // Walk transitive dependencies declared in the package's .ilo files.
+    stack.push(slug.clone());
+    let deps = collect_pkg_deps(&dest);
+    for dep_slug in deps {
+        let rc = add_recursive(&dep_slug, visited, stack);
+        if rc != 0 {
+            stack.pop();
+            return rc;
+        }
+    }
+    stack.pop();
+
     0
+}
+
+/// Scan all `*.ilo` files in `pkg_dir` (non-recursively, top-level only) and
+/// collect every `use "owner/repo[/...]"` path that looks like a package
+/// reference (i.e. passes `is_pkg_path`).
+///
+/// Returns deduplicated `owner/repo` slugs (sub-paths stripped).
+fn collect_pkg_deps(pkg_dir: &Path) -> Vec<String> {
+    let read_dir = match std::fs::read_dir(pkg_dir) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut deps: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("ilo") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for dep in extract_use_pkg_slugs(&source) {
+            if seen.insert(dep.clone()) {
+                deps.push(dep);
+            }
+        }
+    }
+
+    deps
+}
+
+/// Parse `use "..."` statements from ilo source text and return package slugs.
+///
+/// Uses a lightweight string scan rather than the full parser so `pkg.rs`
+/// stays dependency-free from the lexer/parser crates.  The grammar for a
+/// `use` path is unambiguous: it always appears as a double-quoted string
+/// immediately after the `use` keyword.
+///
+/// Only paths that pass `is_pkg_path` are returned; local paths (starting
+/// with `.` or `/`) are ignored.  Sub-paths are truncated to `owner/repo`.
+fn extract_use_pkg_slugs(source: &str) -> Vec<String> {
+    let mut slugs = Vec::new();
+    let chars = source.char_indices();
+
+    for (i, ch) in chars {
+        // Look for the token `use` as a whole word followed by whitespace and
+        // a `"`.  We scan forward when we see a `u`.
+        if ch != 'u' {
+            continue;
+        }
+        // Check we're at a word boundary: previous char (if any) must not be
+        // alphanumeric/_  — use the byte index `i`.
+        if i > 0 {
+            let prev = source[..i].chars().next_back().unwrap_or(' ');
+            if prev.is_alphanumeric() || prev == '_' {
+                continue;
+            }
+        }
+        // Match `se` next.
+        let rest = &source[i..];
+        if !rest.starts_with("use") {
+            continue;
+        }
+        let after_use = &rest[3..];
+        // Character after `use` must be whitespace or end-of-input (word boundary).
+        let next_ch = after_use.chars().next().unwrap_or(' ');
+        if next_ch.is_alphanumeric() || next_ch == '_' {
+            continue;
+        }
+        // Skip whitespace, then expect `"`.
+        let trimmed = after_use.trim_start_matches([' ', '\t']);
+        if !trimmed.starts_with('"') {
+            continue;
+        }
+        // Extract the string content up to the closing `"`.
+        let inner = &trimmed[1..];
+        let end = inner.find('"').unwrap_or(inner.len());
+        let path = &inner[..end];
+
+        if !is_pkg_path(path) {
+            continue;
+        }
+
+        // Truncate to owner/repo (drop any sub-path).
+        let slug = path
+            .splitn(3, '/')
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if slug.contains('/') {
+            slugs.push(slug);
+        }
+    }
+
+    slugs
 }
 
 // ── `ilo update` ──────────────────────────────────────────────────────────────
@@ -505,5 +661,84 @@ mod tests {
         // fail gracefully if the package is not installed.
         // (Local ilo files must use a leading `./` to be unambiguous.)
         assert!(is_pkg_path("relative/no-ext-dir"));
+    }
+
+    // ── extract_use_pkg_slugs tests ────────────────────────────────────────────
+
+    #[test]
+    fn extract_use_finds_pkg_dep() {
+        let source = r#"use "myorg/helpers""#;
+        assert_eq!(extract_use_pkg_slugs(source), vec!["myorg/helpers"]);
+    }
+
+    #[test]
+    fn extract_use_finds_sub_path_and_truncates_to_slug() {
+        let source = r#"use "myorg/helpers/utils.ilo""#;
+        assert_eq!(extract_use_pkg_slugs(source), vec!["myorg/helpers"]);
+    }
+
+    #[test]
+    fn extract_use_ignores_local_paths() {
+        let source = r#"use "./lib.ilo"
+use "../shared.ilo"
+use "/abs/path.ilo""#;
+        assert!(extract_use_pkg_slugs(source).is_empty());
+    }
+
+    #[test]
+    fn extract_use_returns_all_occurrences() {
+        // extract_use_pkg_slugs does not deduplicate — that is collect_pkg_deps'
+        // responsibility.  Verify raw extraction returns one slug per use statement.
+        let source = r#"use "myorg/helpers"
+use "myorg/helpers/sub.ilo""#;
+        assert_eq!(
+            extract_use_pkg_slugs(source),
+            vec!["myorg/helpers", "myorg/helpers"]
+        );
+    }
+
+    #[test]
+    fn extract_use_finds_multiple_deps() {
+        let source = r#"use "org1/pkg1"
+use "org2/pkg2""#;
+        let mut got = extract_use_pkg_slugs(source);
+        got.sort();
+        assert_eq!(got, vec!["org1/pkg1", "org2/pkg2"]);
+    }
+
+    #[test]
+    fn extract_use_ignores_non_use_keyword() {
+        // `fuse` and `reuse` should not match.
+        let source = r#"fuse "org/pkg1"
+reuse "org/pkg2""#;
+        assert!(extract_use_pkg_slugs(source).is_empty());
+    }
+
+    #[test]
+    fn extract_use_multiline_source() {
+        let source = "add a b; use \"myorg/math\"; mul x y";
+        assert_eq!(extract_use_pkg_slugs(source), vec!["myorg/math"]);
+    }
+
+    // ── cycle detection ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn add_recursive_detects_self_cycle() {
+        let mut visited = std::collections::HashSet::new();
+        // Simulate pkg already on the stack (mid-resolution of itself).
+        let mut stack = vec!["selfpkg/lib".to_string()];
+        // Trying to add selfpkg/lib again should detect the cycle.
+        let rc = add_recursive("selfpkg/lib", &mut visited, &mut stack);
+        assert_eq!(rc, 1);
+    }
+
+    #[test]
+    fn add_recursive_skips_already_visited() {
+        let mut visited = std::collections::HashSet::new();
+        visited.insert("myorg/helpers".to_string());
+        let mut stack = Vec::new();
+        // Should return 0 immediately (already resolved, no network call).
+        let rc = add_recursive("myorg/helpers", &mut visited, &mut stack);
+        assert_eq!(rc, 0);
     }
 }
