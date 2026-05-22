@@ -28,4 +28,3 @@ pub mod runtime_guard;
 pub mod tools;
 pub mod verify;
 pub mod vm;
-pub mod pkg;
