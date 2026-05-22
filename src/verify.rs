@@ -687,6 +687,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
+    // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
+    // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or
+    // non-hex input.
+    ("sha256-hex", &["t"], "t"),
+    ("sha256d", &["t"], "t"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.

@@ -630,6 +630,8 @@ Called like functions, compiled to dedicated opcodes.
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `sha256-hex h` | SHA-256 of hex-decoded bytes of `h`, lowercase hex (64 chars). Errors (ILO-R009) on odd-length or non-hex input. Use for raw-binary hashing (wire formats, key material, Bitcoin scripts). | `t` |
+| `sha256d h` | double-SHA256 of hex-decoded bytes (`sha256(sha256(h))`), lowercase hex. Bitcoin Merkle protocol shape. Errors (ILO-R009) on odd-length or non-hex input. | `t` |
 | `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
 | `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
@@ -1167,9 +1169,13 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 
 ### Crypto primitives
 
-`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+`sha256`, `sha256-hex`, `sha256d`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, Bitcoin Merkle tree computation, and any time a secret is compared to a known value. All are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
 
 `sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`sha256-hex h > t` decodes `h` as a hex string and returns the SHA-256 digest of the raw bytes as lowercase hex (64 chars). Use when you need to hash binary data that is represented in hex — wire format keys, Bitcoin script pushdata, arbitrary byte sequences. Errors (ILO-R009) on odd-length or non-hex input. For ASCII input, `sha256-hex (hex s)` agrees with `sha256 s`.
+
+`sha256d h > t` applies double-SHA256 (`sha256(sha256(h))`) over the hex-decoded bytes of `h`, returning lowercase hex. This is the Bitcoin Merkle tree protocol shape: pairs of 32-byte txids are concatenated and double-hashed to produce each parent node. Errors (ILO-R009) on odd-length or non-hex input. `sha256d h` is exactly `sha256-hex (sha256-hex h)` but provided as a named builtin because the double-hash pattern is idiomatic in crypto protocols and the composition is easy to transpose incorrectly.
 
 `hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
 
@@ -1193,9 +1199,15 @@ b64-dec! "TWE="                          -- "Ma"
 
 -- Hex encode
 hex "abc"                                -- "616263"
+
+-- Raw-bytes SHA-256 (same result as sha256 for ASCII input)
+sha256-hex "616263"                      -- ba7816...15ad (= sha256 "abc")
+
+-- Bitcoin Merkle root of two txids (internal byte order, concatenated)
+sha256d (+ tx1 tx2)                      -- double-SHA256 of the 64-byte pair
 ```
 
-`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; `sha256-hex` and `sha256d` raise ILO-R009 on invalid hex; the remaining encoders and `ct-eq` are total.
 
 ---
 

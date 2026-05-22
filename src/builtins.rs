@@ -324,12 +324,20 @@ pub enum Builtin {
     // `hex s > t` — lowercase hex encode of UTF-8 bytes of `s`.
     // `ct-eq a:t b:t > b` — constant-time text equality. Use when comparing
     //   secrets (HMAC digests, tokens) to avoid timing leaks.
+    // `sha256-hex hex:t > t` — SHA-256 of hex-decoded bytes, returns lowercase
+    //   hex digest. Errors (ILO-R009) on odd-length or non-hex input.
+    // `sha256d hex:t > t` — double-SHA256 (Bitcoin protocol: sha256(sha256(x)))
+    //   of hex-decoded bytes, returns lowercase hex digest. Errors (ILO-R009) on
+    //   odd-length or non-hex input. Equivalent to `sha256-hex (sha256-hex h)`
+    //   but named for the Bitcoin Merkle tree use-case.
     Sha256,
     HmacSha256,
     B64,
     B64Dec,
     HexEnc,
     CtEq,
+    Sha256Hex,
+    Sha256d,
 
     // `where cond xs ys > L a` — parallel-list conditional select.
     // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
@@ -560,6 +568,8 @@ impl Builtin {
             "b64-dec" => Some(Builtin::B64Dec),
             "hex" => Some(Builtin::HexEnc),
             "ct-eq" => Some(Builtin::CtEq),
+            "sha256-hex" => Some(Builtin::Sha256Hex),
+            "sha256d" => Some(Builtin::Sha256d),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -756,6 +766,8 @@ impl Builtin {
             Builtin::B64Dec => "b64-dec",
             Builtin::HexEnc => "hex",
             Builtin::CtEq => "ct-eq",
+            Builtin::Sha256Hex => "sha256-hex",
+            Builtin::Sha256d => "sha256d",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -1112,6 +1124,13 @@ impl Builtin {
         // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
+        // `sha256-hex hex:t > t` — SHA-256 of hex-decoded bytes, lowercase hex.
+        // `sha256d hex:t > t` — double-SHA256 (Bitcoin Merkle shape), lowercase hex.
+        // Both error on odd-length or non-hex input. Tree-bridge eligible: pure
+        // text-in / text-out, no FnRef args, no I/O, no Result wrapper.
+        // Appended last to preserve every existing on-wire tag.
+        Builtin::Sha256Hex,
+        Builtin::Sha256d,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.

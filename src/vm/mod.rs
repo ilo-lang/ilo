@@ -816,6 +816,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::B64Dec, 1) => true,
         (Builtin::HexEnc, 1) => true,
         (Builtin::CtEq, 2) => true,
+        // Raw-bytes crypto (ILO-383). Pure text-in / text-out, no FnRef args,
+        // no I/O, no Result wrapper (errors propagate as ILO-R009 runtime errors
+        // through the standard tree-bridge error path). VM and Cranelift
+        // inherit cross-engine parity at zero opcode cost.
+        (Builtin::Sha256Hex, 1) => true,
+        (Builtin::Sha256d, 1) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
@@ -17046,6 +17052,11 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Rsum
             | Builtin::Ravg
             | Builtin::Rmin
+            // Raw-bytes crypto (ILO-383). sha256-hex / sha256d raise ILO-R009
+            // on odd-length or non-hex input. Surface on Cranelift in lockstep
+            // rather than degenerating silently to nil.
+            | Builtin::Sha256Hex
+            | Builtin::Sha256d
     )
 }
 
