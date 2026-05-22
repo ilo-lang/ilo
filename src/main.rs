@@ -1020,22 +1020,31 @@ fn process_serv_request(
         return serde_json::json!({"schemaVersion": 1, "error": {"phase": "verify", "diagnostics": diags}});
     }
 
+    // Compile to VM bytecode (PR E of ILO-45: tree-walker engine removed).
+    let compiled = match vm::compile(&program) {
+        Ok(c) => c,
+        Err(e) => {
+            let d = Diagnostic::from(&e).with_source(source);
+            return serde_json::json!({"schemaVersion": 1, "error": {"phase": "compile", "diagnostics": [diag_to_json(&d)]}});
+        }
+    };
+
     // Run
     let func_name = req.func.as_deref();
     let run_args = parse_cli_args_typed(&program, func_name, &req.args);
 
     #[cfg(feature = "tools")]
     let result = if let Some(p) = provider {
-        runtime::run_with_tools(&program, func_name, run_args, p, rt)
+        vm::run_with_tools(&compiled, func_name, run_args, &*p, &*rt)
     } else if let Some(cfg) = http_config {
-        let p = std::sync::Arc::new(tools::http_provider::HttpProvider::new(cfg.clone()));
-        runtime::run_with_tools(&program, func_name, run_args, p, rt)
+        let p = tools::http_provider::HttpProvider::new(cfg.clone());
+        vm::run_with_tools(&compiled, func_name, run_args, &p, &*rt)
     } else {
-        runtime::run(&program, func_name, run_args)
+        vm::run(&compiled, func_name, run_args)
     };
 
     #[cfg(not(feature = "tools"))]
-    let result = runtime::run(&program, func_name, run_args);
+    let result = vm::run(&compiled, func_name, run_args);
 
     let ms = start.elapsed().as_millis() as u64;
 
@@ -1365,9 +1374,17 @@ fn repl_cmd() {
             continue;
         }
 
-        // Skip type checking for the repl wrapper — just run it
-        // This allows expressions of any type to be evaluated
-        match runtime::run(&full_program, Some("repleval"), vec![]) {
+        // Skip type checking for the repl wrapper — just compile and run on VM.
+        // (PR E of ILO-45: tree-walker engine removed.)
+        let compiled = match vm::compile(&full_program) {
+            Ok(c) => c,
+            Err(e) => {
+                let d = Diagnostic::from(&e).with_source(full_source);
+                eprintln!("{}", renderer.render(&d));
+                continue;
+            }
+        };
+        match vm::run(&compiled, Some("repleval"), vec![]) {
             Ok(value) => println!("{value}"),
             Err(e) => {
                 let d = Diagnostic::from(&e).with_source(full_source);
@@ -3032,7 +3049,8 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
-        Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
+        // Cmd::Trace removed in PR E of ILO-45: ilo trace was tree-walker-
+        // only (ILO-72). VM/JIT trace paths tracked separately at ILO-343.
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
@@ -4518,31 +4536,20 @@ fn run_default(
     let suppress = program_result_should_suppress(program, func_name);
     // Default engine is the bytecode register VM: it supports every opcode
     // (closures, listview, len-has-k-count, every modern shape), and avoids
-    // the JIT compile-and-bail cost the old Cranelift-first default paid on
-    // any program touching opcodes the JIT can't yet handle. Cranelift is
-    // opt-in for hot numeric workloads via `--jit`. The tree-walker is no
-    // longer user-selectable as of 0.13.0; the runtime module survives only
-    // as the callback runner for HOF builtins dispatched through the
-    // VM/Cranelift tree-bridge (see `runtime::call_builtin_for_bridge`),
-    // plus the last-resort fallback when VM compilation rejects a program
-    // shape it doesn't yet support.
-    if let Ok(compiled) = vm::compile(program) {
-        match vm::run_with_caps(&compiled, func_name, args.clone(), caps.clone()) {
-            Ok(val) => {
-                print_value(&val, explicit_json, suppress);
-                return program_exit_code(&val);
-            }
-            Err(_e) => {
-                // Fall through to the internal runtime — the VM's error
-                // reporting may not match the canonical reference
-                // semantics. Preserves prior behaviour for any program the
-                // bytecode VM rejects.
-            }
+    // Cranelift is opt-in for hot numeric workloads via `--jit`. The
+    // tree-walker engine was removed in 0.13.0 (ILO-45 PR E); VM is now
+    // the only default-engine runtime. The previous "VM-first, tree
+    // fallback" shape paid a tree-walker fallback cost on any program
+    // VM compilation rejected — that fallback is gone and VM compile
+    // errors now surface directly.
+    let compiled = match vm::compile(program) {
+        Ok(c) => c,
+        Err(e) => {
+            report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+            return 1;
         }
-    }
-
-    // Fall back to the internal runtime (canonical reference semantics).
-    match runtime::run_with_caps(program, func_name, args, caps) {
+    };
+    match vm::run_with_caps(&compiled, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
             program_exit_code(&val)
@@ -4958,42 +4965,9 @@ fn run_bench(
     // harness still receives the bench numbers on stdout.
     let silencer = if silent { StdoutSilencer::new() } else { None };
 
-    // -- Rust interpreter benchmark --
-    // Warmup
-    for _ in 0..100 {
-        let _ = runtime::run(program, func_name, args.to_vec());
-    }
-
-    let start = Instant::now();
-    let mut result = runtime::Value::Nil;
-    for _ in 0..iterations {
-        result = runtime::run(program, func_name, args.to_vec())
-            .expect("interpreter error during benchmark");
-    }
-    let interp_dur = start.elapsed();
-    let interp_ns = interp_dur.as_nanos() / iterations as u128;
-
-    if json {
-        emit_bench_json(
-            "tree",
-            None,
-            &result.to_string(),
-            iterations,
-            interp_dur.as_nanos() as f64 / 1e6,
-            interp_ns,
-            silencer.as_ref(),
-        );
-    } else {
-        bench_println(silencer.as_ref(), "Rust interpreter");
-        bench_println(silencer.as_ref(), &format!("  result:     {}", result));
-        bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
-        bench_println(
-            silencer.as_ref(),
-            &format!("  total:      {:.2}ms", interp_dur.as_nanos() as f64 / 1e6),
-        );
-        bench_println(silencer.as_ref(), &format!("  per call:   {}ns", interp_ns));
-        bench_println(silencer.as_ref(), "");
-    }
+    // Tree-walker bench removed in PR E of ILO-45 (engine deleted).
+    // VM is now the canonical interpreter baseline; cranelift/python below
+    // continue to provide cross-engine comparison numbers.
 
     // -- Register VM benchmark --
     let compiled = vm::compile(program).expect("compile error in benchmark");
@@ -5288,25 +5262,7 @@ print(f"__NS__={{_per}}")
 
     // -- Summary --
     bench_println(silencer.as_ref(), "Summary");
-    if vm_ns > 0 && interp_ns > 0 {
-        if vm_ns < interp_ns {
-            bench_println(
-                silencer.as_ref(),
-                &format!(
-                    "  Register VM is {:.1}x faster than interpreter",
-                    interp_ns as f64 / vm_ns as f64
-                ),
-            );
-        } else {
-            bench_println(
-                silencer.as_ref(),
-                &format!(
-                    "  Interpreter is {:.1}x faster than bytecode VM",
-                    vm_ns as f64 / interp_ns as f64
-                ),
-            );
-        }
-    }
+    // Tree interpreter vs VM comparison removed in PR E of ILO-45.
     if let Some(jit_ns) = jit_cranelift_ns
         && jit_ns > 0
         && vm_reuse_ns > 0
@@ -5332,25 +5288,7 @@ print(f"__NS__={{_per}}")
         );
     }
     if let Some(py) = py_ns {
-        if interp_ns > 0 && py > 0 {
-            if interp_ns < py {
-                bench_println(
-                    silencer.as_ref(),
-                    &format!(
-                        "  Rust interpreter is {:.1}x faster than Python",
-                        py as f64 / interp_ns as f64
-                    ),
-                );
-            } else {
-                bench_println(
-                    silencer.as_ref(),
-                    &format!(
-                        "  Python is {:.1}x faster than Rust interpreter",
-                        interp_ns as f64 / py as f64
-                    ),
-                );
-            }
-        }
+        // Tree interpreter vs Python comparison removed in PR E of ILO-45.
         if vm_ns > 0 && py > 0 {
             if vm_ns < py {
                 bench_println(

@@ -1411,7 +1411,7 @@ fn bench_simple_function() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
     assert!(stdout.contains("Register VM"), "expected VM bench output");
@@ -1433,7 +1433,7 @@ fn bench_with_text_arg() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
 }
@@ -1453,7 +1453,7 @@ fn bench_with_bool_arg() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
 }
@@ -1473,7 +1473,7 @@ fn bench_with_list_arg() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
 }
@@ -1494,7 +1494,7 @@ fn bench_jit_float_result() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
     // On JIT-capable platforms, the result line should show 0.5 (not integer)
@@ -1523,7 +1523,7 @@ fn bench_jit_non_numeric_const() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
     // Cranelift JIT now compiles text-const functions via NanVal
@@ -1553,7 +1553,7 @@ fn bench_jit_move_different_regs() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Rust interpreter"),
+        stdout.contains("Register VM"),
         "expected bench output, got: {stdout}"
     );
     // Result should be 8 (x + 1 = 7 + 1)

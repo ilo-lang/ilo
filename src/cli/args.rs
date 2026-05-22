@@ -119,8 +119,6 @@ pub enum Cmd {
     /// Print version.
     Version,
 
-    /// Trace program execution, emitting one JSON line per statement.
-    Trace(TraceArgs),
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -440,20 +438,6 @@ pub enum SkillCmd {
     Show { name: String },
 }
 
-// ── Trace ──────────────────────────────────────────────────────────────────────
-
-#[derive(Args, Debug)]
-pub struct TraceArgs {
-    /// Source file to trace.
-    pub source: String,
-
-    /// Entry function name (defaults to first function).
-    pub func: Option<String>,
-
-    /// Call arguments passed to the entry function.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    pub rest: Vec<String>,
-}
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────
 

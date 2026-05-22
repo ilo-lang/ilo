@@ -13194,8 +13194,13 @@ impl<'a> VM<'a> {
                     // build CompiledProgram literals without an AST.
                     let result = {
                         let ast_ptr = ACTIVE_AST_PROGRAM.with(|c| c.get());
+                        let caps = self.caps.clone();
                         let res = if ast_ptr.is_null() {
-                            crate::runtime::call_builtin_for_bridge(builtin.name(), value_args)
+                            crate::runtime::call_builtin_for_bridge_with_caps(
+                                builtin.name(),
+                                value_args,
+                                caps,
+                            )
                         } else {
                             // SAFETY: ast_ptr was set by VM::execute() to a
                             // borrow of program.ast (an Arc<Program> owned by
@@ -13203,10 +13208,11 @@ impl<'a> VM<'a> {
                             // iteration and is cleared by ActiveAstProgramGuard
                             // before that borrow ends.
                             let program: &Program = unsafe { &*ast_ptr };
-                            crate::runtime::call_builtin_for_bridge_with_program(
+                            crate::runtime::call_builtin_for_bridge_with_program_and_caps(
                                 builtin.name(),
                                 value_args,
                                 program,
+                                caps,
                             )
                         };
                         match res {
