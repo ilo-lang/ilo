@@ -659,6 +659,7 @@ fn fmt_pattern(pat: &Pattern) -> String {
         Pattern::Err(binding) => format!("^{}", binding),
         Pattern::Literal(lit) => fmt_literal(lit),
         Pattern::TypeIs { ty, binding } => format!("{} {}", fmt_type(ty), binding),
+        Pattern::Or(alts) => alts.iter().map(fmt_pattern).collect::<Vec<_>>().join("|"),
     }
 }
 

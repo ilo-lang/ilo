@@ -2461,7 +2461,18 @@ statement boundary; bind the chain to a local first. For example, split \
     }
 
     fn parse_match_arm(&mut self) -> Result<MatchArm> {
-        let pattern = self.parse_pattern()?;
+        let first = self.parse_pattern()?;
+        // Collect `|`-separated alternatives: `pat1|pat2|pat3:body`
+        let pattern = if self.peek() == Some(&Token::Pipe) {
+            let mut alts = vec![first];
+            while self.peek() == Some(&Token::Pipe) {
+                self.advance(); // consume `|`
+                alts.push(self.parse_pattern()?);
+            }
+            Pattern::Or(alts)
+        } else {
+            first
+        };
         self.expect(&Token::Colon)?;
         let body = self.parse_arm_body()?;
         Ok(MatchArm { pattern, body })
@@ -7140,6 +7151,42 @@ mod tests {
         };
         assert_eq!(arms.len(), 3);
         assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Text(s)) if s == "a"));
+    }
+
+    // ── Or (|) patterns ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_match_or_pattern_two_alts() {
+        let prog = parse_str(r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { arms, .. } = &body[0].node else {
+            panic!("expected match")
+        };
+        assert_eq!(arms.len(), 2);
+        let Pattern::Or(alts) = &arms[0].pattern else {
+            panic!("expected Or pattern, got {:?}", arms[0].pattern)
+        };
+        assert_eq!(alts.len(), 2);
+        assert!(matches!(&alts[0], Pattern::Literal(Literal::Text(s)) if s == "a"));
+        assert!(matches!(&alts[1], Pattern::Literal(Literal::Text(s)) if s == "b"));
+    }
+
+    #[test]
+    fn parse_match_or_pattern_three_alts() {
+        let prog = parse_str(r#"f x:n>t;?x{1|2|3:"low";_:"high"}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { arms, .. } = &body[0].node else {
+            panic!("expected match")
+        };
+        assert_eq!(arms.len(), 2);
+        let Pattern::Or(alts) = &arms[0].pattern else {
+            panic!("expected Or pattern, got {:?}", arms[0].pattern)
+        };
+        assert_eq!(alts.len(), 3);
     }
 
     #[test]

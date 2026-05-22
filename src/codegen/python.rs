@@ -466,6 +466,20 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                 indent(out, level + 1);
                 out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
             }
+            Pattern::Or(alts) => {
+                // Emit `if subj == alt1 or subj == alt2 or ...:`
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} == {}", subj_str, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "True".to_string(),
+                        _ => "False".to_string(), // unsupported alt type
+                    })
+                    .collect();
+                out.push_str(&format!("{} {}:\n", keyword, conds.join(" or ")));
+            }
         }
         emit_body(out, &arm.body, level + 1, true);
     }
@@ -1088,6 +1102,19 @@ fn emit_match_expr(
                     type_to_py(ty)
                 ));
             }
+            Pattern::Or(alts) => {
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} == {}", subj, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "True".to_string(),
+                        _ => "False".to_string(),
+                    })
+                    .collect();
+                parts.push(format!("{} if {} else", arm_val, conds.join(" or ")));
+            }
         }
     }
 
@@ -1160,6 +1187,19 @@ fn emit_match_expr_complex(
                 ));
                 indent(out, level + 1);
                 out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
+            }
+            Pattern::Or(alts) => {
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} == {}", subj_str, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "True".to_string(),
+                        _ => "False".to_string(),
+                    })
+                    .collect();
+                out.push_str(&format!("{} {}:\n", keyword, conds.join(" or ")));
             }
         }
         emit_match_arm_body_to_tmp(out, &arm.body, level + 1, &tmp);
