@@ -1,0 +1,34 @@
+-- par-map: general parallel fan-out (ILO-67)
+--
+-- par-map fn xs [n] > L (R b t)
+--
+-- Applies `fn` to each element of `xs` in parallel, up to `n` items at a
+-- time. Returns one Result per input element in input order. Per-item errors
+-- surface as Err in the result list without short-circuiting.
+--
+-- `n` defaults to num_cpus when omitted. Override with ILO_PAR_MAP_CONCURRENCY.
+--
+-- Contrast with map (sequential, no error wrapping) and get-many (HTTP-only,
+-- fixed 10-connection cap). par-map is the recommended general concurrency
+-- primitive for CPU work, parallel I/O, or mixed pipelines.
+
+-- square: CPU-bound fn used for parallelism demo
+square x:n>n
+*x x
+
+-- double: used with explicit concurrency arg
+double x:n>n
+*x 2
+
+-- unwrap-r: extract Ok value, 0 on Err (demo only — real code pattern-matches)
+unwrap-r r:_>n
+?r{~v:v;^_:0}
+
+-- run-demo: exercise par-map with explicit n and default concurrency
+run-demo>_
+xs=[1 2 3 4 5 6 7 8];sq-rs=par-map square xs 4;prnt (map unwrap-r sq-rs);dbl-rs=par-map double xs;prnt (map unwrap-r dbl-rs)
+
+-- run: ilo run examples/par-map.ilo run-demo
+-- expected output:
+--   [1, 4, 9, 16, 25, 36, 49, 64]
+--   [2, 4, 6, 8, 10, 12, 14, 16]
