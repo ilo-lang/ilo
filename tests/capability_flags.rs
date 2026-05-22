@@ -349,6 +349,7 @@ fn allow_read_blocks_fsize() {
         read: Policy::List(vec![]),
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = format!("f>R n t;fsize \"{path}\"");
     let (tree, _vm_val) = run_both(&src, caps);
@@ -373,6 +374,7 @@ fn allow_read_blocks_mtime() {
         read: Policy::List(vec![]),
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = format!("f>R n t;mtime \"{path}\"");
     let (tree, _vm_val) = run_both(&src, caps);
@@ -397,6 +399,7 @@ fn allow_read_blocks_isfile_returns_false() {
         read: Policy::List(vec![]),
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = format!("f>b;isfile \"{path}\"");
     let (tree, _vm_val) = run_both(&src, caps);
@@ -415,6 +418,7 @@ fn allow_read_blocks_isdir_returns_false() {
         read: Policy::List(vec![]),
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = "f>b;isdir \"/tmp\"";
     let (tree, _vm_val) = run_both(src, caps);
