@@ -266,6 +266,41 @@ success, and every `{"error": {"phase": ..., ...}}` failure across the
 The phase schema and the request shape are documented separately on the
 agent-loop page.
 
+**Default request** (check + run):
+```json
+{ "program": "f x:n>n;*x 2", "args": ["5"], "func": "f" }
+```
+
+Error responses include `fix_plan` on each diagnostic that has a
+mechanical fix available (same as `ilo check --json`):
+```json
+{
+  "schemaVersion": 1,
+  "error": {
+    "phase": "lex",
+    "diagnostics": [{
+      "code": "ILO-L002",
+      "message": "unexpected token 'word_count'",
+      "fix_plan": {
+        "edits": [{ "line_range": [1, 1], "before": "word_count", "after": "word-count" }]
+      }
+    }]
+  }
+}
+```
+
+**`applyFix` method** — apply a `fix_plan` to a source string in-process:
+```json
+{ "method": "applyFix", "source": "f>n;let word_count=5;word_count", "fix_plan": { "edits": [...] } }
+```
+Response: `{"schemaVersion": 1, "ok": "<patched source>"}`.
+The `fix_plan` object is the same shape emitted by check diagnostics.
+Edits are applied bottom-up (descending `line_range`) to keep earlier
+byte offsets stable; overlapping ranges are deduplicated.
+
+Intended for IDE clients that want to apply a suggested fix without a
+subprocess round-trip through `ilo apply`.
+
 ### `ilo tools --json`
 
 ```json
