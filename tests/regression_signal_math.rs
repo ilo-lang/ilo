@@ -158,7 +158,11 @@ fn searchsorted_duplicates_leftmost() {
         let src = "f>L n;searchsorted [1,2,2,2,3] [2]";
         let out = run_ok(engine, src, "f");
         let got = parse_list(&out);
-        assert!((got[0] - 1.0).abs() < 1e-9, "engine={engine}: got {:?}", got);
+        assert!(
+            (got[0] - 1.0).abs() < 1e-9,
+            "engine={engine}: got {:?}",
+            got
+        );
     }
 }
 
@@ -224,8 +228,16 @@ fn cmul_basic() {
         let out = run_ok(engine, src, "f");
         let got = parse_list(&out);
         assert_eq!(got.len(), 2, "engine={engine}");
-        assert!((got[0] - (-5.0)).abs() < 1e-9, "engine={engine}: re={}", got[0]);
-        assert!((got[1] - 10.0).abs() < 1e-9, "engine={engine}: im={}", got[1]);
+        assert!(
+            (got[0] - (-5.0)).abs() < 1e-9,
+            "engine={engine}: re={}",
+            got[0]
+        );
+        assert!(
+            (got[1] - 10.0).abs() < 1e-9,
+            "engine={engine}: im={}",
+            got[1]
+        );
     }
 }
 
@@ -248,8 +260,16 @@ fn cmul_by_one() {
         let src = "f>L n;cmul [5,7] [1,0]";
         let out = run_ok(engine, src, "f");
         let got = parse_list(&out);
-        assert!((got[0] - 5.0).abs() < 1e-9, "engine={engine}: re={}", got[0]);
-        assert!((got[1] - 7.0).abs() < 1e-9, "engine={engine}: im={}", got[1]);
+        assert!(
+            (got[0] - 5.0).abs() < 1e-9,
+            "engine={engine}: re={}",
+            got[0]
+        );
+        assert!(
+            (got[1] - 7.0).abs() < 1e-9,
+            "engine={engine}: im={}",
+            got[1]
+        );
     }
 }
 

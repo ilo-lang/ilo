@@ -2156,11 +2156,7 @@ impl RegCompiler {
     ///
     /// The loop guard uses `OP_LT i limit` + `JMPF`; `limit = len(xs) - 1`.
     /// When `len(xs) < 2` the JMPF fires immediately and returns an empty list.
-    fn emit_pairwise_hof(
-        &mut self,
-        fn_arg: &crate::ast::Expr,
-        xs_arg: &crate::ast::Expr,
-    ) -> u8 {
+    fn emit_pairwise_hof(&mut self, fn_arg: &crate::ast::Expr, xs_arg: &crate::ast::Expr) -> u8 {
         let fn_reg = self.compile_expr(fn_arg);
         let xs_reg = self.compile_expr(xs_arg);
 

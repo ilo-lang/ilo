@@ -4449,7 +4449,10 @@ fn run_convolve(xs_val: &Value, ys_val: &Value) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("convolve: first list elements must be numbers, got {:?}", other),
+                    format!(
+                        "convolve: first list elements must be numbers, got {:?}",
+                        other
+                    ),
                 ));
             }
         }
@@ -4461,7 +4464,10 @@ fn run_convolve(xs_val: &Value, ys_val: &Value) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("convolve: second list elements must be numbers, got {:?}", other),
+                    format!(
+                        "convolve: second list elements must be numbers, got {:?}",
+                        other
+                    ),
                 ));
             }
         }
@@ -4507,7 +4513,10 @@ fn run_searchsorted(xs_val: &Value, targets_val: &Value) -> Result<Value> {
         other => {
             return Err(RuntimeError::new(
                 "ILO-R009",
-                format!("searchsorted: second arg must be a list of targets, got {:?}", other),
+                format!(
+                    "searchsorted: second arg must be a list of targets, got {:?}",
+                    other
+                ),
             ));
         }
     };
@@ -4534,7 +4543,10 @@ fn run_searchsorted(xs_val: &Value, targets_val: &Value) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("searchsorted: target elements must be numbers, got {:?}", other),
+                    format!(
+                        "searchsorted: target elements must be numbers, got {:?}",
+                        other
+                    ),
                 ));
             }
         };
@@ -4568,7 +4580,10 @@ fn run_cabs(pair_val: &Value) -> Result<Value> {
         Value::List(l) => {
             return Err(RuntimeError::new(
                 "ILO-R009",
-                format!("cabs: expected [re, im] pair (length 2), got length {}", l.len()),
+                format!(
+                    "cabs: expected [re, im] pair (length 2), got length {}",
+                    l.len()
+                ),
             ));
         }
         other => {
@@ -4612,7 +4627,10 @@ fn run_cmul(a_val: &Value, b_val: &Value) -> Result<Value> {
             Value::List(l) => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("cmul: {label} must be a [re, im] pair (length 2), got length {}", l.len()),
+                    format!(
+                        "cmul: {label} must be a [re, im] pair (length 2), got length {}",
+                        l.len()
+                    ),
                 ));
             }
             other => {
@@ -4694,7 +4712,10 @@ fn run_pdist2(xs_val: &Value, ys_val: &Value) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("pdist2: first list elements must be numbers, got {:?}", other),
+                    format!(
+                        "pdist2: first list elements must be numbers, got {:?}",
+                        other
+                    ),
                 ));
             }
         };
@@ -4703,7 +4724,10 @@ fn run_pdist2(xs_val: &Value, ys_val: &Value) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("pdist2: second list elements must be numbers, got {:?}", other),
+                    format!(
+                        "pdist2: second list elements must be numbers, got {:?}",
+                        other
+                    ),
                 ));
             }
         };
