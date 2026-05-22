@@ -258,9 +258,8 @@ fn check_json_diags(code: &str) -> Vec<Value> {
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
-            serde_json::from_str(l).unwrap_or_else(|e| {
-                panic!("stderr line was not valid JSON: {l}\nerr: {e}")
-            })
+            serde_json::from_str(l)
+                .unwrap_or_else(|e| panic!("stderr line was not valid JSON: {l}\nerr: {e}"))
         })
         .collect()
 }
@@ -296,7 +295,10 @@ fn check_json_t032_fix_plan_fmt_prefix() {
     let edits = plan["edits"].as_array().expect("fix_plan.edits array");
     assert_eq!(edits.len(), 1);
     let after = edits[0]["after"].as_str().unwrap();
-    assert!(after.starts_with("prnt fmt"), "after should start with 'prnt fmt'; got: {after}");
+    assert!(
+        after.starts_with("prnt fmt"),
+        "after should start with 'prnt fmt'; got: {after}"
+    );
 }
 
 /// ILO-L002: underscore identifier → fix_plan replaces with hyphenated form.
@@ -338,7 +340,10 @@ fn check_json_t008_fix_plan_str_cast() {
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0]["before"], "x", "before is the return expr");
     let after = edits[0]["after"].as_str().unwrap();
-    assert!(after.starts_with("str "), "after wraps with 'str'; got: {after}");
+    assert!(
+        after.starts_with("str "),
+        "after wraps with 'str'; got: {after}"
+    );
     assert!(edits[0]["line_range"].is_array());
 }
 
@@ -355,7 +360,10 @@ fn check_json_t008_fix_plan_num_cast() {
     let edits = plan["edits"].as_array().expect("fix_plan.edits array");
     assert_eq!(edits.len(), 1);
     let after = edits[0]["after"].as_str().unwrap();
-    assert!(after.starts_with("num "), "after wraps with 'num'; got: {after}");
+    assert!(
+        after.starts_with("num "),
+        "after wraps with 'num'; got: {after}"
+    );
 }
 
 /// ILO-P011 reserved keyword used as binding: fix_plan renames to `<name>2`.
@@ -389,8 +397,17 @@ fn check_json_t041_fix_plan_nil_coalesce_result() {
     assert_eq!(edits.len(), 1);
     let before = edits[0]["before"].as_str().unwrap();
     let after = edits[0]["after"].as_str().unwrap();
-    assert!(before.contains(" ?? "), "before should contain ' ?? '; got: {before}");
-    assert!(after.starts_with('?'), "after should start with '?'; got: {after}");
-    assert!(after.contains("{~v:v;^_:"), "after should contain match arms; got: {after}");
+    assert!(
+        before.contains(" ?? "),
+        "before should contain ' ?? '; got: {before}"
+    );
+    assert!(
+        after.starts_with('?'),
+        "after should start with '?'; got: {after}"
+    );
+    assert!(
+        after.contains("{~v:v;^_:"),
+        "after should contain match arms; got: {after}"
+    );
     assert!(edits[0]["line_range"].is_array());
 }

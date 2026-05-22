@@ -2531,7 +2531,13 @@ fn resolve_imports(
     let mut result: Vec<ast::Decl> = Vec::new();
 
     for decl in decls {
-        if let ast::Decl::Use { path, only, alias, span } = decl {
+        if let ast::Decl::Use {
+            path,
+            only,
+            alias,
+            span,
+        } = decl
+        {
             let Some(dir) = base_dir else {
                 diagnostics.push(
                     Diagnostic::error(
@@ -2670,11 +2676,7 @@ fn resolve_imports(
                 // Named-module form: strip private, then rename public to `alias-name`.
                 let public_decls: Vec<ast::Decl> = imported_decls
                     .into_iter()
-                    .filter(|d| {
-                        decl_name(d)
-                            .map(|n| !n.starts_with('_'))
-                            .unwrap_or(true)
-                    })
+                    .filter(|d| decl_name(d).map(|n| !n.starts_with('_')).unwrap_or(true))
                     .collect();
                 apply_module_alias(public_decls, pfx)
             } else {
@@ -2705,40 +2707,46 @@ fn apply_module_alias(decls: Vec<ast::Decl>, alias: &str) -> Vec<ast::Decl> {
 /// Declarations without a name (errors, `Use` nodes) pass through unchanged.
 fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
     match decl {
-        ast::Decl::Function { name, params, return_type, body, span } => {
-            ast::Decl::Function {
-                name: format!("{}-{}", alias, name),
-                params,
-                return_type,
-                body,
-                span,
-            }
-        }
-        ast::Decl::Tool { name, description, params, return_type, timeout, retry, span } => {
-            ast::Decl::Tool {
-                name: format!("{}-{}", alias, name),
-                description,
-                params,
-                return_type,
-                timeout,
-                retry,
-                span,
-            }
-        }
-        ast::Decl::TypeDef { name, fields, span } => {
-            ast::Decl::TypeDef {
-                name: format!("{}-{}", alias, name),
-                fields,
-                span,
-            }
-        }
-        ast::Decl::Alias { name, target, span } => {
-            ast::Decl::Alias {
-                name: format!("{}-{}", alias, name),
-                target,
-                span,
-            }
-        }
+        ast::Decl::Function {
+            name,
+            params,
+            return_type,
+            body,
+            span,
+        } => ast::Decl::Function {
+            name: format!("{}-{}", alias, name),
+            params,
+            return_type,
+            body,
+            span,
+        },
+        ast::Decl::Tool {
+            name,
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        } => ast::Decl::Tool {
+            name: format!("{}-{}", alias, name),
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        },
+        ast::Decl::TypeDef { name, fields, span } => ast::Decl::TypeDef {
+            name: format!("{}-{}", alias, name),
+            fields,
+            span,
+        },
+        ast::Decl::Alias { name, target, span } => ast::Decl::Alias {
+            name: format!("{}-{}", alias, name),
+            target,
+            span,
+        },
         // Use and Error nodes have no name — pass through unchanged
         other => other,
     }
@@ -6983,7 +6991,9 @@ mod tests {
         let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
         assert!(names.contains(&"m-pub-fn"), "expected m-pub-fn: {names:?}");
         assert!(
-            !names.iter().any(|n| n.starts_with("m-_") || *n == "_private"),
+            !names
+                .iter()
+                .any(|n| n.starts_with("m-_") || *n == "_private"),
             "private decl should not appear: {names:?}"
         );
 

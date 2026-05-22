@@ -8740,7 +8740,10 @@ mod tests {
     #[test]
     fn parse_use_named_module_alias() {
         let prog = parse_str(r#"use m:"lib.ilo""#);
-        let Decl::Use { path, only, alias, .. } = &prog.declarations[0] else {
+        let Decl::Use {
+            path, only, alias, ..
+        } = &prog.declarations[0]
+        else {
             panic!("expected Use")
         };
         assert_eq!(path, "lib.ilo");

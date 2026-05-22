@@ -1916,12 +1916,8 @@ fn hex_decode_arg(arg: &Value, caller: &str) -> Result<Vec<u8>> {
             ),
         ));
     }
-    hex::decode(s.as_ref()).map_err(|e| {
-        RuntimeError::new(
-            "ILO-R009",
-            format!("{caller}: invalid hex input: {e}"),
-        )
-    })
+    hex::decode(s.as_ref())
+        .map_err(|e| RuntimeError::new("ILO-R009", format!("{caller}: invalid hex input: {e}")))
 }
 
 #[inline(never)]
