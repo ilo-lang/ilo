@@ -1,0 +1,17 @@
+-- wasm-fetch.ilo
+-- Demonstrates that `get` and `pst` work in a WASM build via the
+-- `ilo_http` fetch host import (ILO-69).
+--
+-- Run in a fetch-capable WASM host:
+--   ilo compile --target wasm32-wasi wasm-fetch.ilo -o wasm-fetch.wasm
+--   wasmtime --dir=. wasm-fetch.wasm
+--
+-- The host must expose the `ilo_http` import set.  See
+-- src/interpreter/http_wasm.rs for the full contract.
+--
+-- This example is intentionally minimal: it issues a GET to
+-- httpbin.org/get and prints the response body.  On native builds it
+-- works identically through the minreq backend.
+
+resp=get "https://httpbin.org/get"
+?r{~v:prnt v;^e:prnt (fmt "error: {}" e)}resp

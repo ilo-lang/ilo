@@ -7921,7 +7921,6 @@ mod tests {
     #[test]
     fn resolve_imports_conditional_wasm_true_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
-        use std::io::Write;
         let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
         let native_path = "/tmp/ilo_cond_native_ILO399.ilo";
         std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
@@ -8157,7 +8156,6 @@ mod tests {
     fn resolve_imports_lazy_not_loaded_when_unreferenced() {
         // A `use lazy:"./big-mod.ilo"` where no `big-mod-*` symbol appears in the
         // program body → the file must never be opened (module skipped).
-        use std::io::Write;
         // Use a path that does NOT exist so any file-open attempt causes an error.
         let lib_path = "/tmp/ilo_lazy_SHOULD_NOT_OPEN_ILO400.ilo";
         // Remove to ensure it doesn't exist
