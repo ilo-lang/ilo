@@ -116,4 +116,3 @@ fn idxof_unicode_multibyte_substring() {
         assert_eq!(run_ok(e, src, "f"), "1", "engine={e}");
     }
 }
-
