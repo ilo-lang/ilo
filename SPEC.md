@@ -2071,7 +2071,13 @@ ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; prote
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
 ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
+ilo run --allow-net[=HOSTS] <file>   -- restrict outbound net to comma-separated hosts (* = all, empty = none)
+ilo run --allow-read[=PATHS] <file>  -- restrict file reads to comma-separated path prefixes
+ilo run --allow-write[=PATHS] <file> -- restrict file writes to comma-separated path prefixes
+ilo run --allow-run[=CMDS] <file>    -- restrict subprocess spawning to comma-separated command names
 ```
+
+**Capability flags (`ILO-CAP-001`).** `ilo run --allow-net=HOSTS --allow-read=PATHS --allow-write=PATHS --allow-run=CMDS` gates IO builtins at the process level. Any `--allow-*` flag present switches the runtime from **permissive** (default — no restrictions, full backwards compatibility) to **restricted** (only listed targets are permitted). Denial returns a normal `R` Err value with code `ILO-CAP-001`; programs can pattern-match it. Capability matrix: `get`/`post`/`put`/`patch`/`del`/`fetch` → `--allow-net`; `rd`/`rd-lines`/`ls`/`lsr` → `--allow-read`; `wr`/`wr-lines`/`wr-app` → `--allow-write`; `run`/`run2` → `--allow-run`. Value syntax: omit = unrestricted; `*` = all permitted; empty (`--allow-net=`) = all blocked; comma list = only those targets. Matching: net = hostname extracted from URL, exact or `*.domain` wildcard; read/write = path-prefix with separator boundary; run = basename or full-path match. See `SANDBOX.md` for the operator guide and `examples/capability-sandbox.ilo` for a runnable demo.
 
 **Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards were installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
