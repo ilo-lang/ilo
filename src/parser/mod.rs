@@ -4518,6 +4518,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         if self.is_anon_record_literal() {
             return true;
         }
+        // Brace-lambda `{params> stmts}` is also a valid atom start.
+        if self.looks_like_brace_lambda() {
+            return true;
+        }
         matches!(
             self.peek(),
             Some(Token::Ident(_))
@@ -4774,6 +4778,9 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::List(items))
+            }
+            Some(Token::LBrace) if self.looks_like_brace_lambda() => {
+                self.parse_brace_lambda()
             }
             Some(Token::LBrace) if self.is_anon_record_literal() => {
                 self.advance(); // consume `{`
@@ -5092,6 +5099,127 @@ For variable-position list indexing bind the head first: \
                 fn_name: name,
                 captures,
             })
+        }
+    }
+
+    /// Lookahead: does the `{` at the current position start a brace-lambda
+    /// (`{params> stmts}`)? A brace-lambda has a `>` token at brace-depth 1
+    /// before the matching `}`. This distinguishes it from destructure patterns
+    /// `{a;b}=x` (which use `;` before any `>`) and anonymous record literals
+    /// `{field:val}` (handled by `is_anon_record_literal`).
+    fn looks_like_brace_lambda(&self) -> bool {
+        if self.peek() != Some(&Token::LBrace) {
+            return false;
+        }
+        let mut depth = 1usize;
+        let mut i = self.pos + 1;
+        while let Some(tok) = self.token_at(i) {
+            match tok {
+                Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                Token::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                Token::RParen | Token::RBracket => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                }
+                // A `;` at depth 1 before any `>` means destructure, not lambda.
+                Token::Semi if depth == 1 => return false,
+                // A `>` at depth 1 signals brace-lambda params separator.
+                Token::Greater if depth == 1 => return true,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Parse `{name... > [;] stmt [; stmt]*}` as a brace-form lambda.
+    ///
+    /// Params are bare identifiers (type defaults to `any`). Return type
+    /// defaults to `any`. Same lifting logic as `parse_inline_lambda`.
+    fn parse_brace_lambda(&mut self) -> Result<Expr> {
+        let start = self.peek_span();
+        self.expect(&Token::LBrace)?;
+
+        // Collect bare param names until `>`.
+        let mut params: Vec<Param> = Vec::new();
+        while self.peek() != Some(&Token::Greater) && self.peek() != Some(&Token::RBrace) {
+            match self.peek() {
+                Some(Token::Ident(_)) => {
+                    let name = self.expect_ident()?;
+                    params.push(Param { name, ty: Type::Any });
+                }
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P003",
+                        format!(
+                            "expected param name or `>` in brace-lambda, got {}",
+                            self.peek().map_or("EOF".into(), |t| t.user_facing_name())
+                        ),
+                        "brace-lambda syntax: `{param... > stmts}` — bare param names before `>`".into(),
+                    ));
+                }
+            }
+        }
+        self.expect(&Token::Greater)?;
+        // Optional `;` between `>` and body (e.g. `{a x>; body}`).
+        if self.peek() == Some(&Token::Semi) {
+            self.advance();
+        }
+
+        // Parse body: `;`-separated statements until `}`.
+        let mut body = Vec::new();
+        if self.peek() != Some(&Token::RBrace) {
+            let span_start = self.peek_span();
+            let stmt = self.parse_stmt()?;
+            body.push(Spanned { node: stmt, span: span_start.merge(self.prev_span()) });
+            while self.peek() == Some(&Token::Semi) {
+                self.advance();
+                if self.peek() == Some(&Token::RBrace) {
+                    break;
+                }
+                let span_start = self.peek_span();
+                let stmt = self.parse_stmt()?;
+                body.push(Spanned { node: stmt, span: span_start.merge(self.prev_span()) });
+            }
+        }
+        let end = self.peek_span();
+        self.expect(&Token::RBrace)?;
+
+        // Free-variable analysis and lifting — same as `parse_inline_lambda`.
+        let bound: std::collections::HashSet<String> =
+            params.iter().map(|p| p.name.clone()).collect();
+        let mut free = Vec::new();
+        let mut local: Vec<String> = Vec::new();
+        for stmt in &body {
+            self.collect_free_in_stmt(&stmt.node, &bound, &mut local, &mut free);
+        }
+
+        let fn_name = format!("__lit_{}", self.lambda_counter);
+        self.lambda_counter += 1;
+        let mut lifted_params = params;
+        for cap in &free {
+            lifted_params.push(Param { name: cap.clone(), ty: Type::Any });
+        }
+        self.register_user_fn(&fn_name, &lifted_params);
+        let span = start.merge(end);
+        self.lifted_decls.push(Decl::Function {
+            name: fn_name.clone(),
+            params: lifted_params,
+            return_type: Type::Any,
+            body,
+            span,
+        });
+        if free.is_empty() {
+            Ok(Expr::Ref(fn_name))
+        } else {
+            let captures: Vec<Expr> = free.into_iter().map(Expr::Ref).collect();
+            Ok(Expr::MakeClosure { fn_name, captures })
         }
     }
 

@@ -146,12 +146,23 @@ sumsq xs:L n>n;fld (a:n x:n>n;+a *x x) xs 0
 
 Syntax: `(<param>:<type> ...><return-type>;<body>)`. Same shape as a top-level function declaration, wrapped in parens, no name.
 
+**Brace-lambda shorthand** (`{params> stmts}`): bare param names (types inferred as `any`) and no explicit return type. Useful for compact multi-statement bodies in `map`/`flt`/`fld`:
+
+```
+sumsq xs:L n>n;fld {a x>; tmp=*x x; +a tmp} xs 0
+dbl xs:L n>L n;map {x> *x 2} xs
+pos xs:L n>L n;flt {x> >x 0} xs
+```
+
+The `;` after `>` is optional. The body supports the same `;`-chained statement forms as the paren lambda and top-level function bodies (let-bindings, guards, match, loops, `ret`/`brk`/`cnt`). Closure capture also works — any name that isn't a param or body-local is snapshot from the enclosing scope.
+
 **Phase 1 (no captures)** lifts the literal to a synthetic top-level decl and works across every engine (tree, VM, Cranelift JIT, AOT). The body's free variables must all be params, locals defined inside the lambda body, or known top-level fns.
 
 **Phase 2 (closure capture)** lets the body reference variables from the enclosing scope:
 
 ```
-f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr`
+f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr` (paren form)
+f xs:L n thr:n>L n;flt {x> >x thr} xs       -- captures `thr` (brace form)
 ```
 
 Phase 2 captures run natively on every engine: the tree interpreter, the register VM, the Cranelift JIT, and the Cranelift AOT backend. Each free variable is snapshot by value at the call site (`Expr::MakeClosure`) and appended to the call frame's arg slice on dispatch. The AOT backend additionally embeds the postcard-serialised `CompiledProgram` into the binary's `.rodata` and publishes TLS pointers on startup, so dispatch helpers can re-enter the VM on user-fn callbacks. The ctx-arg form (`srt fn ctx xs`) remains the cross-engine alternative when you want explicit state without forming a closure.
