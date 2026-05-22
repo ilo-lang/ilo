@@ -971,18 +971,23 @@ statement boundary; bind the chain to a local first. For example, split \
                 alias: None,
                 predicate: Some(predicate),
                 alt_path: Some(false_path),
+                reexport: false,
                 span: start.merge(end),
             });
         }
 
-        // Detect named-module form: `use alias:"path"` — ident immediately
-        // followed by `:` then a string literal.
-        // Distinguished from the plain form `use "path"` by the leading ident.
-        let (alias, path) = match self.peek().cloned() {
+        // Three forms:
+        //   `use "path"`                — flat import
+        //   `use alias:"path"`          — named-module import (symbols prefixed with `alias-`)
+        //   `use re:"path" [n1 n2]`     — re-export: import AND expose listed names to consumers
+        //
+        // Detected by whether the next token is a string literal or an ident followed by `:`.
+        // The special ident `re` triggers the re-export form; any other ident triggers the alias form.
+        let (alias, path, reexport) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
                 // Plain form: `use "path"`
                 self.advance();
-                (None, p)
+                (None, p, false)
             }
             Some(Token::Ident(a)) => {
                 // Peek ahead: must be followed by Colon then Text.
@@ -993,13 +998,20 @@ statement boundary; bind the chain to a local first. For example, split \
                         match self.peek().cloned() {
                             Some(Token::Text(p)) => {
                                 self.advance();
-                                (Some(a), p)
+                                if a == "re" {
+                                    // Re-export form: `use re:"path"` — no alias prefix
+                                    (None, p, true)
+                                } else {
+                                    // Named-module alias form: `use alias:"path"`
+                                    (Some(a), p, false)
+                                }
                             }
                             Some(tok) => {
                                 return Err(self.error(
                                     "ILO-P016",
                                     format!(
-                                        "expected a string path after `use alias:`, got {}",
+                                        "expected a string path after `use {}:`, got {}",
+                                        a,
                                         tok.user_facing_name()
                                     ),
                                 ));
@@ -1007,7 +1019,7 @@ statement boundary; bind the chain to a local first. For example, split \
                             None => {
                                 return Err(self.error(
                                     "ILO-P016",
-                                    "expected a string path after `use alias:`, got EOF".into(),
+                                    format!("expected a string path after `use {}:`, got EOF", a),
                                 ));
                             }
                         }
@@ -1046,7 +1058,8 @@ statement boundary; bind the chain to a local first. For example, split \
             }
         };
 
-        // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
+        // Optional `[name1 name2 ...]` scoped import list.
+        // Incompatible with alias form; required for re-export form.
         let only = if self.peek() == Some(&Token::LBracket) {
             if alias.is_some() {
                 return Err(self.error(
@@ -1075,6 +1088,14 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             Some(names)
         } else {
+            if reexport {
+                return Err(self.error(
+                    "ILO-P016",
+                    "re-export form (`use re:\"path\"`) requires a `[name1 name2]` list — \
+                     use `use \"path\"` to import all without re-exporting"
+                        .into(),
+                ));
+            }
             None
         };
 
@@ -1085,6 +1106,7 @@ statement boundary; bind the chain to a local first. For example, split \
             alias,
             predicate: None,
             alt_path: None,
+            reexport,
             span: start.merge(end),
         })
     }
@@ -9471,6 +9493,38 @@ mod tests {
         assert!(
             errors.iter().any(|e| e.code == "ILO-P016"),
             "expected ILO-P016 for missing colon: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_use_reexport_form() {
+        let prog = parse_str(r#"use re:"lib.ilo" [foo bar]"#);
+        let Decl::Use {
+            path,
+            only,
+            alias,
+            reexport,
+            ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "lib.ilo");
+        assert!(alias.is_none(), "re: form should set no alias");
+        assert!(*reexport, "re: form should set reexport=true");
+        let names = only.as_ref().unwrap();
+        assert_eq!(names, &["foo", "bar"]);
+    }
+
+    #[test]
+    fn parse_use_reexport_requires_bracket_list() {
+        let (_, errors) = parse_str_errors(r#"use re:"lib.ilo""#);
+        assert!(!errors.is_empty(), "re: form without brackets should error");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-P016" && e.message.contains("requires a `[name1 name2]`")),
+            "expected ILO-P016 about required bracket list: {errors:?}"
         );
     }
 

@@ -2333,7 +2333,34 @@ fn resolve_imports(
     diagnostics: &mut Vec<Diagnostic>,
     build_target: BuildTarget,
 ) -> Vec<ast::Decl> {
+    resolve_imports_inner(decls, base_dir, visited, diagnostics, build_target, false).0
+}
+
+/// Resolves imports and returns `(all_decls, exported_names)`.
+///
+/// `all_decls` contains every declaration that is in scope for the current module
+/// (own declarations + all transitively-imported declarations). This is what the
+/// module uses internally.
+///
+/// `exported_names` is the *public surface* of this module — the names that
+/// consumers of this module can import. It includes:
+///   - Every own declaration whose name does not start with `_`
+///   - Any declaration brought in via `use re:"path" [names]` (re-exports)
+///
+/// When `for_export` is `false` (entry-point / top-level call), the second return
+/// value is not meaningful and the caller should ignore it.
+fn resolve_imports_inner(
+    decls: Vec<ast::Decl>,
+    base_dir: Option<&std::path::Path>,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    diagnostics: &mut Vec<Diagnostic>,
+    build_target: BuildTarget,
+    for_export: bool,
+) -> (Vec<ast::Decl>, Vec<String>) {
+    let _ = for_export; // used by callers; kept for future use
     let mut result: Vec<ast::Decl> = Vec::new();
+    // Track which names in `result` are part of the public export surface.
+    let mut exported_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for decl in decls {
         if let ast::Decl::Use {
@@ -2342,6 +2369,7 @@ fn resolve_imports(
             alias,
             predicate,
             alt_path,
+            reexport,
             span,
         } = decl
         {
@@ -2383,6 +2411,7 @@ fn resolve_imports(
                             alias: alias.clone(),
                             predicate: None,
                             alt_path: None,
+                            reexport: false,
                             span,
                         };
                         let mut sub = resolve_imports(
@@ -2549,31 +2578,36 @@ fn resolve_imports(
 
             visited.insert(canonical.clone());
             let imported_dir = canonical.parent();
-            let imported_decls = resolve_imports(
+            let (imported_decls, imported_exported) = resolve_imports_inner(
                 imported_prog.declarations,
                 imported_dir,
                 visited,
                 diagnostics,
                 build_target,
+                true,
             );
             visited.remove(&canonical);
 
             // Apply import filter based on form:
             //
-            // - Flat (`use "path"`): all declarations come through, including
-            //   `_`-prefixed ones. Private helpers are callable from the
-            //   importing file only by convention (no hard enforcement in flat
-            //   mode — they just land in the shared namespace).
+            // - Flat (`use "path"`): public declarations (those in `imported_exported`) come
+            //   through. Private (`_`-prefixed) names and non-re-exported transitive imports
+            //   are excluded. (Legacy behaviour for pre-re-export files: if no re-export
+            //   annotations exist in the imported file, `imported_exported` equals all own
+            //   non-`_` decls, which is the same as before.)
             //
-            // - Selective (`use "path" [name1 name2]`): only the listed public
-            //   names are imported. `_`-prefixed names are blocked — requesting
-            //   one emits ILO-P019. This is the primary privacy enforcement.
+            // - Selective (`use "path" [name1 name2]`): only the listed names are imported,
+            //   subject to the same export-surface constraint — each requested name must be
+            //   in the imported file's public surface. `_`-prefixed names are always blocked.
             //
-            // - Named-module (`use alias:"path"`): all public (non-`_`) names
-            //   are imported and prefixed with `alias-`. Private (`_`) names are
-            //   silently excluded. This is the secondary privacy enforcement.
+            // - Named-module (`use alias:"path"`): all public (non-`_`) names in the export
+            //   surface are imported and prefixed with `alias-`.
+            //
+            // - Re-export (`use re:"path" [name1 name2]`): same as selective import, but the
+            //   imported names are added to *this* module's export surface so consumers can
+            //   further import them.
             let filtered = if let Some(ref names) = only {
-                // Selective import — block private names explicitly
+                // Selective / re-export form — block private names and enforce export surface
                 for name in names {
                     if name.starts_with('_') {
                         diagnostics.push(
@@ -2587,9 +2621,11 @@ fn resolve_imports(
                         );
                         continue;
                     }
-                    let found = imported_decls
-                        .iter()
-                        .any(|d| decl_name(d) == Some(name.as_str()));
+                    // Check the name is in the imported module's export surface
+                    let found = imported_exported.iter().any(|e| e == name)
+                        || imported_decls
+                            .iter()
+                            .any(|d| decl_name(d) == Some(name.as_str()));
                     if !found {
                         diagnostics.push(
                             Diagnostic::error(format!(
@@ -2601,14 +2637,23 @@ fn resolve_imports(
                         );
                     }
                 }
-                imported_decls
+                let selected = imported_decls
                     .into_iter()
                     .filter(|d| {
                         decl_name(d)
                             .map(|n| !n.starts_with('_') && names.iter().any(|s| s == n))
                             .unwrap_or(false)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                // If this is a re-export, add selected names to this module's export surface
+                if reexport {
+                    for name in names {
+                        if !name.starts_with('_') {
+                            exported_names.insert(name.clone());
+                        }
+                    }
+                }
+                selected
             } else if let Some(ref pfx) = alias {
                 // Named-module form: strip private, then rename public to `alias-name`.
                 let public_decls: Vec<ast::Decl> = imported_decls
@@ -2617,18 +2662,26 @@ fn resolve_imports(
                     .collect();
                 apply_module_alias(public_decls, pfx)
             } else {
-                // Flat import: everything (including private helpers) comes through
+                // Flat import: everything (including private helpers) comes through.
+                // Preserves backward-compatible behaviour — all transitively imported
+                // declarations are visible in the importing file's scope.
                 imported_decls
             };
 
             // Prepend imported declarations (so they appear before the importer's own decls)
             result.extend(filtered);
         } else {
+            // Own declaration: add to result and mark as exported (if public)
+            if let Some(name) = decl_name(&decl) {
+                if !name.starts_with('_') {
+                    exported_names.insert(name.to_string());
+                }
+            }
             result.push(decl);
         }
     }
 
-    result
+    (result, exported_names.into_iter().collect())
 }
 
 /// Rename all named declarations in `decls` by prepending `alias-` to their name.
@@ -6597,6 +6650,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -6637,6 +6691,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6674,6 +6729,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6930,6 +6986,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6954,6 +7011,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -7079,6 +7137,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -7118,6 +7177,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -7156,6 +7216,7 @@ mod tests {
             alias: Some("m".into()),
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7195,6 +7256,7 @@ mod tests {
             alias: Some("m".into()),
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7237,6 +7299,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7278,6 +7341,7 @@ mod tests {
             alias: None,
             predicate: Some(ast::UsePredicate::Wasm),
             alt_path: Some("ilo_cond_native_ILO399.ilo".into()),
+            reexport: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7305,6 +7369,61 @@ mod tests {
         std::fs::remove_file(native_path).ok();
     }
 
+    // ── resolve_imports: re-export (`use re:"path" [names]`) ─────────────────
+
+    #[test]
+    fn resolve_imports_reexport_makes_names_available() {
+        // inner.ilo defines foo and bar.
+        // outer.ilo re-exports foo and bar via `use re:`.
+        // When we import outer.ilo selectively asking for foo, it should be found.
+        use std::io::Write;
+        let inner_path = "/tmp/ilo_reexport_inner_A1B2.ilo";
+        let outer_path = "/tmp/ilo_reexport_outer_A1B2.ilo";
+
+        let mut inner = std::fs::File::create(inner_path).unwrap();
+        writeln!(inner, "foo n:n>n;+n 1").unwrap();
+        writeln!(inner, "bar n:n>n;*n 2").unwrap();
+        drop(inner);
+
+        let mut outer = std::fs::File::create(outer_path).unwrap();
+        writeln!(outer, "use re:\"ilo_reexport_inner_A1B2.ilo\" [foo bar]").unwrap();
+        writeln!(outer, "baz n:n>n;+n 10").unwrap();
+        drop(outer);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_reexport_outer_A1B2.ilo".into(),
+            only: Some(vec!["foo".into(), "baz".into()]),
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Native,
+        );
+
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"foo"),
+            "foo should be available via re-export: {names:?}"
+        );
+        assert!(
+            names.contains(&"baz"),
+            "baz should be available as outer's own decl: {names:?}"
+        );
+
+        std::fs::remove_file(inner_path).ok();
+        std::fs::remove_file(outer_path).ok();
+    }
+
     #[test]
     fn resolve_imports_conditional_wasm_false_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Native → loads native.ilo
@@ -7319,6 +7438,7 @@ mod tests {
             alias: None,
             predicate: Some(ast::UsePredicate::Wasm),
             alt_path: Some("ilo_cond2_native_ILO399.ilo".into()),
+            reexport: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7347,6 +7467,56 @@ mod tests {
     }
 
     #[test]
+    fn resolve_imports_reexport_flat_includes_reexported_names() {
+        // Flat import of outer.ilo should include foo and bar (re-exported from inner).
+        use std::io::Write;
+        let inner_path = "/tmp/ilo_reexport_flat_inner_C3D4.ilo";
+        let outer_path = "/tmp/ilo_reexport_flat_outer_C3D4.ilo";
+
+        let mut inner = std::fs::File::create(inner_path).unwrap();
+        writeln!(inner, "foo n:n>n;+n 1").unwrap();
+        drop(inner);
+
+        let mut outer = std::fs::File::create(outer_path).unwrap();
+        writeln!(outer, "use re:\"ilo_reexport_flat_inner_C3D4.ilo\" [foo]").unwrap();
+        writeln!(outer, "baz n:n>n;+n 10").unwrap();
+        drop(outer);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_reexport_flat_outer_C3D4.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Native,
+        );
+
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"foo"),
+            "foo should come through flat import: {names:?}"
+        );
+        assert!(
+            names.contains(&"baz"),
+            "baz should come through flat import: {names:?}"
+        );
+
+        std::fs::remove_file(inner_path).ok();
+        std::fs::remove_file(outer_path).ok();
+    }
+
+    #[test]
     fn resolve_imports_conditional_test_predicate() {
         // `use ?test "stub.ilo" : "real.ilo"` with BuildTarget::Test → loads stub
         let stub_path = "/tmp/ilo_cond_stub_ILO399.ilo";
@@ -7360,6 +7530,7 @@ mod tests {
             alias: None,
             predicate: Some(ast::UsePredicate::Test),
             alt_path: Some("ilo_cond_real_ILO399.ilo".into()),
+            reexport: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -8459,6 +8630,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: ast::Span::UNKNOWN,
         }
     }

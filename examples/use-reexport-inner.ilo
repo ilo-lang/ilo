@@ -1,0 +1,12 @@
+-- use-reexport-inner.ilo — library module re-exported through use-reexport-outer.ilo
+--
+-- Public functions:
+--   foo   n+1
+--   bar   n*2
+--
+-- This file is NOT the entry point. It is imported by use-reexport-outer.ilo,
+-- which re-exports `foo` and `bar` via `use re:...`.
+
+foo n:n>n;+n 1
+
+bar n:n>n;*n 2

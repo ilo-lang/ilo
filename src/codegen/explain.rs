@@ -557,6 +557,7 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
             span: Span::UNKNOWN,
         });
         prog.declarations.push(Decl::Error {

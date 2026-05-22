@@ -203,6 +203,8 @@ pub enum Decl {
     /// `use ?wasm "wasm-mod.ilo" : "native-mod.ilo"` — conditional import:
     ///   import `path` when the predicate is true for the current build target,
     ///   otherwise import `alt_path`. Resolved before verification.
+    /// `use re:"path/to/file.ilo" [name1 name2]` — import AND re-export the named
+    ///   declarations: they become part of this module's public surface.
     /// Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
@@ -218,6 +220,10 @@ pub enum Decl {
         predicate: Option<UsePredicate>,
         /// The false-branch path for conditional imports. `None` for unconditional.
         alt_path: Option<String>,
+        /// Re-export flag: `use re:"path" [names]` makes the listed names part
+        /// of this module's public surface (visible to consumers of this module).
+        /// Without this flag, imported names are internal to this module only.
+        reexport: bool,
         #[serde(skip)]
         span: Span,
     },
