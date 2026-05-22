@@ -2717,16 +2717,15 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 Some("ai") => {
                     if as_json {
                         // Build per-item builtins array from the canonical ALL slice.
-                        let builtins_list: Vec<serde_json::Value> =
-                            ilo::builtins::Builtin::ALL
-                                .iter()
-                                .map(|b| {
-                                    serde_json::json!({
-                                        "name": b.name(),
-                                        "stability": b.stability(),
-                                    })
+                        let builtins_list: Vec<serde_json::Value> = ilo::builtins::Builtin::ALL
+                            .iter()
+                            .map(|b| {
+                                serde_json::json!({
+                                    "name": b.name(),
+                                    "stability": b.stability(),
                                 })
-                                .collect();
+                            })
+                            .collect();
                         let v = serde_json::json!({
                             "schemaVersion": 1,
                             "format": "ai-txt",
