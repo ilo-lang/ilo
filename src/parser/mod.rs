@@ -1135,11 +1135,20 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_type_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Type)?;
-        let name = self.expect_decl_name()?;
+        let name = self.expect_ident()?;
+        // `type Result<a,b> = ok(a) | err(b)` — generic sum type with type params
+        let type_params = self.parse_sum_type_params()?;
         // `type Name = Circle(n) | Square(n) | red` — sum type with payloads
         if self.peek() == Some(&Token::Eq) {
             self.advance(); // consume `=`
-            return self.parse_sum_type_body(name, start);
+            return self.parse_sum_type_body(name, type_params, start);
+        }
+        // Non-sum type decls cannot have type params
+        if !type_params.is_empty() {
+            return Err(self.error(
+                "ILO-P023",
+                "generic type parameters `<...>` are only allowed on sum type declarations (`type Name<a> = ...`)".into(),
+            ));
         }
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
@@ -1162,8 +1171,17 @@ statement boundary; bind the chain to a local first. For example, split \
     }
 
     /// Parse the body of `type Name = Variant1(type) | Variant2 | Variant3(type)`.
-    /// Called after `type Name =` has been consumed.
-    fn parse_sum_type_body(&mut self, name: String, start: Span) -> Result<Decl> {
+    /// Called after `type Name<...> =` has been consumed.
+    fn parse_sum_type_body(
+        &mut self,
+        name: String,
+        type_params: Vec<(String, crate::ast::Bound)>,
+        start: Span,
+    ) -> Result<Decl> {
+        // Set of declared type-variable names (e.g. {"a", "b"}) so the payload
+        // parser can treat them as Named type variables rather than primitives.
+        let type_var_names: std::collections::HashSet<String> =
+            type_params.iter().map(|(n, _)| n.clone()).collect();
         let mut variants = Vec::new();
         loop {
             // Each variant: `ident` optionally followed by `(type)`.
@@ -1184,7 +1202,7 @@ statement boundary; bind the chain to a local first. For example, split \
             };
             let payload = if self.peek() == Some(&Token::LParen) {
                 self.advance(); // consume `(`
-                let ty = self.parse_type()?;
+                let ty = self.parse_type_in_sum_context(&type_var_names)?;
                 self.expect(&Token::RParen)?;
                 Some(ty)
             } else {
@@ -1207,9 +1225,81 @@ statement boundary; bind the chain to a local first. For example, split \
         let end = self.prev_span();
         Ok(Decl::SumType {
             name,
+            type_params,
             variants,
             span: start.merge(end),
         })
+    }
+
+    /// Parse optional type-parameter block for sum type declarations.
+    /// Syntax: `<a b>` or `<a,b>` (commas optional as separators).
+    /// Returns empty vec if no `<` follows.
+    fn parse_sum_type_params(&mut self) -> Result<Vec<(String, crate::ast::Bound)>> {
+        use crate::ast::Bound;
+        if self.peek() != Some(&Token::Less) {
+            return Ok(vec![]);
+        }
+        self.advance(); // consume `<`
+        let mut params = Vec::new();
+        loop {
+            // Skip optional commas between type vars
+            while self.peek() == Some(&Token::Comma) {
+                self.advance();
+            }
+            if self.peek() == Some(&Token::Greater) {
+                self.advance(); // consume `>`
+                break;
+            }
+            match self.peek().cloned() {
+                Some(Token::Ident(ref n))
+                    if n.len() == 1 && n.chars().next().is_some_and(|c| c.is_lowercase()) =>
+                {
+                    let var_name = n.clone();
+                    self.advance();
+                    // Optional bound annotation `:bound`
+                    let bound = if self.peek() == Some(&Token::Colon) {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Ident(ref b)) => {
+                                let bound = match b.as_str() {
+                                    "comparable" => Bound::Comparable,
+                                    "numeric" => Bound::Numeric,
+                                    "text" => Bound::Text,
+                                    "any" => Bound::Any,
+                                    other => {
+                                        return Err(self.error_hint(
+                                            "ILO-P022",
+                                            format!("unknown bound '{other}' — expected comparable, numeric, text, or any"),
+                                            "write `<a:comparable>` or `<a:numeric>` etc.".to_string(),
+                                        ));
+                                    }
+                                };
+                                self.advance();
+                                bound
+                            }
+                            _ => {
+                                return Err(self.error_hint(
+                                    "ILO-P022",
+                                    "expected bound name after ':'".to_string(),
+                                    "valid bounds: comparable, numeric, text, any".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        Bound::Any
+                    };
+                    params.push((var_name, bound));
+                }
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P022",
+                        "expected single-letter type variable in generic sum type param list".to_string(),
+                        "write `type Foo<a b>` or `type Foo<a,b>` — type variables must be single lowercase letters".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(params)
     }
 
     /// `tool name"desc" params>return timeout:n,retry:n`
@@ -1672,6 +1762,26 @@ statement boundary; bind the chain to a local first. For example, split \
     }
 
     // ---- Types ----
+
+    /// Like `parse_type` but treats any declared type-variable name (even
+    /// primitive-keyword letters like `n`, `t`, `b`) as `Type::Named` instead
+    /// of the primitive. Used when parsing variant payloads inside generic sum
+    /// type declarations so `type Result<a,b> = ok(a) | err(b)` treats `b` as
+    /// the type variable, not the `bool` primitive.
+    fn parse_type_in_sum_context(
+        &mut self,
+        type_vars: &std::collections::HashSet<String>,
+    ) -> Result<Type> {
+        // Check whether the next token is a single-letter ident that is a
+        // declared type variable. If so, consume it and return Named.
+        if let Some(Token::Ident(s)) = self.peek().cloned() {
+            if type_vars.contains(&s) && s.len() == 1 {
+                self.advance();
+                return Ok(Type::Named(s));
+            }
+        }
+        self.parse_type()
+    }
 
     fn parse_type(&mut self) -> Result<Type> {
         self.check_depth()?;

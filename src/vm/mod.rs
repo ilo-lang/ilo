@@ -37309,6 +37309,57 @@ main>n
             );
         }
     }
+
+    // ── ILO-402: Generic sum types — VM cross-engine regression ──────────────
+
+    /// VM: `type either<a,b> = left(a) | right(b)` — construct and match left.
+    #[test]
+    fn vm_generic_sum_either_left_number() {
+        let v = vm_run_main_for_test(
+            "type either<a,b> = left(a) | right(b)\n\
+             wrap-n x:n>either;left x\n\
+             main>n;v=wrap-n 42;?v{left(x):x;right(x):0}",
+        );
+        assert_eq!(v, Value::Number(42.0));
+    }
+
+    /// VM: `type either<a,b>` — construct right with text payload.
+    #[test]
+    fn vm_generic_sum_either_right_text() {
+        let v = vm_run_main_for_test(
+            "type either<a,b> = left(a) | right(b)\n\
+             wrap-t x:t>either;right x\n\
+             main>t;v=wrap-t \"hi\";?v{left(x):\"L\";right(x):x}",
+        );
+        assert_eq!(v, Value::Text(std::sync::Arc::new("hi".to_string())));
+    }
+
+    /// VM: `type result<a,b>` where `b` is a declared type var (not bool).
+    #[test]
+    fn vm_generic_sum_result_b_type_var() {
+        let v = vm_run_main_for_test(
+            "type result<a,b> = ok(a) | err(b)\n\
+             safe-div x:n y:n>result\n  =(y) 0{ret err \"zero\"}\n  ok /x y\n\
+             main>n;dv=safe-div 10 2;?dv{ok(v):v;err(msg):0}",
+        );
+        assert_eq!(v, Value::Number(5.0));
+    }
+
+    /// VM: generic sum type matches interpreter.
+    #[test]
+    fn vm_generic_sum_matches_interpreter() {
+        let src = "type either<a,b> = left(a) | right(b)\n\
+             wrap-n x:n>either;left x\n\
+             main>n;v=wrap-n 99;?v{left(x):x;right(x):0}";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).unwrap();
+        let vm_result = run(&compiled, Some("main"), vec![]).unwrap();
+        let interp_result = crate::interpreter::run(&prog, Some("main"), vec![]).unwrap();
+        assert_eq!(
+            vm_result, interp_result,
+            "VM and interpreter disagree on generic sum type result"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "cranelift"))]
