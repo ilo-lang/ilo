@@ -700,6 +700,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // `run-bg cmd argv` — fire-and-forget spawn. Returns R n t (the pid).
         // Tree-bridge eligible: no FnRef args, returns Result.
         (Builtin::RunBg, 2) => true,
+        // `run-full-env cmd argv` — opt-in full-env variant of `run`.
+        // Same bridge contract; scrubs no env vars.
+        (Builtin::RunFullEnv, 2) => true,
+        // `run2-full-env cmd argv` — opt-in full-env variant of `run2`.
+        // Same bridge contract; scrubs no env vars.
+        (Builtin::Run2FullEnv, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -981,6 +987,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Run
             | Builtin::Run2
             | Builtin::RunBg
+            | Builtin::RunFullEnv
+            | Builtin::Run2FullEnv
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl

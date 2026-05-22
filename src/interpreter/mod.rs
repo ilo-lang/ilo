@@ -7297,6 +7297,100 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(run_spawn_bg(cmd.as_str(), &argv));
     }
+    if builtin == Some(Builtin::RunFullEnv) && args.len() == 2 {
+        // run-full-env cmd:t args:L t  >  R (M t t) t
+        //
+        // Opt-in variant of `run` that inherits the full parent environment,
+        // including ANTHROPIC_API_KEY, GITHUB_TOKEN, and similar secrets.
+        // Use only when the child process legitimately needs those credentials.
+        // The default `run` scrubs these automatically.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-full-env requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run-full-env argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-full-env argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_full_env(cmd.as_str(), &argv));
+    }
+    if builtin == Some(Builtin::Run2FullEnv) && args.len() == 2 {
+        // run2-full-env cmd:t args:L t  >  R RunResult t
+        //
+        // Opt-in variant of `run2` that inherits the full parent environment.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2-full-env requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run2-full-env argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "run2-full-env argv must be L t (text list), got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_structured_full_env(cmd.as_str(), &argv));
+    }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(Arc::new(s.trim().to_string()))),
@@ -11257,11 +11351,36 @@ fn rdinl_impl() -> Result<Value> {
     }
 }
 
-/// `for-line` implementation — returns a lazy stdin line iterator.
+/// Returns true if the env var name looks like a secret and should be
+/// scrubbed from child processes by default.
 ///
-/// Takes one argument which must be the text "stdin". Returns
-/// `Value::LazyStdinLines` so callers can iterate with `@binding` foreach.
-/// On WASM stdin is unavailable; returns `Err` immediately.
+/// Scrubbed patterns (case-insensitive suffix match unless noted):
+///   - ANTHROPIC_*  — Anthropic API keys
+///   - CLAUDE_*     — Claude-specific tokens / config values
+///   - GITHUB_TOKEN / GITHUB_PAT — GitHub credentials
+///   - *_TOKEN      — generic bearer tokens
+///   - *_KEY        — generic API keys (catches OPENAI_API_KEY etc.)
+///   - *_SECRET     — generic secrets / client credentials
+///   - *_PASSWORD / *_PASSWD — passwords
+///   - *_CREDENTIAL / *_CREDENTIALS — credential blobs
+///
+/// Variables not matching any pattern are passed through unchanged.
+#[cfg(not(target_family = "wasm"))]
+fn is_secret_env_var(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.starts_with("ANTHROPIC_")
+        || upper.starts_with("CLAUDE_")
+        || upper == "GITHUB_TOKEN"
+        || upper == "GITHUB_PAT"
+        || upper.ends_with("_TOKEN")
+        || upper.ends_with("_KEY")
+        || upper.ends_with("_SECRET")
+        || upper.ends_with("_PASSWORD")
+        || upper.ends_with("_PASSWD")
+        || upper.ends_with("_CREDENTIAL")
+        || upper.ends_with("_CREDENTIALS")
+}
+
 fn for_line_impl(source: &Value) -> Result<Value> {
     match source {
         Value::Text(s) if s.as_str() == "stdin" => {
@@ -11292,6 +11411,19 @@ fn for_line_impl(source: &Value) -> Result<Value> {
 /// not found, permission denied, etc.) ARE errors and surface as Err.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_inner(cmd, argv, false)
+}
+
+/// Like `run_spawn` but passes through the full parent environment including
+/// sensitive vars (ANTHROPIC_API_KEY, GITHUB_TOKEN, etc.). Use only when the
+/// child process legitimately needs those credentials.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_full_env(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_inner(cmd, argv, true)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_spawn_inner(cmd: &str, argv: &[String], inherit_full_env: bool) -> Value {
     use std::process::{Command, Stdio};
 
     let mut command = Command::new(cmd);
@@ -11300,6 +11432,20 @@ pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if !inherit_full_env {
+        // Scrub secret env vars from the child environment. We start from
+        // the inherited env and remove matching keys rather than building a
+        // clean env from scratch, so tools that need PATH / HOME / LANG / TZ
+        // continue to work without the caller having to enumerate them.
+        for (key, _) in std::env::vars_os() {
+            if let Some(k) = key.to_str() {
+                if is_secret_env_var(k) {
+                    command.env_remove(k);
+                }
+            }
+        }
+    }
 
     let mut child = match command.spawn() {
         Ok(c) => c,
@@ -11416,6 +11562,17 @@ pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
 /// can branch on `r.exit < 0`.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn run_spawn_structured(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_structured_inner(cmd, argv, false)
+}
+
+/// Like `run_spawn_structured` but passes through the full parent environment.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_structured_full_env(cmd: &str, argv: &[String]) -> Value {
+    run_spawn_structured_inner(cmd, argv, true)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn run_spawn_structured_inner(cmd: &str, argv: &[String], inherit_full_env: bool) -> Value {
     use std::process::{Command, Stdio};
 
     let mut command = Command::new(cmd);
@@ -11424,6 +11581,16 @@ pub(crate) fn run_spawn_structured(cmd: &str, argv: &[String]) -> Value {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if !inherit_full_env {
+        for (key, _) in std::env::vars_os() {
+            if let Some(k) = key.to_str() {
+                if is_secret_env_var(k) {
+                    command.env_remove(k);
+                }
+            }
+        }
+    }
 
     let mut child = match command.spawn() {
         Ok(c) => c,
@@ -11822,6 +11989,20 @@ pub(crate) fn run_spawn_bg(_cmd: &str, _argv: &[String]) -> Value {
     ))))
 }
 
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_full_env(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run-full-env: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_structured_full_env(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run2-full-env: process spawn not available on wasm".to_string(),
+    ))))
+}
+
 /// Drain `reader` into `buf` while enforcing `cap` bytes per call. Returns
 /// Err(message) when the cap is exceeded so the caller can surface an Err
 /// rather than partial capture.
@@ -11957,7 +12138,7 @@ fn par_map_default_concurrency() -> usize {
 /// constant regardless of list length. Returns at least 1.
 fn par_map_chunk_size(n_items: usize, n_threads: usize) -> usize {
     let t = n_threads.max(1);
-    (n_items + t - 1) / t
+    n_items.div_ceil(t)
 }
 
 /// Apply `fn_name` to each element of `items` using up to `concurrency`
@@ -18138,47 +18319,6 @@ f>n;+area(circle 2) area(square 3)"#;
     }
 
     // ---- todo / panic typed expressions (ILO-410) ----
-
-    // par-map tests (ILO-67)
-
-    #[test]
-    fn par_map_applies_fn_to_each_element_in_order() {
-        // double x = x * 2; par-map over [1,2,3] with concurrency 2 => [2,4,6]
-        let src = r#"dbl x:n>n;*x 2  main>L n;xs=[1 2 3];ys=par-map dbl xs 2;map (y:_>n;?y{~v:v;^_:0}) ys"#;
-        let result = run_str(src, Some("main"), vec![]);
-        assert_eq!(
-            result,
-            Value::List(Arc::new(vec![
-                Value::Number(2.0),
-                Value::Number(4.0),
-                Value::Number(6.0),
-            ]))
-        );
-    }
-
-    #[test]
-    fn par_map_empty_list_returns_empty() {
-        let src = r#"dbl x:n>n;*x 2  main>L n;par-map dbl [] 4"#;
-        let result = run_str(src, Some("main"), vec![]);
-        assert_eq!(result, Value::List(Arc::new(vec![])));
-    }
-
-    #[test]
-    fn par_map_default_concurrency_two_arg_form() {
-        // 2-arg form (no explicit n): should still work
-        let src =
-            r#"sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
-        let result = run_str(src, Some("main"), vec![]);
-        assert_eq!(
-            result,
-            Value::List(Arc::new(vec![
-                Value::Number(1.0),
-                Value::Number(4.0),
-                Value::Number(9.0),
-                Value::Number(16.0),
-            ]))
-        );
-    }
 
     // par-map tests (ILO-67)
 

@@ -701,6 +701,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("run2", &["t", "L t", "t"], "R RunResult t"),
     // run-bg: fire-and-forget spawn; returns pid as n.
     ("run-bg", &["t", "L t"], "R n t"),
+    // run-full-env / run2-full-env: opt-in full-env variants (ILO-346).
+    // Same signature as run / run2; the only difference is env scrubbing.
+    ("run-full-env", &["t", "L t"], "R (M t t) t"),
+    ("run2-full-env", &["t", "L t"], "R RunResult t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("rd-json", &["t"], "R ? t"),
@@ -4204,6 +4208,89 @@ fn builtin_check_args(
                 }
             }
             (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
+        "run-full-env" => {
+            // run-full-env cmd:t args:L t  >  R (M t t) t
+            // Opt-in full-env variant of `run`. Same type signature; the only
+            // difference at runtime is that secret env vars are NOT scrubbed.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'run-full-env' expects t (cmd), got {arg}"),
+                    hint: Some(
+                        "first arg is the program path or name, e.g. run-full-env \"echo\" [\"hi\"]"
+                            .to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let list_text = Ty::List(Box::new(Ty::Text));
+                if !compatible(arg, &list_text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'run-full-env' args slot expects L t, got {arg}"),
+                        hint: Some(
+                            "second arg is the argv list (no shell interpolation)".to_string(),
+                        ),
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
+        "run2-full-env" => {
+            // run2-full-env cmd:t args:L t  >  R RunResult t
+            // Opt-in full-env variant of `run2`.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'run2-full-env' expects t (cmd), got {arg}"),
+                    hint: Some(
+                        "first arg is the program path or name, e.g. run2-full-env \"echo\" [\"hi\"]"
+                            .to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let list_text = Ty::List(Box::new(Ty::Text));
+                if !compatible(arg, &list_text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'run2-full-env' args slot expects L t, got {arg}"),
+                        hint: Some(
+                            "second arg is the argv list (no shell interpolation)".to_string(),
+                        ),
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Named("RunResult".to_string())),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
         }
         "sleep" => {
             // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,
