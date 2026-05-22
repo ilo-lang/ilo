@@ -8134,6 +8134,26 @@ fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Resul
     }
 }
 
+/// Run and remove all block-scope defers that were pushed since `saved_len`.
+///
+/// Called at every exit point of a block (normal, break, continue, return).
+/// `is_error` mirrors the function-scope defer semantics: `errdefer` fires
+/// only when true.  Defer errors are silently ignored so a failing defer
+/// doesn't mask the original result.
+fn run_block_defers(env: &mut Env, saved_len: usize, is_error: bool) {
+    // Drain the entries added since we entered the block (LIFO order).
+    let block_defers: Vec<_> = env.defer_stack.drain(saved_len..).rev().collect();
+    for (defer_expr, defer_kind) in block_defers {
+        let should_run = match defer_kind {
+            crate::ast::DeferKind::Always => true,
+            crate::ast::DeferKind::OnError => is_error,
+        };
+        if should_run {
+            let _ = eval_expr(env, &defer_expr);
+        }
+    }
+}
+
 fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
@@ -8226,7 +8246,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 // body, both branches are in tail position.
                 let chosen = if should_run { body } else { else_b };
                 env.push_scope();
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, chosen, is_tail);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
@@ -8242,7 +8265,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 // relative to the function — the value it produces becomes
                 // the function's return, so a tail call inside trampolines.
                 env.push_scope();
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, true);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
@@ -8266,7 +8292,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 // tail call is the function's tail call. Safe to pass
                 // through.
                 env.push_scope();
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, is_tail);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
@@ -8295,7 +8324,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                     // Arm body inherits the match's tail position: a tail
                     // call in the taken arm of a tail-position match
                     // trampolines through.
+                    let defer_mark = env.defer_stack.len();
                     let result = eval_body(env, &arm.body, is_tail);
+                    let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                    run_block_defers(env, defer_mark, is_err);
                     env.pop_scope();
                     match result? {
                         BodyResult::Return(v) => return Ok(Some(BodyResult::Return(v))),
@@ -8326,7 +8358,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                         // returns to the loop header after each iteration,
                         // so a "tail call" inside a loop must materialise as
                         // a normal call. Pass `false`.
+                        let defer_mark = env.defer_stack.len();
                         let result = eval_body(env, body, false);
+                        let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                        run_block_defers(env, defer_mark, is_err);
                         env.pop_scope();
                         match result? {
                             BodyResult::Return(v) => {
@@ -8378,7 +8413,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
                 // Range body is not in tail position; see ForEach above.
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, false);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Return(v) => {
@@ -8405,7 +8443,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                     break;
                 }
                 // While body is not in tail position; see ForEach above.
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, false);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 match result? {
                     BodyResult::Return(v) => {
                         return Ok(Some(BodyResult::Return(v)));

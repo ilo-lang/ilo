@@ -321,3 +321,65 @@ fn errdefer_reserved_as_identifier_is_parse_error() {
         "expected parse error when using `errdefer` as identifier"
     );
 }
+
+// ── ILO-365: block-scope defer ────────────────────────────────────────────────
+//
+// Note: `defer` takes an *expression* (not a statement), so mutation via
+// `defer =var expr` is unavailable (the parser rejects `defer =` as a
+// potential `defer = 5` assignment to the keyword).  Block-scope firing is
+// therefore verified by two complementary approaches:
+//   1. Return-value tests (run_tree): verify that block-scope defers do not
+//      corrupt the function return value and that no panic occurs.
+//   2. CLI output tests (regression_defer_block_scope.rs): verify the `prnt`
+//      side-effects fire the correct number of times by capturing stdout.
+
+/// A `defer prnt` inside a foreach loop body: return value is not corrupted.
+#[test]
+fn defer_in_foreach_return_value_unaffected() {
+    // Three iterations; defer fires prnt (side-effect only). Return must be 42.
+    let src = "f n:n>n\n  @i [1 2 3]{defer prnt i}\n  n\n";
+    let result = run_tree(src, "f", vec![Value::Number(42.0)]);
+    assert_eq!(result, Value::Number(42.0));
+}
+
+/// A `defer prnt` inside a forrange loop body: return value is not corrupted.
+#[test]
+fn defer_in_forrange_return_value_unaffected() {
+    let src = "f n:n>n\n  @i 0..4{defer prnt i}\n  n\n";
+    let result = run_tree(src, "f", vec![Value::Number(7.0)]);
+    assert_eq!(result, Value::Number(7.0));
+}
+
+/// A `defer prnt` inside an if branch: return value flows through unaffected.
+///
+/// The ternary `=x 1{then_body}{else_body}` form is used so both branches are
+/// testable.  In both cases the function return value is `x`.
+#[test]
+fn defer_in_if_return_value_unaffected() {
+    let src = "f x:n>n\n  =x 1{defer prnt x}{defer prnt x}\n  x\n";
+    let r1 = run_tree(src, "f", vec![Value::Number(1.0)]);
+    let r0 = run_tree(src, "f", vec![Value::Number(0.0)]);
+    assert_eq!(r1, Value::Number(1.0));
+    assert_eq!(r0, Value::Number(0.0));
+}
+
+/// A `defer prnt` inside a match arm: return value flows through unaffected.
+///
+/// Uses the inline match form `? x { pat: body; _: body }`.
+#[test]
+fn defer_in_match_arm_return_value_unaffected() {
+    // ? x { 1: {defer prnt x; x}; _: x }
+    let src = "f x:n>n\n  ? x {1:{defer prnt x;x};_:x}\n  x\n";
+    let r1 = run_tree(src, "f", vec![Value::Number(1.0)]);
+    let r2 = run_tree(src, "f", vec![Value::Number(2.0)]);
+    assert_eq!(r1, Value::Number(1.0));
+    assert_eq!(r2, Value::Number(2.0));
+}
+
+/// A `defer` inside a while body: return value not corrupted.
+#[test]
+fn defer_in_while_return_value_unaffected() {
+    let src = "f n:n>n\n  i=0\n  wh <i 3{i=+i 1;defer prnt i}\n  n\n";
+    let result = run_tree(src, "f", vec![Value::Number(5.0)]);
+    assert_eq!(result, Value::Number(5.0));
+}
