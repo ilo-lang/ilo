@@ -151,6 +151,12 @@ impl UsePredicate {
             "native" => Some(Self::Native),
             "test" => Some(Self::Test),
             _ => None,
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "wasm"   => Some(Self::Wasm),
+            "native" => Some(Self::Native),
+            "test"   => Some(Self::Test),
+            _        => None,
         }
     }
 }

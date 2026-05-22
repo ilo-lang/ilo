@@ -883,6 +883,7 @@ statement boundary; bind the chain to a local first. For example, split \
                         "ILO-P016",
                         "expected a predicate name (wasm/native/test) after `use ?`, got EOF"
                             .into(),
+                        "expected a predicate name (wasm/native/test) after `use ?`, got EOF".into(),
                     ));
                 }
             };
@@ -903,6 +904,7 @@ statement boundary; bind the chain to a local first. For example, split \
                     self.advance();
                     p
                 }
+                Some(Token::Text(p)) => { self.advance(); p }
                 Some(tok) => {
                     return Err(self.error(
                         "ILO-P016",
@@ -924,6 +926,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 Some(Token::Colon) => {
                     self.advance();
                 }
+                Some(Token::Colon) => { self.advance(); }
                 Some(tok) => {
                     return Err(self.error(
                         "ILO-P016",
@@ -939,6 +942,7 @@ statement boundary; bind the chain to a local first. For example, split \
                         format!(
                             "expected `:` after true-branch path in `use ?{pred_name}`, got EOF"
                         ),
+                        format!("expected `:` after true-branch path in `use ?{pred_name}`, got EOF"),
                     ));
                 }
             };
@@ -948,6 +952,7 @@ statement boundary; bind the chain to a local first. For example, split \
                     self.advance();
                     p
                 }
+                Some(Token::Text(p)) => { self.advance(); p }
                 Some(tok) => {
                     return Err(self.error(
                         "ILO-P016",
@@ -984,6 +989,10 @@ statement boundary; bind the chain to a local first. For example, split \
         // Detected by whether the next token is a string literal or an ident followed by `:`.
         // The special ident `re` triggers the re-export form; any other ident triggers the alias form.
         let (alias, path, reexport) = match self.peek().cloned() {
+        // Detect named-module form: `use alias:"path"` — ident immediately
+        // followed by `:` then a string literal.
+        // Distinguished from the plain form `use "path"` by the leading ident.
+        let (alias, path) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
                 // Plain form: `use "path"`
                 self.advance();
@@ -9568,6 +9577,7 @@ mod tests {
             alias,
             ..
         } = &prog.declarations[0]
+        let Decl::Use { path, alt_path, predicate, only, alias, .. } = &prog.declarations[0]
         else {
             panic!("expected Use, got {:?}", prog.declarations)
         };
@@ -9588,6 +9598,7 @@ mod tests {
             ..
         } = &prog.declarations[0]
         else {
+        let Decl::Use { predicate, path, alt_path, .. } = &prog.declarations[0] else {
             panic!("expected Use")
         };
         assert_eq!(*predicate, Some(UsePredicate::Native));
@@ -9611,6 +9622,7 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.code == "ILO-P016" && e.message.contains("unknown")),
+            errors.iter().any(|e| e.code == "ILO-P016" && e.message.contains("unknown")),
             "expected ILO-P016 unknown predicate, got: {errors:?}"
         );
     }

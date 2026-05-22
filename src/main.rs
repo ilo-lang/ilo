@@ -2685,6 +2685,13 @@ fn apply_only_filter(
                 .unwrap_or(false)
         })
         .collect()
+        match (self, pred) {
+            (BuildTarget::Wasm,   ast::UsePredicate::Wasm)   => true,
+            (BuildTarget::Native, ast::UsePredicate::Native) => true,
+            (BuildTarget::Test,   ast::UsePredicate::Test)   => true,
+            _ => false,
+        }
+    }
 }
 
 /// Resolve all `Decl::Use` nodes in `decls` recursively, returning a flat
@@ -2745,6 +2752,7 @@ fn resolve_imports_inner(
             span,
         } = decl
         {
+        if let ast::Decl::Use { path, only, alias, predicate, alt_path, span } = decl {
             // For conditional imports, select the right branch now.
             let path = if let Some(pred) = predicate {
                 if build_target.eval(pred) {
@@ -7374,6 +7382,7 @@ mod tests {
             &mut diags,
             BuildTarget::default(),
         );
+        let result = resolve_imports(vec![use_decl], None, &mut visited, &mut diags, BuildTarget::default());
         assert!(result.is_empty());
         assert!(diags.iter().any(|d| d.code == Some("ILO-P017")));
         assert!(diags[0].message.contains("inline code"));
@@ -7426,6 +7435,7 @@ mod tests {
             &mut diags,
             BuildTarget::default(),
         );
+        let result = resolve_imports(vec![func_decl], None, &mut visited, &mut diags, BuildTarget::default());
         assert_eq!(result.len(), 1);
         assert!(diags.is_empty());
     }
@@ -7706,6 +7716,7 @@ mod tests {
     #[test]
     fn resolve_imports_conditional_wasm_true_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
+        use std::io::Write;
         let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
         let native_path = "/tmp/ilo_cond_native_ILO399.ilo";
         std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
@@ -7740,6 +7751,8 @@ mod tests {
             !names.contains(&"native-fn"),
             "native-fn should not be imported"
         );
+        assert!(names.contains(&"wasm-fn"), "expected wasm-fn, got: {names:?}");
+        assert!(!names.contains(&"native-fn"), "native-fn should not be imported");
 
         std::fs::remove_file(wasm_path).ok();
         std::fs::remove_file(native_path).ok();
@@ -7837,6 +7850,8 @@ mod tests {
             !names.contains(&"wasm-fn"),
             "wasm-fn should not be imported"
         );
+        assert!(names.contains(&"native-fn"), "expected native-fn, got: {names:?}");
+        assert!(!names.contains(&"wasm-fn"), "wasm-fn should not be imported");
 
         std::fs::remove_file(wasm_path).ok();
         std::fs::remove_file(native_path).ok();
@@ -7925,6 +7940,7 @@ mod tests {
             names.contains(&"stub-fn"),
             "expected stub-fn, got: {names:?}"
         );
+        assert!(names.contains(&"stub-fn"), "expected stub-fn, got: {names:?}");
 
         std::fs::remove_file(stub_path).ok();
         std::fs::remove_file(real_path).ok();
@@ -9024,6 +9040,7 @@ mod tests {
             &mut diagnostics,
             BuildTarget::default(),
         );
+        let result = resolve_imports(decls, None, &mut visited, &mut diagnostics, BuildTarget::default());
         assert!(result.is_empty(), "should return no decls");
         assert!(!diagnostics.is_empty(), "should emit error");
         assert!(diagnostics[0].message.contains("file path context"));
@@ -9043,6 +9060,7 @@ mod tests {
             &mut diagnostics,
             BuildTarget::default(),
         );
+        let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics, BuildTarget::default());
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("nonexistent_file_xyz.ilo"));
@@ -9067,6 +9085,7 @@ mod tests {
             &mut diagnostics,
             BuildTarget::default(),
         );
+        let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics, BuildTarget::default());
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("circular"));
@@ -9089,6 +9108,7 @@ mod tests {
             &mut diagnostics,
             BuildTarget::default(),
         );
+        let _result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics, BuildTarget::default());
         assert!(!diagnostics.is_empty(), "should emit lex error diagnostic");
         std::fs::remove_file(path).ok();
     }
@@ -9117,6 +9137,7 @@ mod tests {
             &mut diagnostics,
             BuildTarget::default(),
         );
+        resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics, BuildTarget::default());
         assert!(!diagnostics.is_empty());
     }
 
