@@ -68,7 +68,13 @@ pub fn run_with_trace<F>(
 where
     F: FnMut(TraceEvent) + 'static,
 {
-    run_with_trace_opts(program, func_name, args, on_event, None::<fn(ExprTraceEvent)>)
+    run_with_trace_opts(
+        program,
+        func_name,
+        args,
+        on_event,
+        None::<fn(ExprTraceEvent)>,
+    )
 }
 
 /// Run `program` with per-statement and optional per-expression trace callbacks.
