@@ -7691,6 +7691,58 @@ mod tests {
         assert_eq!(r, Some(Value::Bool(true)));
     }
 
+    // ── ILO-387: Cranelift JIT regression tests for bounded generics ────────
+    // Generics are erased at compile time; the JIT sees monomorphic bytecode.
+    // These tests prove the JIT path executes bounded-generic functions correctly
+    // for each bound kind: comparable, numeric, and unbounded (any).
+
+    #[test]
+    fn cranelift_bounded_generic_comparable_min_numbers() {
+        // gmn<a:comparable>: lesser of two numbers.
+        let r = jit_run_numeric(
+            "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r",
+            "gmn",
+            &[7.0, 3.0],
+        );
+        assert_eq!(r, Some(3.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_comparable_max_numbers() {
+        // gmx<a:comparable>: greater of two numbers.
+        let r = jit_run_numeric(
+            "gmx<a:comparable> x:a y:a>a\n  r=x\n  <(x) y{r=y}\n  r",
+            "gmx",
+            &[3.0, 7.0],
+        );
+        assert_eq!(r, Some(7.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_numeric_add() {
+        // gadd<a:numeric>: generic addition.
+        let r = jit_run_numeric("gadd<a:numeric> x:a y:a>a;+x y", "gadd", &[10.0, 20.0]);
+        assert_eq!(r, Some(30.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_any_identity_number() {
+        // gid<a>: unbounded identity with numeric arg.
+        let r = jit_run_numeric("gid<a> x:a>a;x", "gid", &[42.0]);
+        assert_eq!(r, Some(42.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_any_identity_text() {
+        // gid<a>: unbounded identity with text arg.
+        let r = jit_run(
+            "gid<a> x:a>a;x",
+            "gid",
+            &[Value::Text(Arc::new("hello".to_string()))],
+        );
+        assert_eq!(r, Some(Value::Text(Arc::new("hello".to_string()))));
+    }
+
     // ── inline_chunk: CMPK_LT_N / CMPK_LE_N / CMPK_EQ_N / CMPK_NE_N arms ──
 
     #[test]

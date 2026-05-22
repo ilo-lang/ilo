@@ -16,7 +16,11 @@ fn run_src(src: &str) -> (String, bool) {
     let out = ilo().arg(src).output().expect("ilo binary not found");
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    let combined = if stderr.is_empty() { stdout } else { format!("{stdout}\n{stderr}") };
+    let combined = if stderr.is_empty() {
+        stdout
+    } else {
+        format!("{stdout}\n{stderr}")
+    };
     (combined, out.status.success())
 }
 
@@ -35,7 +39,11 @@ fn world_builtin_returns_world_type() {
 fn world_field_net() {
     let (out, ok) = run_src("main>b;w=world;w.net");
     assert!(ok, "w.net should succeed: {out}");
-    assert_eq!(out.trim_end_matches(|c: char| !c.is_alphanumeric()).trim(), "true", "net={out}");
+    assert_eq!(
+        out.trim_end_matches(|c: char| !c.is_alphanumeric()).trim(),
+        "true",
+        "net={out}"
+    );
 }
 
 #[test]

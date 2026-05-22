@@ -76,7 +76,12 @@ impl Value {
             Value::LazyStdinLines(_) => {
                 Err("stdin-lines iterator cannot be serialized".to_string())
             }
-            Value::World { net, read, write, run } => {
+            Value::World {
+                net,
+                read,
+                write,
+                run,
+            } => {
                 let mut map = serde_json::Map::with_capacity(4);
                 map.insert("net".to_string(), serde_json::Value::Bool(*net));
                 map.insert("read".to_string(), serde_json::Value::Bool(*read));

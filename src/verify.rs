@@ -29,7 +29,9 @@ pub enum Ty {
     /// - `None`        — dynamic (constructed via `world`, value is runtime-determined)
     /// - `Some(false)` — statically known to deny net (constructed via `world-no-net`)
     /// - `Some(true)`  — statically known to allow net (future use)
-    World { net_known: Option<bool> },
+    World {
+        net_known: Option<bool>,
+    },
     Unknown,
 }
 
@@ -3939,7 +3941,12 @@ fn builtin_check_args(
             // world-no-net > World — construct a World with net=false.
             // Statically known to deny network access; the verifier emits
             // ILO-T044 if this value flows into a scope that calls a net builtin.
-            (Ty::World { net_known: Some(false) }, errors)
+            (
+                Ty::World {
+                    net_known: Some(false),
+                },
+                errors,
+            )
         }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t
@@ -5458,12 +5465,27 @@ impl VerifyContext {
                     // dynamic worlds (world builtin, function parameters) are skipped.
                     if matches!(
                         callee.as_str(),
-                        "get" | "pst" | "put" | "pat" | "del" | "hed" | "opt"
-                            | "getx" | "pstx" | "get-many" | "get-to" | "pst-to"
+                        "get"
+                            | "pst"
+                            | "put"
+                            | "pat"
+                            | "del"
+                            | "hed"
+                            | "opt"
+                            | "getx"
+                            | "pstx"
+                            | "get-many"
+                            | "get-to"
+                            | "pst-to"
                     ) {
                         let net_denied_var = scope.iter().rev().find_map(|frame| {
                             frame.iter().find_map(|(name, ty)| {
-                                if matches!(ty, Ty::World { net_known: Some(false) }) {
+                                if matches!(
+                                    ty,
+                                    Ty::World {
+                                        net_known: Some(false)
+                                    }
+                                ) {
                                     Some(name.clone())
                                 } else {
                                     None
