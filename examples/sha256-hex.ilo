@@ -1,0 +1,34 @@
+-- sha256-hex / sha256d: raw-bytes SHA-256 hashing (ILO-383).
+--
+-- `sha256-hex hex:t > t` — hex-decode the input, return SHA-256 digest as
+--   lowercase hex. Use when you need to hash binary data represented as hex
+--   (e.g. decoded keys, binary wire formats, Bitcoin script pushdata).
+-- `sha256d hex:t > t` — double-SHA256 (Bitcoin Merkle protocol shape):
+--   sha256(sha256(x)) over hex-decoded bytes. Returns lowercase hex digest.
+--
+-- Both error (ILO-T013) on odd-length or non-hex input.
+
+-- sha256-hex of "abc" bytes (hex "616263"). NIST FIPS-180 anchor vector:
+-- the same digest as `sha256 "abc"` but reached via hex-decode, proving
+-- the raw-bytes path is consistent with the UTF-8 path for ASCII inputs.
+hex-abc>t;sha256-hex "616263"
+
+-- sha256-hex of empty bytes (even-length empty string is valid hex).
+hex-empty>t;sha256-hex ""
+
+-- sha256d of "abc" bytes — double-SHA256, Bitcoin Merkle tree shape.
+-- sha256(sha256("abc")) where "abc" is the raw byte sequence 0x61 0x62 0x63.
+dbl-abc>t;sha256d "616263"
+
+-- sha256-hex composition: sha256-hex applied twice equals sha256d.
+-- Both must produce identical output for the same input.
+compose-check>b;= (sha256d "deadbeef") (sha256-hex (sha256-hex "deadbeef"))
+
+-- run: hex-abc
+-- out: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+-- run: hex-empty
+-- out: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-- run: dbl-abc
+-- out: 4f8b42c22dd3729b519ba6f68d2da7cc5b2d606d05daed5ad5128cc03e6c6358
+-- run: compose-check
+-- out: true

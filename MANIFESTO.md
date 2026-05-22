@@ -18,7 +18,7 @@ Total cost = spec loading + generation + context loading + error feedback + retr
 
 Every design decision is evaluated against this number. If a feature reduces it, it's in. If it increases it, it's out. No exceptions for elegance, readability, or convention. Note: until agents are trained on ilo, spec clarity is itself a token cost - a confusing spec means more retries. Some decisions that look like "readability" concessions are actually optimising the spec-loading term.
 
-## The Five Principles
+## The Six Principles
 
 ### 1. Token-Conservative
 
@@ -69,6 +69,10 @@ When an agent generates the next token, how many valid options are there? Fewer 
 **What the agent cares about:** "At each generation step, how many valid tokens are there?"
 **How this helps:** The language becomes a set of rails. Constrained generation can feed valid next-token sets back to the agent, making it *impossible* to generate invalid code.
 
+**On stdlib depth — acknowledged tension, not a contradiction.** "Small vocabulary" and "closed world" are real constraints, but they trade against a competing pressure: *stdlib depth*. Agents working on non-trivial tasks reach for common operations — byte-reversal, pairwise iteration, quantile aggregation, multi-key lookups — and when the builtin doesn't exist they hand-roll a workaround. That workaround costs tokens (typically 40–100 extra) and introduces surface area for errors, exactly what the Constrained principle is meant to prevent. The honest read: a vocabulary that is *too* small forces agents to reinvent primitives, which is its own form of unconstrained generation.
+
+The resolution is a decision criterion rather than a blanket policy. A new builtin is warranted when: **(a)** it appears as a hand-rolled workaround in **≥ 3 independent persona transcripts**, **(b)** each workaround costs **> 40 tokens** to express, and **(c)** there is no composition of existing builtins that reduces the workaround below that threshold. Below that bar, user code is the right home. Above it, adding the builtin reduces total token cost — consistent with the Constrained principle's own logic. Gaps that cross the threshold are tracked in [`persona-runs/ab-shared-issues.md`](persona-runs/ab-shared-issues.md); new proposals should be triaged against these criteria rather than argued on intuition. **The principle remains: the builtin set is closed and small. What changes is the explicit acknowledgement that "small" is a measurement outcome, not a fixed number, and that the measurement is grounded in dogfood data.**
+
 ### 3. Self-Contained
 
 Each unit carries its own context: deps, types, rules.
@@ -113,6 +117,28 @@ Writing code costs the same tokens regardless of program size. But *reading* cod
 
 **What the agent cares about:** "How much do I need to read before I can write?"
 **How this helps:** The agent loads the target function's source, its dependencies' signatures, and the types it references - nothing more. As programs grow, the savings compound: the subgraph stays small even as the program gets large.
+
+### 6. Structured Compiler-to-Agent Surface
+
+Every path from the compiler to an agent is machine-readable by default.
+
+Diagnostics, AST output, call graphs, fix plans, skill content, size reports — all of it ships as structured JSON. Not as an optional flag you might forget to pass, but as the default contract. Prose output exists for human TTYs; JSON is the agent path.
+
+The concrete commitments:
+
+- Every CLI subcommand has a `--json` mode. An agent driving `ilo check`, `ilo graph`, `ilo bench`, or any other subcommand gets a typed, parseable response with no screen-scraping.
+- Every emitted artifact carries a stable `schemaVersion` field. Schemas evolve; the version field lets agents detect and adapt to changes rather than silently misparse them.
+- Every diagnostic carries machine-readable fields: error code, source span, candidate fixes, and related locations. An agent reading a diagnostic knows exactly what went wrong, where it went wrong, and what to try next — without parsing human prose.
+- Fix plans are typed ([ILO-360](https://linear.app/ilo-lang/issue/ILO-360/typed-fix-plans-fixsafety-taxonomy-phase-2)): each suggested repair carries a `FixSafety` classification so the agent can decide autonomously whether to apply it.
+- Golden diagnostics and provenance matrices are structured ([ILO-363](https://linear.app/ilo-lang/issue/ILO-363/provenance-matrix-golden-file-diagnostics-phase-4)): regression tests compare JSON, not text, so the error contract is explicit and auditable.
+- Closed-loop benchmarks emit structured cost tables ([ILO-364](https://linear.app/ilo-lang/issue/ILO-364/closed-loop-benchmark-ilo-vs-zero-per-task-economics-phase-5)): token cost per task, per phase, per engine — queryable, not just printable.
+
+This principle is downstream of Constrained — a closed-world verifier is what makes deterministic, schema-stable output possible — but it earns its own line because the structured-output discipline is the single biggest driver of per-task cost reduction in cached steady-state. When an agent can parse one JSON response instead of retrying after a misread prose error, that saves more tokens than any syntax decision. Per the economics analysis in `zero-gap-specs/lessons-from-zero.md`, tooling structure dominates the steady-state cost table.
+
+The corollary: future CLI surface additions ship `--json` from day one, not as a follow-up. Structured output is not polish — it is load-bearing.
+
+**What the agent cares about:** "Can I parse the compiler's response without writing a regex?"
+**How this helps:** Zero screen-scraping, zero retry cycles caused by format ambiguity. The agent reads typed JSON, acts on it, and moves on.
 
 ## Principles We Considered and Dropped
 

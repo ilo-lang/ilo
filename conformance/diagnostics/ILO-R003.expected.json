@@ -1,0 +1,7 @@
+{
+  "code": "ILO-R003",
+  "long": "## ILO-R003: division by zero\n\nA division operation (`/`) was performed with a zero divisor.\n\n**Fix:** check that the divisor is non-zero before dividing.\n",
+  "phase": "runtime",
+  "schemaVersion": 1,
+  "short": "division by zero"
+}

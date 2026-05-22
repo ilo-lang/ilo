@@ -630,6 +630,8 @@ Called like functions, compiled to dedicated opcodes.
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `sha256-hex h` | SHA-256 of hex-decoded bytes of `h`, lowercase hex (64 chars). Errors (ILO-R009) on odd-length or non-hex input. Use for raw-binary hashing (wire formats, key material, Bitcoin scripts). | `t` |
+| `sha256d h` | double-SHA256 of hex-decoded bytes (`sha256(sha256(h))`), lowercase hex. Bitcoin Merkle protocol shape. Errors (ILO-R009) on odd-length or non-hex input. | `t` |
 | `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
 | `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
@@ -1167,9 +1169,13 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 
 ### Crypto primitives
 
-`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+`sha256`, `sha256-hex`, `sha256d`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, Bitcoin Merkle tree computation, and any time a secret is compared to a known value. All are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
 
 `sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`sha256-hex h > t` decodes `h` as a hex string and returns the SHA-256 digest of the raw bytes as lowercase hex (64 chars). Use when you need to hash binary data that is represented in hex — wire format keys, Bitcoin script pushdata, arbitrary byte sequences. Errors (ILO-R009) on odd-length or non-hex input. For ASCII input, `sha256-hex (hex s)` agrees with `sha256 s`.
+
+`sha256d h > t` applies double-SHA256 (`sha256(sha256(h))`) over the hex-decoded bytes of `h`, returning lowercase hex. This is the Bitcoin Merkle tree protocol shape: pairs of 32-byte txids are concatenated and double-hashed to produce each parent node. Errors (ILO-R009) on odd-length or non-hex input. `sha256d h` is exactly `sha256-hex (sha256-hex h)` but provided as a named builtin because the double-hash pattern is idiomatic in crypto protocols and the composition is easy to transpose incorrectly.
 
 `hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
 
@@ -1193,9 +1199,15 @@ b64-dec! "TWE="                          -- "Ma"
 
 -- Hex encode
 hex "abc"                                -- "616263"
+
+-- Raw-bytes SHA-256 (same result as sha256 for ASCII input)
+sha256-hex "616263"                      -- ba7816...15ad (= sha256 "abc")
+
+-- Bitcoin Merkle root of two txids (internal byte order, concatenated)
+sha256d (+ tx1 tx2)                      -- double-SHA256 of the 64-byte pair
 ```
 
-`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; `sha256-hex` and `sha256d` raise ILO-R009 on invalid hex; the remaining encoders and `ct-eq` are total.
 
 ---
 
@@ -1706,28 +1718,46 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 Split programs across files with `use`:
 
 ```
-use "path/to/file.ilo"         -- import all declarations
-use "path/to/file.ilo" [name1 name2]  -- import only named declarations
+use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
+use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
 ```
 
-All imported declarations merge into a flat shared namespace - no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+**Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
+
+**Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
+
+**Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
 
 ```
--- math.ilo
+-- math-lib.ilo
+_internal-helper n:n>n; +n 0   -- private — excluded from alias imports
 dbl n:n>n; *n 2
 half n:n>n; /n 2
 
 -- main.ilo
-use "math.ilo"
-run n:n>n; dbl! half n
+use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
+use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
+run n:n>n; m-dbl! half n
 ```
+
+### Module privacy
+
+Declarations whose name starts with `_` (underscore, immediately adjacent, e.g. `_helper`) are module-private:
+
+- **Excluded** from named-module imports (`use alias:"path"`) — not prefixed and not available to the importer.
+- **Blocked** in selective imports (`use "path" [_name]`) — requesting a private name is ILO-P019.
+- **Visible** in flat imports (`use "path"`) — they merge into the shared namespace as a convention; the importer can call them, but they are not considered part of the public API.
+
+Declaring a private function: `_helper-name params:type > return-type; body`
 
 ### Rules
 
 - Path is relative to the importing file's directory
 - Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
 - Circular imports are an error (`ILO-P018`)
-- Scoped import with unknown name: `ILO-P019`
+- Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
 ### Error codes

@@ -37,6 +37,22 @@ fn effective_max_ast_depth() -> usize {
     if v == 0 { DEFAULT_MAX_AST_DEPTH } else { v }
 }
 
+/// Transient parsing-mode flags that must be saved and restored whenever the
+/// parser descends into a syntactically isolated sub-expression (list elements,
+/// parenthesised groups, inline-lambda bodies, paren-form call argument lists).
+///
+/// All fields default to `false` / their "outermost scope" value.  Use
+/// `Parser::push_ctx` to snapshot the current context, mutate it for a
+/// sub-parse, and `Parser::pop_ctx` (or the return value of `push_ctx`) to
+/// restore the previous state.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ParseContext {
+    /// When true, an Ident followed by another whitespace-separated atom is
+    /// parsed as a bare Ref (list element) rather than a function call.
+    /// Set only inside list-literal element parsing.
+    pub no_whitespace_call: bool,
+}
+
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
@@ -68,10 +84,9 @@ pub struct Parser {
     /// For each known function, the ordered parameter names. Used to resolve
     /// labelled args (`label:value`) to their positional index at parse time.
     fn_param_names: HashMap<String, Vec<String>>,
-    /// When true, an Ident followed by another whitespace-separated atom is
-    /// parsed as a bare Ref (list element) rather than a function call.
-    /// Set only inside list-literal element parsing.
-    no_whitespace_call: bool,
+    /// Transient parsing-mode flags. Saved/restored via `push_ctx`/`pop_ctx`
+    /// whenever the parser enters a syntactically isolated sub-expression.
+    ctx: ParseContext,
     /// Synthetic top-level decls emitted by inline-lambda lifting. Appended to
     /// `Program.declarations` after the main parse. Each inline lambda
     /// `(p:t>r;body)` becomes a `Decl::Function { name: "__lit_N", ... }` here
@@ -147,7 +162,7 @@ impl Parser {
             fn_arity,
             fn_param_is_fn,
             fn_param_names,
-            no_whitespace_call: false,
+            ctx: ParseContext::default(),
             lifted_decls: Vec::new(),
             lambda_counter: 0,
             parse_failed_fns: HashMap::new(),
@@ -183,6 +198,28 @@ impl Parser {
         if self.depth > 0 {
             self.depth -= 1;
         }
+    }
+
+    /// Snapshot the current [`ParseContext`], apply `f` to mutate it for a
+    /// sub-parse scope, and return the saved snapshot.  Restore it afterwards
+    /// with [`pop_ctx`][Self::pop_ctx].
+    ///
+    /// ```ignore
+    /// let saved = self.push_ctx(|c| c.no_whitespace_call = true);
+    /// let result = self.parse_something();
+    /// self.pop_ctx(saved);
+    /// ```
+    #[inline]
+    fn push_ctx(&mut self, f: impl FnOnce(&mut ParseContext)) -> ParseContext {
+        let saved = self.ctx;
+        f(&mut self.ctx);
+        saved
+    }
+
+    /// Restore a [`ParseContext`] previously saved by [`push_ctx`][Self::push_ctx].
+    #[inline]
+    fn pop_ctx(&mut self, saved: ParseContext) {
+        self.ctx = saved;
     }
 
     /// Returns `Some(span)` if an unindented newline (top-level declaration
@@ -341,6 +378,32 @@ impl Parser {
             }
             None => Err(self.error("ILO-P006", "expected identifier, got EOF".into())),
         }
+    }
+
+    /// Like `expect_ident` but also accepts `_ ident` (underscore immediately
+    /// followed by an identifier) as a single `"_name"` declaration name.
+    /// Used for function/type/tool names to support the module-private `_foo`
+    /// naming convention. Regular identifiers are accepted unchanged.
+    fn expect_decl_name(&mut self) -> Result<String> {
+        if self.peek() == Some(&Token::Underscore) {
+            // Peek ahead: `_` immediately adjacent to an Ident = module-private name.
+            if let Some(Token::Ident(name)) = self.token_at(self.pos + 1).cloned() {
+                let us_end = self.tokens[self.pos].1.end;
+                let id_start = self.tokens[self.pos + 1].1.start;
+                if us_end == id_start {
+                    self.advance(); // consume `_`
+                    self.advance(); // consume ident
+                    return Ok(format!("_{}", name));
+                }
+            }
+            return Err(self.error(
+                "ILO-P016",
+                "expected identifier after `_` in declaration name; \
+                 `_name` (no space) marks a module-private declaration"
+                    .into(),
+            ));
+        }
+        self.expect_ident()
     }
 
     fn error(&self, code: &'static str, message: String) -> ParseError {
@@ -669,6 +732,14 @@ impl Parser {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
             Some(Token::Use) => self.parse_use_decl(),
+            // `_ident` (adjacent, no whitespace) — module-private declaration name
+            Some(Token::Underscore)
+                if matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+                    && self.pos + 1 < self.tokens.len()
+                    && self.tokens[self.pos].1.end == self.tokens[self.pos + 1].1.start =>
+            {
+                self.parse_fn_decl()
+            }
             Some(Token::Ident(_)) => {
                 // Check for keywords from other languages before attempting fn parse
                 let ident_str = match self.peek() {
@@ -696,6 +767,40 @@ impl Parser {
                     );
                     err.hint = Some(hint_msg);
                     return Err(err);
+                }
+                // Detect an orphaned identifier at a statement boundary — the
+                // identifier is followed immediately by `;`, `}`, or EOF with no
+                // `>` or params, so it cannot possibly be a function declaration.
+                // This pattern occurs when a prefix-binop chain is mis-grouped:
+                // e.g. `*/dt 1 6 ref` parses as `*(/ dt 1) 6`, leaving `ref`
+                // orphaned at top-level where the parser tries and fails to read
+                // it as a new function.  The resulting ILO-P003 "expected '>', got
+                // ';'" anchors on the `;` which is far from the real problem.
+                // Surface a pointed hint here instead, anchored on the orphaned
+                // identifier itself (the closest correct position we have without
+                // threading the prefix-op span through the whole parse path).
+                // Only fire when there is at least one previously-consumed token
+                // (`self.pos > 0`).  A lone identifier at position 0 followed by
+                // EOF is a genuinely incomplete function declaration (no header at
+                // all) and must fall through to `parse_fn_decl` which emits the
+                // more informative ILO-P020 "incomplete function header".
+                if self.pos > 0
+                    && matches!(
+                        self.token_at(self.pos + 1),
+                        None | Some(Token::Semi) | Some(Token::Newline) | Some(Token::RBrace)
+                    )
+                {
+                    return Err(self.error_hint(
+                        "ILO-P003",
+                        format!(
+                            "`{ident_str}` appears at a statement boundary without a \
+function header — it looks like a prefix-binop chain consumed one too few operands"
+                        ),
+                        "this looks like a prefix-binop chain whose right operand is at \
+statement boundary; bind the chain to a local first. For example, split \
+`*/a b c d` into `t=/a b c;*t d`."
+                            .to_string(),
+                    ));
                 }
                 self.parse_fn_decl()
             }
@@ -742,10 +847,60 @@ impl Parser {
     fn parse_use_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Use)?;
-        let path = match self.peek().cloned() {
+
+        // Detect named-module form: `use alias:"path"` — ident immediately
+        // followed by `:` then a string literal.
+        // Distinguished from the plain form `use "path"` by the leading ident.
+        let (alias, path) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
+                // Plain form: `use "path"`
                 self.advance();
-                p
+                (None, p)
+            }
+            Some(Token::Ident(a)) => {
+                // Peek ahead: must be followed by Colon then Text.
+                self.advance(); // consume ident
+                match self.peek().cloned() {
+                    Some(Token::Colon) => {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Text(p)) => {
+                                self.advance();
+                                (Some(a), p)
+                            }
+                            Some(tok) => {
+                                return Err(self.error(
+                                    "ILO-P016",
+                                    format!(
+                                        "expected a string path after `use alias:`, got {}",
+                                        tok.user_facing_name()
+                                    ),
+                                ));
+                            }
+                            None => {
+                                return Err(self.error(
+                                    "ILO-P016",
+                                    "expected a string path after `use alias:`, got EOF".into(),
+                                ));
+                            }
+                        }
+                    }
+                    Some(tok) => {
+                        return Err(self.error(
+                            "ILO-P016",
+                            format!(
+                                "expected `:` after module alias in `use`, got {}",
+                                tok.user_facing_name()
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Err(self.error(
+                            "ILO-P016",
+                            "expected `:` after module alias in `use`, got EOF".into(),
+                        ));
+                    }
+                }
             }
             Some(tok) => {
                 return Err(self.error(
@@ -764,8 +919,16 @@ impl Parser {
             }
         };
 
-        // Optional `[name1 name2 ...]` scoped import list
+        // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
         let only = if self.peek() == Some(&Token::LBracket) {
+            if alias.is_some() {
+                return Err(self.error(
+                    "ILO-P016",
+                    "named-module import (`use alias:\"path\"`) cannot be combined with `[...]` \
+                     selective import — omit the alias or the bracket list"
+                        .into(),
+                ));
+            }
             self.advance(); // consume `[`
             let mut names = Vec::new();
             while self.peek() != Some(&Token::RBracket) {
@@ -792,6 +955,7 @@ impl Parser {
         Ok(Decl::Use {
             path,
             only,
+            alias,
             span: start.merge(end),
         })
     }
@@ -800,7 +964,7 @@ impl Parser {
     fn parse_type_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Type)?;
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -879,7 +1043,7 @@ impl Parser {
         let start = self.peek_span();
         // consume the `alias` identifier
         self.advance();
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         let target = self.parse_type()?;
         let end = self.prev_span();
         Ok(Decl::Alias {
@@ -892,7 +1056,7 @@ impl Parser {
     /// `name params>return;body`
     fn parse_fn_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         // Reject user functions whose name collides with a builtin. Without this
         // the verifier's call-dispatch (which checks `is_builtin` before user
         // `self.functions`) would silently shadow the user function and report
@@ -974,7 +1138,12 @@ impl Parser {
         //       the dense single-line workaround they've been settling for.
         // Skip the brace-block path when the leading `{` is a destructure
         // pattern (`f p:pt>n;{x}=p;...`) — that's a statement, not a wrap.
-        let body = if self.peek() == Some(&Token::LBrace) && !self.is_destructure_pattern() {
+        // Also skip when it looks like an anonymous record literal `{field:val ...}`:
+        // that's a return-expression, not a brace-wrapped body.
+        let body = if self.peek() == Some(&Token::LBrace)
+            && !self.is_destructure_pattern()
+            && !self.is_anon_record_literal()
+        {
             self.parse_brace_body_or_record(&name)?
         } else {
             self.parse_body_or_record(&name)?
@@ -1118,8 +1287,7 @@ impl Parser {
         self.expect(&Token::LParen)?;
         // Restore normal whitespace-call mode inside the parens so that
         // postfix calls inside args (`spl(row, ",")`) still parse correctly.
-        let prev_no_ws = self.no_whitespace_call;
-        self.no_whitespace_call = false;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
         let mut args: Vec<Expr> = Vec::new();
         let mut has_labelled = false;
         let mut labelled_pairs: Vec<(String, Expr)> = Vec::new();
@@ -1185,7 +1353,7 @@ impl Parser {
                 }
             }
         }
-        self.no_whitespace_call = prev_no_ws;
+        self.pop_ctx(saved_ctx);
         self.expect(&Token::RParen)?;
 
         // If we collected labelled args, resolve them using fn_name
@@ -2385,11 +2553,19 @@ impl Parser {
         if self.peek() == Some(&Token::DotDot) {
             self.advance(); // consume ..
             let end_expr = self.parse_expr_inner()?;
+            // Optional `by <step>` clause: `@i 0..n by 2{...}`
+            let step_expr = if self.peek() == Some(&Token::By) {
+                self.advance(); // consume `by`
+                Some(self.parse_expr_inner()?)
+            } else {
+                None
+            };
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
                 start: start_expr,
                 end: end_expr,
+                step: step_expr,
                 body,
             });
         }
@@ -2701,10 +2877,9 @@ impl Parser {
     /// inside whitespace-list elements still work via parens (`[(f x) y]`
     /// or `[f(x) y]`) — the flag is cleared on paren entry.
     fn parse_list_element(&mut self) -> Result<Expr> {
-        let prev = self.no_whitespace_call;
-        self.no_whitespace_call = true;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = true);
         let result = self.parse_list_element_call_ok();
-        self.no_whitespace_call = prev;
+        self.pop_ctx(saved_ctx);
         result
     }
 
@@ -3547,7 +3722,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             // would parse as `at(xs, 0, at, xs, 2)` (5 args) instead of two
             // calls. Mirroring `parse_call_arg`'s `for i in 0..arity` keeps
             // each list element to a single capped call.
-            if self.no_whitespace_call {
+            if self.ctx.no_whitespace_call {
                 let arity = self.fn_arity.get(&name).copied().unwrap_or(0);
                 if arity == 0 || !self.can_start_operand() {
                     // Diagnostic-only fix for list-literal call traps: variadic
@@ -3830,6 +4005,41 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             fields.push((fname, value));
         }
         Ok(Expr::Record { type_name, fields })
+    }
+
+    /// Lookahead: does `{` start an anonymous record literal?
+    ///
+    /// Returns true when the token stream looks like `{ ident : ...` — i.e.
+    /// the first token inside the braces is an identifier immediately followed
+    /// by a colon. This is unambiguous: a destructure pattern `{a;b}=` uses
+    /// semicolons, a match/guard body block never starts with `ident:`, and
+    /// the existing map-literal friendly-error fires only on text/number heads.
+    fn is_anon_record_literal(&self) -> bool {
+        // Current token must be `{`; pos+1 is the first field name; pos+2 is `:`.
+        self.peek() == Some(&Token::LBrace)
+            && matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+            && self.token_at(self.pos + 2) == Some(&Token::Colon)
+    }
+
+    /// Parse the body of an anonymous record literal (after `{` has been consumed).
+    ///
+    /// Grammar: `ident:atom (ident:atom)*` then expects `}` from caller.
+    fn parse_anon_record_body(&mut self) -> Result<Expr> {
+        let mut fields = Vec::new();
+        while self.is_named_field_ahead() {
+            let fname = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let value = self.parse_atom()?;
+            fields.push((fname, value));
+        }
+        if fields.is_empty() {
+            return Err(self.error_hint(
+                "ILO-P009",
+                "anonymous record literal `{...}` must have at least one field".into(),
+                "use `{field:value}` syntax, e.g. `{name:\"alice\" age:30}`".into(),
+            ));
+        }
+        Ok(Expr::AnonRecord { fields })
     }
 
     /// Lookahead: does the token at `pos` start a prefix binary operator
@@ -4141,6 +4351,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
 
     /// Can the current token start an atom?
     fn can_start_atom(&self) -> bool {
+        // Anonymous record literal `{field:val ...}` is also a valid atom start.
+        if self.is_anon_record_literal() {
+            return true;
+        }
         matches!(
             self.peek(),
             Some(Token::Ident(_))
@@ -4317,6 +4531,20 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 Ok(Expr::Literal(Literal::Nil))
             }
             Some(Token::Underscore) => {
+                // `_ident` (no whitespace between `_` and the following ident) →
+                // reference to a module-private declaration. Only fuse when the
+                // underscore is immediately adjacent to the next token (sharing a
+                // boundary), matching how declaration names are parsed.
+                // Otherwise, bare `_` remains the unit/nil-discard reference.
+                if let Some(Token::Ident(name)) = self.token_at(self.pos + 1).cloned() {
+                    let us_end = self.tokens[self.pos].1.end;
+                    let id_start = self.tokens[self.pos + 1].1.start;
+                    if us_end == id_start {
+                        self.advance(); // consume `_`
+                        self.advance(); // consume ident
+                        return Ok(Expr::Ref(format!("_{}", name)));
+                    }
+                }
                 self.advance();
                 Ok(Expr::Ref("_".to_string()))
             }
@@ -4333,10 +4561,9 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.advance();
                 // Parenthesised expressions are self-contained — restore
                 // normal whitespace-call behaviour inside.
-                let prev = self.no_whitespace_call;
-                self.no_whitespace_call = false;
+                let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
                 let expr = self.parse_expr();
-                self.no_whitespace_call = prev;
+                self.pop_ctx(saved_ctx);
                 let expr = expr?;
                 self.expect(&Token::RParen)?;
                 // Field access chain on a parenthesised expression:
@@ -4384,6 +4611,13 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::List(items))
+            }
+            Some(Token::LBrace) if self.is_anon_record_literal() => {
+                self.advance(); // consume `{`
+                let expr = self.parse_anon_record_body()?;
+                self.expect(&Token::RBrace)?;
+                let expr = self.parse_field_chain(expr, None)?;
+                Ok(expr)
             }
             Some(Token::Ident(name)) => {
                 self.advance();
@@ -4619,8 +4853,7 @@ For variable-position list indexing bind the head first: \
         let start = self.peek_span();
         self.expect(&Token::LParen)?;
         // Parens are self-contained; reset whitespace-call mode inside.
-        let prev_no_ws = self.no_whitespace_call;
-        self.no_whitespace_call = false;
+        let saved_ctx = self.push_ctx(|c| c.no_whitespace_call = false);
         let params = self.parse_params()?;
         self.expect(&Token::Greater)?;
         let return_type = self.parse_type()?;
@@ -4633,7 +4866,7 @@ For variable-position list indexing bind the head first: \
         // `)` as part of normal at-body-end logic — instead, parse a
         // semicolon-separated sequence that terminates on RParen.
         let body = self.parse_lambda_body()?;
-        self.no_whitespace_call = prev_no_ws;
+        self.pop_ctx(saved_ctx);
         let end = self.peek_span();
         // If the body completed but the next token is an Ident, the body
         // greedily consumed a prefix-call (`+a kc`) and the remaining
@@ -4795,10 +5028,14 @@ For variable-position list indexing bind the head first: \
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 self.collect_free_in_expr(start, params, local, free);
                 self.collect_free_in_expr(end, params, local, free);
+                if let Some(st) = step {
+                    self.collect_free_in_expr(st, params, local, free);
+                }
                 let depth = local.len();
                 local.push(binding.clone());
                 for s in body {
@@ -4882,7 +5119,7 @@ For variable-position list indexing bind the head first: \
                     self.collect_free_in_expr(i, params, local, free);
                 }
             }
-            Expr::Record { fields, .. } => {
+            Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
                 for (_, v) in fields {
                     self.collect_free_in_expr(v, params, local, free);
                 }
@@ -8498,6 +8735,76 @@ mod tests {
             "got: {:?}",
             errors
         );
+    }
+
+    #[test]
+    fn parse_use_named_module_alias() {
+        let prog = parse_str(r#"use m:"lib.ilo""#);
+        let Decl::Use {
+            path, only, alias, ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "lib.ilo");
+        assert!(only.is_none());
+        assert_eq!(alias.as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn parse_use_named_module_alias_longer() {
+        let prog = parse_str(r#"use math:"math-lib.ilo""#);
+        let Decl::Use { path, alias, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "math-lib.ilo");
+        assert_eq!(alias.as_deref(), Some("math"));
+    }
+
+    #[test]
+    fn parse_use_named_module_rejects_bracket_combo() {
+        let (_, errors) = parse_str_errors(r#"use m:"lib.ilo" [foo]"#);
+        assert!(
+            !errors.is_empty(),
+            "expected error combining alias and bracket"
+        );
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P016"),
+            "expected ILO-P016: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_private_fn_decl() {
+        let prog = parse_str("_helper n:n>n;+n 1");
+        let Decl::Function { name, .. } = &prog.declarations[0] else {
+            panic!("expected Function, got {:?}", prog.declarations)
+        };
+        assert_eq!(name, "_helper");
+    }
+
+    #[test]
+    fn parse_private_fn_decl_hyphenated() {
+        let prog = parse_str("_do-thing n:n>n;+n 0");
+        let Decl::Function { name, .. } = &prog.declarations[0] else {
+            panic!("expected Function")
+        };
+        assert_eq!(name, "_do-thing");
+    }
+
+    #[test]
+    fn parse_private_fn_call_in_body() {
+        // `_helper` as a call in a body should parse as Expr::Call("_helper", ...)
+        let prog = parse_str("main n:n>n;_helper n");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected Function")
+        };
+        let last = body.last().expect("body not empty");
+        if let Stmt::Expr(Expr::Call { function, .. }) = &last.node {
+            assert_eq!(function, "_helper");
+        } else {
+            panic!("expected call to _helper, got {last:?}");
+        }
     }
 
     // --- alias declaration ---
