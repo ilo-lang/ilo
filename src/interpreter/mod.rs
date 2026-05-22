@@ -4303,9 +4303,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 };
                 Ok(Value::Text(Arc::new(s)))
             }
+            Value::Text(_) => Ok(args[0].clone()),
             other => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("str requires a number, got {:?}", other),
+                format!("str requires a number or text, got {:?}", other),
             )),
         };
     }
@@ -10895,12 +10896,13 @@ mod tests {
 
     #[test]
     fn err_str_wrong_type() {
+        // str now accepts text (identity) and number; bool triggers the error
         let err = run_str_err(
-            r#"f x:t>t;str x"#,
+            r#"f x:_ >t;str x"#,
             Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
+            vec![Value::Bool(true)],
         );
-        assert!(err.contains("str requires a number"));
+        assert!(err.contains("str requires"));
     }
 
     #[test]

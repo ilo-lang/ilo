@@ -10679,16 +10679,21 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
-                    if !v.is_number() {
-                        vm_err!(VmError::Type("str requires a number"));
-                    }
-                    let n = v.as_number();
-                    let s = if n.fract() == 0.0 && n.abs() < 1e15 {
-                        format!("{}", n as i64)
+                    if v.is_string() {
+                        // identity passthrough — text in, same text out
+                        v.clone_rc();
+                        reg_set!(a, v);
+                    } else if v.is_number() {
+                        let n = v.as_number();
+                        let s = if n.fract() == 0.0 && n.abs() < 1e15 {
+                            format!("{}", n as i64)
+                        } else {
+                            format!("{}", n)
+                        };
+                        reg_set!(a, NanVal::heap_string(s));
                     } else {
-                        format!("{}", n)
-                    };
-                    reg_set!(a, NanVal::heap_string(s));
+                        vm_err!(VmError::Type("str requires a number or text"));
+                    }
                 }
                 OP_NUM => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -14745,8 +14750,12 @@ pub(crate) extern "C" fn jit_len(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_str(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
+    if v.is_string() {
+        // identity passthrough — text in, same text out
+        return v.0;
+    }
     if !v.is_number() {
-        jit_set_runtime_error_with_span(VmError::Type("str requires a number"), span_bits);
+        jit_set_runtime_error_with_span(VmError::Type("str requires a number or text"), span_bits);
         return TAG_NIL;
     }
     let n = v.as_number();
@@ -22442,14 +22451,18 @@ mod tests {
     }
 
     #[test]
-    fn vm_str_non_number_type_error() {
-        // OP_STR on text → L1903 ("str requires a number")
+    fn vm_str_text_passthrough() {
+        // OP_STR on text is identity — returns the same string unchanged
         let source = "f x:t>t;str x";
-        let err = vm_run_err(
-            source,
-            Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
-        );
+        let result = vm_run(source, Some("f"), vec![Value::Text(Arc::new("hello".to_string()))]);
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
+    }
+
+    #[test]
+    fn vm_str_non_text_non_number_type_error() {
+        // OP_STR on a non-text, non-number type → runtime error via VM path.
+        // Bypass the verifier by using `_` param type so the VM sees a bool.
+        let err = vm_run_err("f x:_ >t;str x", Some("f"), vec![Value::Bool(true)]);
         assert!(err.contains("str"), "got: {err}");
     }
 
@@ -25933,7 +25946,19 @@ mod tests {
         }
 
         #[test]
-        fn jit_str_non_number_signals_runtime_error() {
+        fn jit_str_text_passthrough() {
+            let input = NanVal::heap_string("hello".to_string());
+            let r = jit_str(input.0, 0);
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.as_str(), "hello");
+        }
+
+        #[test]
+        fn jit_str_non_number_non_text_signals_runtime_error() {
             let _ = jit_take_runtime_error();
             let r = jit_str(TAG_NIL, 0);
             assert!(is_nil(r));
@@ -30199,10 +30224,11 @@ mod tests {
 
     #[test]
     fn vm_err_str_wrong_type() {
+        // str now accepts text (identity) and number; bool triggers the error
         let err = vm_run_err(
-            r#"f x:t>t;str x"#,
+            r#"f x:_ >t;str x"#,
             Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
+            vec![Value::Bool(true)],
         );
         assert!(
             err.contains("str") || err.contains("number") || err.contains("type"),

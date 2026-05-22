@@ -501,7 +501,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // (name, param_types, return_type_desc)
     // We use special strings to describe signatures
     ("len", &["list_or_text"], "n"),
-    ("str", &["n"], "t"),
+    ("str", &["t_or_n"], "t"),
     ("num", &["t_or_n"], "R n t"),
     ("abs", &["n"], "n"),
     ("flr", &["n"], "n"),
@@ -852,8 +852,8 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         "chr" => Ty::Fn(vec![n.clone()], Box::new(t.clone())),
         // 1-arg t -> L t (split into single-char strings, one per Unicode scalar)
         "chars" => Ty::Fn(vec![t.clone()], Box::new(Ty::List(Box::new(t.clone())))),
-        // 1-arg n->t and t->R n t
-        "str" => Ty::Fn(vec![n], Box::new(t)),
+        // 1-arg (n|t)->t  — identity for text, number→text conversion for numbers
+        "str" => Ty::Fn(vec![Ty::Unknown], Box::new(t)),
         "num" => Ty::Fn(
             vec![t.clone()],
             Box::new(Ty::Result(Box::new(Ty::Number), Box::new(t))),
@@ -894,11 +894,12 @@ fn builtin_check_args(
         "str" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Number)
+                && !compatible(arg, &Ty::Text)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'str' expects n, got {arg}"),
+                    message: format!("'str' expects n or t, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -6741,14 +6742,24 @@ mod tests {
     // ---- builtin_check_args type errors ----
 
     #[test]
-    fn builtin_str_wrong_type() {
+    fn builtin_str_text_passthrough() {
+        // str is now polymorphic — text input is accepted without error
         let result = parse_and_verify("f x:t>t;str x");
+        assert!(result.is_ok(), "expected no errors, got: {:?}", result);
+    }
+
+    #[test]
+    fn builtin_str_wrong_type() {
+        // bool is still rejected by str
+        let result = parse_and_verify("f x:b>t;str x");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("'str' expects n, got t"))
+                .any(|e| e.message.contains("'str' expects n or t, got b")),
+            "unexpected errors: {:?}",
+            errors
         );
     }
 
