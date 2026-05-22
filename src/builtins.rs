@@ -1114,6 +1114,35 @@ impl Builtin {
         Builtin::Bisect,
     ];
 
+    /// Stability tier for this builtin, sourced from `STABILITY.md`.
+    ///
+    /// - `"experimental"` — unreleased (above `0.12.1` in `CHANGELOG.md`).
+    ///   May be removed or changed without notice.
+    /// - `"provisional"` — shipped in a released version (0.12.1 or earlier).
+    ///   Signature may change pre-1.0; canonical short name is stable-ish.
+    ///
+    /// Used by `ilo spec --json ai` to emit per-item stability annotations.
+    pub fn stability(self) -> &'static str {
+        match self {
+            // Unreleased additions (above 0.12.1 in CHANGELOG.md → experimental).
+            Builtin::Matvec
+            | Builtin::Lstsq
+            | Builtin::JparList
+            | Builtin::GetTo
+            | Builtin::PstTo
+            | Builtin::TzOffset
+            | Builtin::Run2
+            | Builtin::RgxallMulti
+            | Builtin::Fmod
+            | Builtin::DtparseRel
+            | Builtin::DurParse
+            | Builtin::DurFmt => "experimental",
+
+            // Everything else shipped in 0.12.1 or earlier → provisional.
+            _ => "provisional",
+        }
+    }
+
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
     pub fn tag(self) -> u8 {
         // Linear search over a small dense table; this is only called

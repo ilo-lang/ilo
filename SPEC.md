@@ -2167,3 +2167,8 @@ fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 ```
 fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 ```
+
+
+## Stability
+
+See STABILITY.md at repo root for the per-surface stability matrix. Three tiers: stable (schemaVersion:1 envelope, ILO-error-codes, serv-protocol-phases, file-version-pragma, manifesto-principles, reserved-name-policy), provisional (builtin-signatures, cli-flag-names, error-message-prose, examples-corpus, ilo-test-surface), experimental (0.13-in-flight-features, aot-artifact-format, cranelift-jit-internals, extensions-dir, cargo-feature-flags). Stable surfaces are safe to pin across releases. Provisional surfaces carry a deprecation-window guarantee. Experimental surfaces may disappear without notice. `ilo spec --json ai` surfaces this matrix in the `stability` field of the JSON envelope, and per-item stability annotations on every builtin in the `builtins` array.
