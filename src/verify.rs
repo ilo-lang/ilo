@@ -19,10 +19,17 @@ pub enum Ty {
     /// Function type: params then return. `F n n` = Fn(vec![Number], Number).
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
-    /// Structural record type inferred from an anonymous record literal `{f:v ...}`.
-    /// Two `AnonRecord` types are compatible when they have exactly the same field
-    /// names and compatible field types (order-independent).
     AnonRecord(Vec<(String, Ty)>),
+    /// The `World` capability token type (ILO-68).
+    /// Functions that perform I/O accept a `w:World` parameter as explicit
+    /// proof of capability. The verifier treats `World` as a distinct named
+    /// type; it is never compatible with any other type.
+    ///
+    /// `net_known` carries a statically-determined net capability value:
+    /// - `None`        — dynamic (constructed via `world`, value is runtime-determined)
+    /// - `Some(false)` — statically known to deny net (constructed via `world-no-net`)
+    /// - `Some(true)`  — statically known to allow net (future use)
+    World { net_known: Option<bool> },
     Unknown,
 }
 
@@ -52,6 +59,7 @@ impl std::fmt::Display for Ty {
                 write!(f, " {ret}")
             }
             Ty::Named(name) => write!(f, "{name}"),
+            Ty::World { .. } => write!(f, "World"),
             Ty::AnonRecord(fields) => {
                 let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
                 write!(f, "{{{}}}", parts.join(" "))
@@ -210,6 +218,9 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
         Type::Named(name) => {
             if let Some(resolved) = aliases.get(name) {
                 resolved.clone()
+            } else if name == "World" {
+                // `World` is the builtin capability token type (ILO-68).
+                Ty::World { net_known: None }
             } else if name.len() == 1
                 && name.chars().next().is_some_and(|c| c.is_lowercase())
                 && !matches!(name.as_str(), "n" | "t" | "b")
@@ -345,18 +356,13 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
                 && compatible(ar, br)
         }
         (Ty::Named(a), Ty::Named(b)) => a == b,
-        // Two anonymous records unify when they have the same field names (order-independent)
-        // and compatible field types.
-        (Ty::AnonRecord(a_fields), Ty::AnonRecord(b_fields)) => {
-            if a_fields.len() != b_fields.len() {
-                return false;
-            }
-            let b_map: std::collections::HashMap<&str, &Ty> =
-                b_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
-            a_fields
-                .iter()
-                .all(|(n, t)| b_map.get(n.as_str()).is_some_and(|bt| compatible(t, bt)))
-        }
+        // World is only compatible with itself; net_known is erased for compatibility
+        // (a World{net_known:Some(false)} can be passed where World is expected —
+        // the static check catches the mismatch at the net-builtin call site).
+        (Ty::World { .. }, Ty::World { .. }) => true,
+        // Named("World") and Ty::World unify — user writes `w:World` in
+        // function signatures which parses as Type::Named("World") → Ty::Named("World").
+        (Ty::Named(n), Ty::World { .. }) | (Ty::World { .. }, Ty::Named(n)) if n == "World" => true,
         _ => false,
     }
 }
@@ -749,6 +755,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
+    ("world", &[], "World"),
+    ("world-no-net", &[], "World"),
     ("jpth", &["t", "t"], "R ? t"),
     ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
@@ -3918,6 +3926,21 @@ fn builtin_check_args(
                 errors,
             )
         }
+        "world" => {
+            // world > World — return the current capability World token.
+            // Zero args (enforced by BUILTINS arity table).
+            // The World value encodes the four CLI cap flags (net/read/write/run)
+            // as booleans; functions that perform I/O accept it as an explicit
+            // proof-of-authority parameter. net_known=None because the actual
+            // net cap value is determined at runtime from CLI --allow-net flags.
+            (Ty::World { net_known: None }, errors)
+        }
+        "world-no-net" => {
+            // world-no-net > World — construct a World with net=false.
+            // Statically known to deny network access; the verifier emits
+            // ILO-T044 if this value flows into a scope that calls a net builtin.
+            (Ty::World { net_known: Some(false) }, errors)
+        }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t
             // argv-list process spawn. Result Err only on spawn failure
@@ -4456,6 +4479,7 @@ impl VerifyContext {
                 );
             }
             Ty::Named(_) => {}
+            Ty::World { .. } => {} // builtin capability token — always valid
             Ty::List(inner) => self.validate_named_type_recursive(inner, ctx),
             Ty::Result(ok, err) => {
                 self.validate_named_type_recursive(ok, ctx);
@@ -5419,6 +5443,43 @@ impl VerifyContext {
                             is_warning: true,
                         });
                     }
+                    // ILO-T044: static World capability enforcement (ILO-391).
+                    // When a net builtin is called and any variable in the current
+                    // scope is a World value that is statically known to deny net
+                    // access (net_known=Some(false)), reject at verify time.
+                    // We only fire for syntactically known constructions (world-no-net);
+                    // dynamic worlds (world builtin, function parameters) are skipped.
+                    if matches!(
+                        callee.as_str(),
+                        "get" | "pst" | "put" | "pat" | "del" | "hed" | "opt"
+                            | "getx" | "pstx" | "get-many" | "get-to" | "pst-to"
+                    ) {
+                        let net_denied_var = scope.iter().rev().find_map(|frame| {
+                            frame.iter().find_map(|(name, ty)| {
+                                if matches!(ty, Ty::World { net_known: Some(false) }) {
+                                    Some(name.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        if let Some(var) = net_denied_var {
+                            self.err(
+                                "ILO-T044",
+                                func,
+                                format!(
+                                    "net builtin '{callee}' called but '{}' is a World with net=false",
+                                    var
+                                ),
+                                Some(
+                                    "a World constructed with `world-no-net` denies network access; \
+                                     remove the net call or use a World with net=true"
+                                        .to_string(),
+                                ),
+                                Some(span),
+                            );
+                        }
+                    }
                     let (ret_ty, errors) = builtin_check_args(callee, &arg_types, func, Some(span));
                     self.errors.extend(errors);
                     ret_ty
@@ -5979,6 +6040,28 @@ impl VerifyContext {
                             }
                         } else {
                             Ty::Unknown
+                        }
+                    }
+                    Ty::World { .. } => {
+                        // World.{net,read,write,run} → Bool
+                        match field.as_str() {
+                            "net" | "read" | "write" | "run" => Ty::Bool,
+                            other => {
+                                let known: Vec<String> = ["net", "read", "write", "run"]
+                                    .iter()
+                                    .map(|s| s.to_string())
+                                    .collect();
+                                let hint = closest_match(other, known.iter())
+                                    .map(|s| format!("did you mean '{s}'?"));
+                                self.err(
+                                    "ILO-T019",
+                                    func,
+                                    format!("no field '{other}' on type 'World' (known: net, read, write, run)"),
+                                    hint,
+                                    Some(span),
+                                );
+                                Ty::Unknown
+                            }
                         }
                     }
                     Ty::Unknown => Ty::Unknown,

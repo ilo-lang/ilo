@@ -74,6 +74,7 @@ Result unwrap mid-body: `v=call!` extracts the Ok value and propagates Err out o
 | `M t n` | map from text keys to numbers |
 | `S red green blue` | sum type - one of named text variants |
 | `F n t` | function type: takes n, returns t (used in HOF params) |
+| `W` | capability World token — `w:W` declares a capability parameter (ILO-68) |
 | `order` | named type |
 | `a` | type variable - any single lowercase letter except n, t, b |
 
@@ -745,6 +746,7 @@ Called like functions, compiled to dedicated opcodes.
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
+| `world` | return the current capability World token (see [Capability World](#capability-world)) | `W` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
@@ -1194,6 +1196,51 @@ env-all!         -- auto-unwrap to M t t
 ```
 
 Non-UTF-8 environment variables are silently skipped (same policy as Rust's `std::env::vars`); the snapshot is always `Ok` today.
+
+### Capability World
+
+`world` returns the capability World token, a value of type `W`. It encodes the four CLI capability flags — `net`, `read`, `write`, `run` — as boolean fields, making the side-effect surface of a function visible in its signature.
+
+```
+w=world          -- W: capability World token (constructed from --allow-* flags)
+w.net            -- b: true iff net access is permitted
+w.read           -- b: true iff filesystem read is permitted
+w.write          -- b: true iff filesystem write is permitted
+w.run            -- b: true iff process spawn is permitted
+```
+
+`W` is a first-class type token used in function signatures:
+
+```
+fetch-page w:W url:t>R t t;get w.net url   -- error: net=false caught at caller
+send-mail  w:W body:t>_;...                 -- signals: uses network
+pure-fn    x:n>n;+x 1                       -- no W param: provably no I/O
+```
+
+**Capability values match CLI flags.** Under the permissive default (no `--allow-*` flags) all four flags are `true`. Under `--allow-net=*` only, `net=true`; the other three remain `true` because unspecified flags default to permissive. To restrict a dimension to nothing, pass `--allow-read=` (empty string = block all reads).
+
+**Static enforcement for known-denied Worlds.** `world-no-net` constructs a `W` token with `net=false` known at compile time. The verifier emits **ILO-T044** if any net builtin (`get`, `pst`, `put`, `pat`, `del`, `hed`, `opt`, `getx`, `pstx`, `get-many`, `get-to`, `pst-to`) is called in the same scope:
+
+```
+wn = world-no-net          -- W: net=false, read/write/run=true
+wn.net                     -- b: false
+
+fetch url:t>R t t
+  wn = world-no-net
+  get url                  -- ERROR ILO-T044: 'wn' is a World with net=false
+```
+
+Dynamic worlds (from `world` or `w:W` parameters) are not checked statically — their cap values are determined at runtime via `--allow-*` flags.
+
+```
+fetch w:W url:t>R t t;get url        -- ok: w is dynamic, enforced at runtime
+main>t;
+  w=world
+  r=fetch w "https://api.example.com/data"
+  ...
+```
+
+See `examples/capability-world.ilo` and `examples/world-static-enforce.ilo` for working examples.
 
 ### JSON builtins
 

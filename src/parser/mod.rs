@@ -1781,10 +1781,17 @@ statement boundary; bind the chain to a local first. For example, split \
                 self.advance();
                 Ok(Type::Named(name))
             }
+            Some(Token::WorldType) => {
+                // `W` — capability World type (ILO-68). Parsed as Named("World")
+                // so the AST is backwards-compatible; the verifier converts it
+                // to Ty::World in `convert_type_with_aliases`.
+                self.advance();
+                Ok(Type::Named("World".to_string()))
+            }
             Some(tok) => Err(self.error_hint(
                 "ILO-P007",
                 format!("expected type, got {}", tok.user_facing_name()),
-                "valid types: n, t, b, L n, R n t, F n>n, or a record type name".to_string(),
+                "valid types: n, t, b, L n, R n t, F n>n, W (World), or a record type name".to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
@@ -1804,6 +1811,7 @@ statement boundary; bind the chain to a local first. For example, split \
             Some(Token::ResultType) => true,
             Some(Token::SumType) => true,
             Some(Token::FnType) => true,
+            Some(Token::WorldType) => true,
             Some(Token::LParen) => true,
             _ => false,
         }
@@ -4150,7 +4158,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `env-all!` / etc. Never consume args — return immediately as
                 // a 0-arg call. Without this guard the greedy args loop below
                 // would steal the first token of the next statement.
-                if name == "rdin" || name == "rdinl" || name == "env-all" {
+                if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" || name == "world-no-net" {
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
@@ -4207,7 +4215,9 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "rdinl"
                 || name == "pi"
                 || name == "tau"
-                || name == "e")
+                || name == "e"
+                || name == "world"
+                || name == "world-no-net")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -5013,7 +5023,9 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     || name == "rdinl"
                     || name == "pi"
                     || name == "tau"
-                    || name == "e" =>
+                    || name == "e"
+                    || name == "world"
+                    || name == "world-no-net" =>
             {
                 let name = name.clone();
                 self.advance();
