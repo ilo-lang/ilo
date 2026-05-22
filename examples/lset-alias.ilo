@@ -4,9 +4,9 @@
 -- it from the M↔L parallelism don't fall back to slice-rebuild patterns.
 -- Resolved at the AST level; bytecode is identical to `lst` across engines.
 
-hist samples:L n bins:L n>L n;@s samples{c=at bins s;bins=lset bins s +c 1};bins
+bin-count samples:L n bins:L n>L n;@s samples{c=at bins s;bins=lset bins s +c 1};bins
 
--- run: hist [0,2,1,2,3,1,2,0] [0,0,0,0]
+-- run: bin-count [0,2,1,2,3,1,2,0] [0,0,0,0]
 -- out: [2, 2, 3, 1]
--- run: hist [1,1,1] [0,0]
+-- run: bin-count [1,1,1] [0,0]
 -- out: [0, 3]

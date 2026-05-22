@@ -939,6 +939,21 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("bshl64", &["n", "n"], "n"),
     ("bshr64", &["n", "n"], "n"),
     ("brot64", &["n", "n"], "n"),
+    // Numeric-pipeline primitives (0.13.0). All tree-bridge eligible; pure
+    // constructors and stack combinators, no FnRef args, no I/O.
+    //
+    // zeros n > L n — list of n zeros (mirror of `ones`).
+    // arange start stop step > L n — half-open range [start, stop) with step.
+    // vstack matrices > L — vertical concat (flat list of rows from each matrix).
+    // hstack matrices > L — horizontal concat (row-wise cat of corresponding rows).
+    // column-stack vecs > L — treat each vector as a column; return a 2-d matrix.
+    // hist xs n_bins > L n — fixed-width histogram; returns list of n_bins counts.
+    ("zeros", &["n"], "L n"),
+    ("arange", &["n", "n", "n"], "L n"),
+    ("vstack", &["list"], "list"),
+    ("hstack", &["list"], "list"),
+    ("column-stack", &["list"], "list"),
+    ("hist", &["list", "n"], "L n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {

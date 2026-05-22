@@ -253,8 +253,8 @@ fn lset_preserves_original_cranelift() {
 // in a foreach loop to in-place-rebuild bins. This is the example program
 // shipped in examples/lset-alias.ilo, exercised here at the harness level
 // across all three engines.
-const HIST_SRC: &str = "hist samples:L n bins:L n>L n;@s samples{c=at bins s;bins=lset bins s +c 1};bins;\
-     main>L n;hist [0,2,1,2,3,1,2,0] [0,0,0,0]";
+const HIST_SRC: &str = "bin-count samples:L n bins:L n>L n;@s samples{c=at bins s;bins=lset bins s +c 1};bins;\
+     main>L n;bin-count [0,2,1,2,3,1,2,0] [0,0,0,0]";
 
 #[test]
 fn lset_histogram_tree() {

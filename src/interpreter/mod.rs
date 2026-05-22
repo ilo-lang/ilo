@@ -5637,6 +5637,295 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let out = vec![v.clone(); n as usize];
         return Ok(Value::List(Arc::new(out)));
     }
+    // ----- zeros -----
+    if builtin == Some(Builtin::Zeros) && args.len() == 1 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("zeros: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("zeros: count must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("zeros too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let out = vec![Value::Number(0.0); n as usize];
+        return Ok(Value::List(Arc::new(out)));
+    }
+    // ----- arange -----
+    if builtin == Some(Builtin::Arange) && args.len() == 3 {
+        let (start, stop, step) = match (&args[0], &args[1], &args[2]) {
+            (Value::Number(a), Value::Number(b), Value::Number(s)) => (*a, *b, *s),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "arange requires three numbers (start stop step)".to_string(),
+                ));
+            }
+        };
+        if step <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("arange: step must be positive, got {step}"),
+            ));
+        }
+        if start >= stop {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        let n = ((stop - start) / step).ceil() as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("arange too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let mut out = Vec::with_capacity(n as usize);
+        let mut i = 0u64;
+        loop {
+            let v = start + step * (i as f64);
+            if v >= stop {
+                break;
+            }
+            out.push(Value::Number(v));
+            i += 1;
+            if i > 1_000_000 {
+                break;
+            }
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    // ----- vstack -----
+    // vstack matrices:L > L — vertical concatenation of a list of row-lists.
+    // Equivalent to flat on a list of matrices: [[r0,r1],[r2,r3]] → [r0,r1,r2,r3].
+    #[inline(never)]
+    fn vstack_run(matrices_val: &Value) -> Result<Value> {
+        let matrices = match matrices_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "vstack: argument must be a list of matrices".to_string(),
+                ));
+            }
+        };
+        let mut out: Vec<Value> = Vec::new();
+        for item in matrices.iter() {
+            match item {
+                Value::List(rows) => {
+                    for row in rows.iter() {
+                        out.push(row.clone());
+                    }
+                }
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "vstack: each element must be a list (matrix or vector)".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+    if builtin == Some(Builtin::Vstack) && args.len() == 1 {
+        return vstack_run(&args[0]);
+    }
+    // ----- hstack -----
+    // hstack matrices:L > L — horizontal concatenation: cat corresponding rows.
+    // All matrices must have the same number of rows; each output row is the
+    // concatenation of the corresponding input rows.
+    #[inline(never)]
+    fn hstack_run(matrices_val: &Value) -> Result<Value> {
+        let matrices = match matrices_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "hstack: argument must be a list of matrices".to_string(),
+                ));
+            }
+        };
+        if matrices.is_empty() {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        // Collect as Vec<Vec<&Value>> — each element is a list of rows.
+        let mut mats: Vec<Arc<Vec<Value>>> = Vec::with_capacity(matrices.len());
+        for item in matrices.iter() {
+            match item {
+                Value::List(rows) => mats.push(rows.clone()),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "hstack: each element must be a list (matrix)".to_string(),
+                    ));
+                }
+            }
+        }
+        let n_rows = mats[0].len();
+        for m in &mats {
+            if m.len() != n_rows {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "hstack: all matrices must have the same number of rows; expected {n_rows}, got {}",
+                        m.len()
+                    ),
+                ));
+            }
+        }
+        let mut out = Vec::with_capacity(n_rows);
+        for r in 0..n_rows {
+            let mut row: Vec<Value> = Vec::new();
+            for m in &mats {
+                match &m[r] {
+                    Value::List(cols) => {
+                        for col in cols.iter() {
+                            row.push(col.clone());
+                        }
+                    }
+                    other => row.push(other.clone()),
+                }
+            }
+            out.push(Value::List(Arc::new(row)));
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+    if builtin == Some(Builtin::Hstack) && args.len() == 1 {
+        return hstack_run(&args[0]);
+    }
+    // ----- column-stack -----
+    // column-stack vecs:L > L — treat each vector (1-d list) as a column,
+    // return a 2-d matrix (list of rows). All vectors must have the same length.
+    #[inline(never)]
+    fn column_stack_run(vecs_val: &Value) -> Result<Value> {
+        let vecs = match vecs_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "column-stack: argument must be a list of vectors".to_string(),
+                ));
+            }
+        };
+        if vecs.is_empty() {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        let mut cols: Vec<Arc<Vec<Value>>> = Vec::with_capacity(vecs.len());
+        for item in vecs.iter() {
+            match item {
+                Value::List(col) => cols.push(col.clone()),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "column-stack: each element must be a list (vector)".to_string(),
+                    ));
+                }
+            }
+        }
+        let n_rows = cols[0].len();
+        for col in &cols {
+            if col.len() != n_rows {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "column-stack: all vectors must have the same length; expected {n_rows}, got {}",
+                        col.len()
+                    ),
+                ));
+            }
+        }
+        let mut out = Vec::with_capacity(n_rows);
+        for r in 0..n_rows {
+            let row: Vec<Value> = cols.iter().map(|col| col[r].clone()).collect();
+            out.push(Value::List(Arc::new(row)));
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+    if builtin == Some(Builtin::ColumnStack) && args.len() == 1 {
+        return column_stack_run(&args[0]);
+    }
+    // ----- hist -----
+    // hist xs:L n_bins:n > L n — fixed-width histogram.
+    // Returns a list of n_bins integer counts for equal-width bins over [min,max].
+    #[inline(never)]
+    fn hist_run(xs_val: &Value, n_bins_val: &Value) -> Result<Value> {
+        let xs = match xs_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "hist: first argument must be a numeric list".to_string(),
+                ));
+            }
+        };
+        let n_bins_raw = match n_bins_val {
+            Value::Number(n) => *n,
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "hist: n_bins must be a number".to_string(),
+                ));
+            }
+        };
+        if n_bins_raw.fract() != 0.0 || n_bins_raw <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hist: n_bins must be a positive integer, got {n_bins_raw}"),
+            ));
+        }
+        let n_bins = n_bins_raw as usize;
+        if n_bins > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hist: n_bins too large: {n_bins} (max 1000000)"),
+            ));
+        }
+        let mut counts = vec![Value::Number(0.0); n_bins];
+        if xs.is_empty() {
+            return Ok(Value::List(Arc::new(counts)));
+        }
+        let mut vals: Vec<f64> = Vec::with_capacity(xs.len());
+        for v in xs.iter() {
+            match v {
+                Value::Number(n) => vals.push(*n),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "hist: list elements must all be numbers".to_string(),
+                    ));
+                }
+            }
+        }
+        let mn = vals.iter().cloned().fold(f64::INFINITY, f64::min);
+        let mx = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let range = mx - mn;
+        for &v in &vals {
+            let bin = if range == 0.0 {
+                0
+            } else {
+                let b = ((v - mn) / range * (n_bins as f64)).floor() as usize;
+                b.min(n_bins - 1)
+            };
+            if let Value::Number(ref mut c) = counts[bin] {
+                *c += 1.0;
+            }
+        }
+        Ok(Value::List(Arc::new(counts)))
+    }
+    if builtin == Some(Builtin::Hist) && args.len() == 2 {
+        return hist_run(&args[0], &args[1]);
+    }
     if builtin == Some(Builtin::Chunks) && args.len() == 2 {
         let n_raw = match &args[0] {
             Value::Number(n) => *n,

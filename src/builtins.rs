@@ -475,6 +475,42 @@ pub enum Builtin {
     Bshl64,
     Bshr64,
     Brot64,
+
+    // Numeric-pipeline constructors and stack combinators (0.13.0).
+    // All are tree-bridge eligible: pure numeric/list ops, no FnRef args,
+    // no I/O. Appended last to preserve every existing on-wire tag.
+    //
+    // `arange start:n stop:n step:n > L n` — evenly-spaced values in
+    //   [start, stop) with the given step (numpy `arange` semantics).
+    //   step > 0 required; empty list when start >= stop.
+    //
+    // `zeros n:n > L n` — list of n 0.0 values. Mirror of `ones`.
+    //
+    // `vstack matrices:L > L` — vertical stack: concatenate a list of
+    //   row-lists, i.e., `flat` on a list of matrices. Each inner list
+    //   must be a list of rows (lists). Equivalent to numpy `vstack` for
+    //   2-d inputs. Returns a flat list of rows.
+    //
+    // `hstack matrices:L > L` — horizontal stack: concatenate the rows of
+    //   corresponding row-lists column-wise. All inner matrices must have
+    //   the same number of rows; output rows are the pairwise `cat` of
+    //   corresponding rows. Equivalent to numpy `hstack` for 2-d inputs.
+    //
+    // `column-stack vecs:L > L` — treat each element (a 1-d vector or
+    //   single-column matrix) as a column and return a 2-d matrix (list of
+    //   rows). Equivalent to numpy `column_stack`. All vectors must have
+    //   the same length.
+    //
+    // `hist xs:L n_bins:n > L n` — fixed-width histogram over the numeric
+    //   list `xs` into `n_bins` equal-width bins spanning [min, max].
+    //   Returns a list of n_bins integer counts. Empty xs → all-zero bins.
+    //   n_bins must be a positive integer (≤ 1_000_000).
+    Arange,
+    Zeros,
+    Vstack,
+    Hstack,
+    ColumnStack,
+    Hist,
 }
 
 impl Builtin {
@@ -698,6 +734,12 @@ impl Builtin {
             "bshl64" => Some(Builtin::Bshl64),
             "bshr64" => Some(Builtin::Bshr64),
             "brot64" => Some(Builtin::Brot64),
+            "arange" => Some(Builtin::Arange),
+            "zeros" => Some(Builtin::Zeros),
+            "vstack" => Some(Builtin::Vstack),
+            "hstack" => Some(Builtin::Hstack),
+            "column-stack" => Some(Builtin::ColumnStack),
+            "hist" => Some(Builtin::Hist),
             _ => None,
         }
     }
@@ -918,6 +960,12 @@ impl Builtin {
             Builtin::Bshl64 => "bshl64",
             Builtin::Bshr64 => "bshr64",
             Builtin::Brot64 => "brot64",
+            Builtin::Arange => "arange",
+            Builtin::Zeros => "zeros",
+            Builtin::Vstack => "vstack",
+            Builtin::Hstack => "hstack",
+            Builtin::ColumnStack => "column-stack",
+            Builtin::Hist => "hist",
         }
     }
 
@@ -1314,6 +1362,14 @@ impl Builtin {
         Builtin::Bshl64,
         Builtin::Bshr64,
         Builtin::Brot64,
+        // Numeric-pipeline primitives (0.13.0). Appended last; tree-bridge
+        // eligible. Preserves all existing on-wire tags.
+        Builtin::Arange,
+        Builtin::Zeros,
+        Builtin::Vstack,
+        Builtin::Hstack,
+        Builtin::ColumnStack,
+        Builtin::Hist,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1342,7 +1398,14 @@ impl Builtin {
             | Builtin::DurFmt
             | Builtin::Idxof
             | Builtin::HexRev
-            | Builtin::Tokcount => "experimental",
+            | Builtin::Tokcount
+            // Numeric-pipeline primitives (0.13.0) — experimental.
+            | Builtin::Arange
+            | Builtin::Zeros
+            | Builtin::Vstack
+            | Builtin::Hstack
+            | Builtin::ColumnStack
+            | Builtin::Hist => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1723,6 +1786,12 @@ mod tests {
             "bshl64",
             "bshr64",
             "brot64",
+            "arange",
+            "zeros",
+            "vstack",
+            "hstack",
+            "column-stack",
+            "hist",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1995,6 +2064,12 @@ mod tests {
             "idxof",
             "hex-rev",
             "tokcount",
+            "arange",
+            "zeros",
+            "vstack",
+            "hstack",
+            "column-stack",
+            "hist",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
