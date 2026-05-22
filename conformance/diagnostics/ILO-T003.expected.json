@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T003",
+  "long": "## ILO-T003: undefined type\n\nA type name used in a signature or record literal is not defined.\n\n**Example:**\n\n    f x:Point>n;x.val   -- 'Point' is not defined\n\n**Fix:** add a `type Point { ... }` declaration, or correct the spelling.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "undefined type"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "ILO-P003",
+  "long": "## ILO-P003: unexpected token\n\nA token was found where a different token was expected. The error\nmessage names the expected and actual tokens using their source\ncharacters (e.g. ``expected `>`, got `|` ``), not the parser's\ninternal token-kind names.\n\n**Example:**\n\n    f x:n|n;x\n\n    ERROR ILO-P003: expected `>`, got `|`\n\nThe fix is to use `>` between the parameter list and the return type:\n\n    f x:n>n;x\n",
+  "phase": "parse",
+  "schemaVersion": 1,
+  "short": "unexpected token"
+}

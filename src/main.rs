@@ -337,6 +337,7 @@ fn explain_cmd(code: &str, as_json: bool) -> i32 {
                 let v = serde_json::json!({
                     "schemaVersion": 1,
                     "code": entry.code,
+                    "phase": entry.phase.as_str(),
                     "short": entry.short,
                     "long": entry.long,
                 });
