@@ -80,6 +80,9 @@ struct FuncSig {
     /// call-site checker can identify which params carry type variables and
     /// enforce cross-call-site consistency + bound checks.
     original_params: Vec<crate::ast::Type>,
+    /// Original AST return type, kept so the call-site checker can substitute
+    /// concrete types for type variables in the return type (ILO-385).
+    original_return: crate::ast::Type,
     /// Bounds for each generic type variable, populated from
     /// `Decl::Function::type_params`. Empty for functions with no generic
     /// type param block (legacy behaviour: type vars remain `Ty::Unknown`,
@@ -204,6 +207,87 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
                 Ty::Named(name.clone())
             }
         }
+    }
+}
+
+/// Walk an AST param type alongside its concrete argument `Ty` and collect
+/// bindings of generic type-variable letters to concrete types. Only considers
+/// single lowercase letters (not `n`/`t`/`b`) as type variables.
+/// Used for return-type substitution (ILO-385) and also for deeper compound
+/// param shapes like `L a` or `M t a`.
+fn collect_type_var_bindings(
+    ast_ty: &crate::ast::Type,
+    arg_ty: &Ty,
+    out: &mut std::collections::HashMap<String, Ty>,
+) {
+    match (ast_ty, arg_ty) {
+        (crate::ast::Type::Named(name), concrete)
+            if name.len() == 1
+                && name.chars().next().is_some_and(|c| c.is_lowercase())
+                && !matches!(name.as_str(), "n" | "t" | "b") =>
+        {
+            out.entry(name.clone()).or_insert_with(|| concrete.clone());
+        }
+        (crate::ast::Type::List(inner), Ty::List(elem)) => {
+            collect_type_var_bindings(inner, elem, out);
+        }
+        (crate::ast::Type::Optional(inner), Ty::Optional(elem)) => {
+            collect_type_var_bindings(inner, elem, out);
+        }
+        (crate::ast::Type::Map(k, v), Ty::Map(ck, cv)) => {
+            collect_type_var_bindings(k, ck, out);
+            collect_type_var_bindings(v, cv, out);
+        }
+        (crate::ast::Type::Result(ok, err), Ty::Result(cok, cerr)) => {
+            collect_type_var_bindings(ok, cok, out);
+            collect_type_var_bindings(err, cerr, out);
+        }
+        _ => {}
+    }
+}
+
+/// Substitute generic type variables in an AST return type with concrete `Ty`
+/// bindings collected at the call site. Falls back to `convert_type_with_aliases`
+/// for any variable that has no binding (e.g. the return type is unrelated to
+/// the params, or the call has an arity error).
+fn subst_return_ty(
+    ast_ty: &crate::ast::Type,
+    bindings: &std::collections::HashMap<String, Ty>,
+    aliases: &HashMap<String, Ty>,
+) -> Ty {
+    match ast_ty {
+        crate::ast::Type::Named(name)
+            if name.len() == 1
+                && name.chars().next().is_some_and(|c| c.is_lowercase())
+                && !matches!(name.as_str(), "n" | "t" | "b") =>
+        {
+            bindings
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| convert_type_with_aliases(ast_ty, aliases))
+        }
+        crate::ast::Type::Optional(inner) => {
+            Ty::Optional(Box::new(subst_return_ty(inner, bindings, aliases)))
+        }
+        crate::ast::Type::List(inner) => {
+            Ty::List(Box::new(subst_return_ty(inner, bindings, aliases)))
+        }
+        crate::ast::Type::Map(k, v) => Ty::Map(
+            Box::new(subst_return_ty(k, bindings, aliases)),
+            Box::new(subst_return_ty(v, bindings, aliases)),
+        ),
+        crate::ast::Type::Result(ok, err) => Ty::Result(
+            Box::new(subst_return_ty(ok, bindings, aliases)),
+            Box::new(subst_return_ty(err, bindings, aliases)),
+        ),
+        crate::ast::Type::Fn(params, ret) => Ty::Fn(
+            params
+                .iter()
+                .map(|p| subst_return_ty(p, bindings, aliases))
+                .collect(),
+            Box::new(subst_return_ty(ret, bindings, aliases)),
+        ),
+        _ => convert_type_with_aliases(ast_ty, aliases),
     }
 }
 
@@ -3982,6 +4066,7 @@ impl VerifyContext {
                             params: converted_params,
                             return_type: ret,
                             original_params,
+                            original_return: return_type.clone(),
                             type_bounds,
                         },
                     );
@@ -4021,6 +4106,7 @@ impl VerifyContext {
                             params: converted_params,
                             return_type: ret,
                             original_params,
+                            original_return: return_type.clone(),
                             type_bounds: std::collections::HashMap::new(), // tools have no generics
                         },
                     );
@@ -5022,6 +5108,7 @@ impl VerifyContext {
                     let sig_params = sig.params.clone();
                     let sig_ret = sig.return_type.clone();
                     let orig_param_tys = sig.original_params.clone();
+                    let orig_return_ty = sig.original_return.clone();
                     let type_bounds = sig.type_bounds.clone();
 
                     if args.len() != sig_params.len() {
@@ -5058,12 +5145,22 @@ impl VerifyContext {
                     // Unknown / "compatible with anything" behaviour; we still
                     // perform a soft consistency check but don't emit ILO-T044
                     // for backward compatibility.
+                    // `var_bindings` is populated in all cases so that the
+                    // return type can be substituted for both explicit-bound and
+                    // legacy generic functions (ILO-385).
                     let has_explicit_bounds = !type_bounds.is_empty();
+                    // Map from type-var letter → first concrete arg type seen
+                    let mut var_bindings: std::collections::HashMap<String, Ty> =
+                        std::collections::HashMap::new();
                     if has_explicit_bounds {
-                        // Map from type-var letter → first concrete arg type seen
-                        let mut var_bindings: std::collections::HashMap<String, Ty> =
-                            std::collections::HashMap::new();
                         for (orig_ty, arg_ty) in orig_param_tys.iter().zip(arg_types.iter()) {
+                            // Collect bindings from compound types (e.g. L a, M t a) for
+                            // return-type substitution (ILO-385). The existing flat-Named
+                            // path below still drives bound/consistency checking.
+                            collect_type_var_bindings(orig_ty, arg_ty, &mut var_bindings);
+                            // (The flat-Named path below re-inserts the same binding, which
+                            //  is a no-op since the map already has it, but it also does the
+                            //  error-reporting so we keep it.)
                             if let crate::ast::Type::Named(letter) = orig_ty {
                                 if letter.len() == 1
                                     && letter.chars().next().map_or(false, |c| c.is_lowercase())
@@ -5157,7 +5254,15 @@ impl VerifyContext {
                         let _ = i;
                     }
 
-                    sig_ret
+                    // ── Return-type substitution (ILO-385) ────────────────────
+                    // If the function has a generic return type (a type variable
+                    // letter), substitute the concrete type bound from the args.
+                    // Falls back to `sig_ret` (Unknown) when no binding exists.
+                    if var_bindings.is_empty() {
+                        sig_ret
+                    } else {
+                        subst_return_ty(&orig_return_ty, &var_bindings, &self.aliases)
+                    }
                 } else if let Some(Ty::Fn(param_types, ret_type)) =
                     scope_lookup(scope, callee).cloned()
                 {
@@ -9081,6 +9186,53 @@ mod tests {
         assert!(
             parse_and_verify(src).is_ok(),
             "text-bound generic should accept t"
+        );
+    }
+
+    // ── Return-type substitution at call sites (ILO-385) ─────────────────────
+
+    #[test]
+    fn generic_return_number_identity_passes_typed_context() {
+        // gid<a> x:a>a — calling with n should resolve return as n.
+        // Passing the result to a helper expecting n should NOT error.
+        let src = "gid<a> x:a>a;x\nhelper y:n>n;y\nmain>n\n  helper (gid 5)\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "gid<a> called with n should return n (not Unknown); helper n should accept it"
+        );
+    }
+
+    #[test]
+    fn generic_return_text_identity_passes_typed_context() {
+        // gid<a> x:a>a — calling with t should resolve return as t.
+        let src = "gid<a> x:a>a;x\nhelper y:t>t;y\nmain>t\n  helper (gid \"hi\")\n  \"\"\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "gid<a> called with t should return t; helper t should accept it"
+        );
+    }
+
+    #[test]
+    fn generic_return_wrong_type_causes_mismatch() {
+        // gid<a> x:a>a — calling with n should return n.
+        // Passing to a helper expecting t must emit ILO-T007.
+        let src = "gid<a> x:a>a;x\nhelper y:t>t;y\nmain>t\n  helper (gid 5)\n  \"\"\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T007"),
+            "gid<a> called with n returns n; passing to helper:t must produce ILO-T007, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn generic_return_list_element_substituted() {
+        // first<a> xs:L a>a — calling with L n should return n.
+        // Passing result to helper:n should pass.
+        let src = "first<a> xs:L a>a;hd xs\nhelper y:n>n;y\nmain>n\n  helper (first [1 2 3])\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "first<a> called with L n should return n; helper n should accept it"
         );
     }
 
