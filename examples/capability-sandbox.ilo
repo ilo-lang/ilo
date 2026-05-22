@@ -1,0 +1,36 @@
+-- capability-sandbox.ilo: demonstrates CLI capability flags (ILO-59).
+--
+-- Run with all capabilities denied (except net to httpbin.org):
+--   ilo run --allow-net=httpbin.org examples/capability-sandbox.ilo
+--
+-- Run with no flags (permissive / legacy mode — all IO allowed):
+--   ilo run examples/capability-sandbox.ilo
+--
+-- Run with all IO denied:
+--   ilo run --allow-net= --allow-read= --allow-write= --allow-run= examples/capability-sandbox.ilo
+
+-- permitted-read: reads a file that is inside the allowed prefix.
+-- Requires: --allow-read=/tmp  (or permissive mode)
+permitted-read>R t t
+  wr "/tmp/ilo_sandbox_demo.txt" "sandbox ok"
+  rd "/tmp/ilo_sandbox_demo.txt"
+
+-- denied-read: reads /etc/passwd which is outside /tmp.
+-- Expected to return Err when --allow-read=/tmp is set.
+denied-read>R t t
+  rd "/etc/passwd"
+
+-- check-net: attempts a network GET.
+-- Expected to return Err when --allow-net= (empty) is set.
+check-net>R t t
+  get "https://httpbin.org/get"
+
+-- main: exercises both a permitted capability (write+read in /tmp) and a
+-- denied one (read outside the prefix), printing the outcomes.
+main>_
+  res-ok = permitted-read()
+  ?{res-ok|er: prnt +"file read denied: " er
+           ~v:  prnt +"file read ok, contents: " v}
+  res-deny = denied-read()
+  ?{res-deny|er: prnt +"denied read blocked as expected: " er
+             ~v:  prnt +"WARNING: denied read returned value " v}

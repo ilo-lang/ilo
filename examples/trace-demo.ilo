@@ -1,0 +1,4 @@
+add x:n y:n>n
+  a = + x y
+  b = * a 2
+  b

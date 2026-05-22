@@ -1,0 +1,35 @@
+{
+  "generated": "2026-05-21T21:52:31Z",
+  "benchmarks": {
+    "fib": {
+      "ilo-vm": 70703,
+      "ilo-jit": 25402,
+      "Node": 5354,
+      "Python": 56873
+    },
+    "hof": {
+      "ilo-vm": 160728,
+      "ilo-jit": 455373,
+      "Node": 70309,
+      "Python": 125605
+    },
+    "listproc": {
+      "ilo-vm": 65686,
+      "ilo-jit": 1466,
+      "Node": 1415,
+      "Python": 118849
+    },
+    "pattern-match": {
+      "ilo-vm": 146273,
+      "ilo-jit": 3147,
+      "Node": 2623,
+      "Python": 151531
+    },
+    "sum-loop": {
+      "ilo-vm": 51469,
+      "ilo-jit": 1364,
+      "Node": 978,
+      "Python": 62956
+    }
+  }
+}
