@@ -7,6 +7,8 @@
 use ilo::caps::{Caps, Policy};
 use ilo::interpreter::{self, Value};
 use ilo::{lexer, parser, vm};
+use std::io::Write;
+use std::process::Command;
 use std::sync::Arc;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -335,4 +337,87 @@ fn one_flag_restricts_only_that_dimension() {
         "write should be unrestricted"
     );
     assert!(caps.check_run("rm").is_ok(), "run should be unrestricted");
+}
+
+// ── httpd --allow-net cap check ───────────────────────────────────────────────
+
+fn ilo_bin() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ilo"))
+}
+
+/// `ilo httpd` without `--allow-net` must exit non-zero and print the
+/// expected error message.  We use a dummy handler file (a minimal ilo
+/// function) so the CLI gets past file-not-found before hitting the cap check.
+#[test]
+fn httpd_refuses_to_start_without_allow_net() {
+    // Write a minimal handler file that would be valid if the cap check passed.
+    let mut handler = tempfile::NamedTempFile::new().expect("tmpfile");
+    handler
+        .write_all(b"fn handler req:R>R; req\n")
+        .expect("write handler");
+
+    let out = ilo_bin()
+        .args(["httpd", "--port", "19876", handler.path().to_str().unwrap()])
+        .output()
+        .expect("failed to run ilo");
+
+    assert!(
+        !out.status.success(),
+        "ilo httpd should exit non-zero without --allow-net"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--allow-net"),
+        "stderr should mention --allow-net, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("ilo httpd needs --allow-net to listen on a port"),
+        "stderr should contain the full error message, got: {stderr}"
+    );
+}
+
+/// `ilo httpd --allow-net *` should pass the cap check.  We verify it
+/// proceeds past the error stage (it will fail later trying to parse the
+/// handler, but the cap error must NOT appear).
+#[test]
+fn httpd_passes_cap_check_with_allow_net_star() {
+    // Write a minimal handler file.
+    let mut handler = tempfile::NamedTempFile::new().expect("tmpfile");
+    handler
+        .write_all(b"fn handler req:R>R; req\n")
+        .expect("write handler");
+
+    // We give it an unparseable port so the process exits quickly,
+    // but we just need to confirm no cap error in stderr.
+    // Actually use a real port but kill immediately by checking stderr only.
+    // Spawn and immediately collect — the server will block on accept;
+    // use a very short timeout approach: just check it doesn't print cap error.
+    // We check that with --allow-net=* the cap error message is absent.
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
+        .args([
+            "httpd",
+            "--allow-net",
+            "*",
+            "--port",
+            "19877",
+            handler.path().to_str().unwrap(),
+        ])
+        // Run with a timeout by spawning and killing immediately
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn ilo httpd");
+
+    // Give it a moment to start then kill.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    // The process is a server loop; kill it.
+    let mut child = out;
+    let _ = child.kill();
+    let result = child.wait_with_output().expect("wait");
+
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        !stderr.contains("ilo httpd needs --allow-net"),
+        "cap error must not appear when --allow-net=* is passed, stderr: {stderr}"
+    );
 }

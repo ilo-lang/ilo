@@ -930,16 +930,22 @@ fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> 
 // One thread is spawned per accepted connection (minimal thread-per-request
 // pool). No async runtime is required — the ilo interpreter is synchronous.
 //
-// TODO(ILO-59): add --allow-net cap check once the cap-flags PR lands.
+// Cap check is performed inside `httpd_cmd` before binding the socket.
 
 /// Request bodies larger than this byte threshold are presented to the handler
 /// as a `Value::List` of text lines (`L t`) rather than a single `Value::Text`.
 /// Handlers iterate with `@line req.body`; small bodies remain a plain `t`.
 const LAZY_BODY_THRESHOLD: usize = 65_536; // 64 KiB
 
-fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
+fn httpd_cmd(port: u16, handler_file: &str, func_name: &str, caps: &Caps) -> i32 {
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    // ── Capability check — must have --allow-net to bind a port ──────────────
+    if let Err(_) = caps.check_net("0.0.0.0") {
+        eprintln!("error: ilo httpd needs --allow-net to listen on a port");
+        return 1;
+    }
 
     // ── Load and compile the handler program once ─────────────────────────────
     let source = match std::fs::read_to_string(handler_file) {
@@ -3144,7 +3150,8 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         }
         Some(cli::Cmd::Httpd(h)) => {
             let func = h.func.as_deref().unwrap_or("handler");
-            httpd_cmd(h.port, &h.handler, func)
+            let caps = build_httpd_caps(&h);
+            httpd_cmd(h.port, &h.handler, func, &caps)
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
@@ -3773,6 +3780,30 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
             .map(Caps::parse_allow)
             .unwrap_or(Policy::All),
     })
+}
+
+/// Build a `Caps` from the `--allow-*` flags on an `HttpdArgs`.
+///
+/// `ilo httpd` only exposes `--allow-net`; all other capability dimensions
+/// default to `Policy::All` (unrestricted) since httpd needs fs access to
+/// read its handler file.  If no `--allow-*` flag is supplied the policy is
+/// `Caps::Restricted` with an empty net list, which blocks all network access
+/// and will cause `check_net` to return an error.
+fn build_httpd_caps(h: &cli::HttpdArgs) -> Caps {
+    match &h.allow_net {
+        Some(val) => Caps::Restricted {
+            net: Caps::parse_allow(val),
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+        },
+        None => Caps::Restricted {
+            net: Policy::List(vec![]),
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+        },
+    }
 }
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.

@@ -272,6 +272,11 @@ pub struct HttpdArgs {
 
     /// Name of the handler function (default: `handler`).
     pub func: Option<String>,
+
+    /// Grant network access (required to bind a port).
+    /// Comma-separated list of hosts, `*` for all, or omit to deny.
+    #[arg(long)]
+    pub allow_net: Option<String>,
 }
 
 // ── Tools ──────────────────────────────────────────────────────────────────────
