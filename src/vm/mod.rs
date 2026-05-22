@@ -947,6 +947,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Hstack, 1) => true,
         (Builtin::ColumnStack, 1) => true,
         (Builtin::Hist, 2) => true,
+        // `for-line stdin > LazyStdinLines` (ILO-70). 1-arg, no FnRef.
+        // The return type (LazyStdinLines) is opaque to the register engines;
+        // the bridge lets VM and Cranelift produce the handle without a new
+        // opcode. ForEach in the tree interpreter drains it one line at a time.
+        (Builtin::ForLine, 1) => true,
         // par-map fn xs / par-map fn xs n — general parallel fan-out.
         // Takes a FnRef arg, so the tree interpreter handles the worker-thread
         // dispatch and user-fn callbacks. VM and Cranelift bail to the tree

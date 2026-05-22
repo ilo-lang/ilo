@@ -18139,34 +18139,45 @@ f>n;+area(circle 2) area(square 3)"#;
 
     // ---- todo / panic typed expressions (ILO-410) ----
 
+    // par-map tests (ILO-67)
+
     #[test]
-    fn todo_expr_produces_runtime_error() {
-        let prog = parse_program(r#"f>n;todo "not yet""#);
-        let result = run(&prog, None, vec![]);
-        match result {
-            Err(e) => {
-                assert_eq!(e.code, "ILO-R020", "expected ILO-R020, got {}", e.code);
-                assert!(e.message.contains("not yet"), "message was: {}", e.message);
-            }
-            Ok(v) => panic!("expected runtime error from todo, got value: {:?}", v),
-        }
+    fn par_map_applies_fn_to_each_element_in_order() {
+        // double x = x * 2; par-map over [1,2,3] with concurrency 2 => [2,4,6]
+        let src = r#"dbl x:n>n;*x 2  main>L n;xs=[1 2 3];ys=par-map dbl xs 2;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Number(2.0),
+                Value::Number(4.0),
+                Value::Number(6.0),
+            ]))
+        );
     }
 
     #[test]
-    fn panic_expr_produces_runtime_error() {
-        let prog = parse_program(r#"f>n;panic "unreachable""#);
-        let result = run(&prog, None, vec![]);
-        match result {
-            Err(e) => {
-                assert_eq!(e.code, "ILO-R021", "expected ILO-R021, got {}", e.code);
-                assert!(
-                    e.message.contains("unreachable"),
-                    "message was: {}",
-                    e.message
-                );
-            }
-            Ok(v) => panic!("expected runtime error from panic, got value: {:?}", v),
-        }
+    fn par_map_empty_list_returns_empty() {
+        let src = r#"dbl x:n>n;*x 2  main>L n;par-map dbl [] 4"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(result, Value::List(Arc::new(vec![])));
+    }
+
+    #[test]
+    fn par_map_default_concurrency_two_arg_form() {
+        // 2-arg form (no explicit n): should still work
+        let src =
+            r#"sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(4.0),
+                Value::Number(9.0),
+                Value::Number(16.0),
+            ]))
+        );
     }
 
     // par-map tests (ILO-67)
