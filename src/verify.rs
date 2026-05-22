@@ -53,8 +53,7 @@ impl std::fmt::Display for Ty {
             }
             Ty::Named(name) => write!(f, "{name}"),
             Ty::AnonRecord(fields) => {
-                let parts: Vec<String> =
-                    fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+                let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
                 write!(f, "{{{}}}", parts.join(" "))
             }
             Ty::Unknown => write!(f, "_"),

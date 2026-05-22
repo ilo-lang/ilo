@@ -6164,8 +6164,7 @@ impl RegCompiler {
                 // field list so that two literals with the same shape share one
                 // registry entry (matching the structural unification the verifier
                 // promises). The name is internal — agents never see it.
-                let mut sorted_names: Vec<&str> =
-                    fields.iter().map(|(n, _)| n.as_str()).collect();
+                let mut sorted_names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
                 sorted_names.sort_unstable();
                 let type_name = format!("__anon_{}", sorted_names.join("_"));
                 let fields_owned: Vec<(String, _)> = fields.clone();
@@ -6176,7 +6175,8 @@ impl RegCompiler {
                     None => {
                         let field_names: Vec<String> =
                             fields_owned.iter().map(|(n, _)| n.clone()).collect();
-                        self.type_registry.register(type_name.clone(), field_names, 0)
+                        self.type_registry
+                            .register(type_name.clone(), field_names, 0)
                     }
                 };
                 let canonical_order: Vec<String> =
