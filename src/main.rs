@@ -2698,6 +2698,11 @@ fn apply_only_filter(
 ///
 /// Privacy rule: declarations whose name starts with `_` are module-private and
 /// are never exported. They are stripped during import regardless of `only` or `alias`.
+///
+/// Lazy imports (`use lazy:"./path"`) are deferred: the module file is only
+/// opened if at least one `<stem>-*` symbol is referenced in the non-lazy
+/// declarations. This lets large optional modules be listed without paying
+/// any parse/IO cost when unused.
 fn resolve_imports(
     decls: Vec<ast::Decl>,
     base_dir: Option<&std::path::Path>,
@@ -2705,7 +2710,54 @@ fn resolve_imports(
     diagnostics: &mut Vec<Diagnostic>,
     build_target: BuildTarget,
 ) -> Vec<ast::Decl> {
-    resolve_imports_inner(decls, base_dir, visited, diagnostics, build_target, false).0
+    // Separate lazy Use nodes from everything else for a two-pass approach.
+    let mut eager_decls: Vec<ast::Decl> = Vec::new();
+    let mut lazy_pending: Vec<ast::Decl> = Vec::new();
+    for decl in decls {
+        if matches!(&decl, ast::Decl::Use { lazy: true, .. }) {
+            lazy_pending.push(decl);
+        } else {
+            eager_decls.push(decl);
+        }
+    }
+
+    // Pass 1: resolve all eager (non-lazy) declarations.
+    let mut result = resolve_imports_inner(
+        eager_decls,
+        base_dir,
+        visited,
+        diagnostics,
+        build_target,
+        false,
+    )
+    .0;
+
+    // Pass 2: for each lazy pending import, check if any `<alias>-*` symbol
+    // is referenced in the already-resolved declarations. Only load if so.
+    for decl in lazy_pending {
+        if let ast::Decl::Use { ref alias, .. } = decl {
+            let prefix = format!("{}-", alias.as_deref().unwrap_or(""));
+            if decls_reference_prefix(&result, &prefix) {
+                // Symbol is used — load the module via the eager path.
+                let loaded = resolve_imports_inner(
+                    vec![decl],
+                    base_dir,
+                    visited,
+                    diagnostics,
+                    build_target,
+                    false,
+                )
+                .0;
+                // Prepend so lazy module decls precede the importer's own decls.
+                let mut combined = loaded;
+                combined.extend(result);
+                result = combined;
+            }
+            // else: no reference to this module — skip loading entirely.
+        }
+    }
+
+    result
 }
 
 /// Resolves imports and returns `(all_decls, exported_names)`.
@@ -2742,6 +2794,7 @@ fn resolve_imports_inner(
             predicate,
             alt_path,
             reexport,
+            lazy: _,
             span,
         } = decl
         {
@@ -2784,6 +2837,7 @@ fn resolve_imports_inner(
                             predicate: None,
                             alt_path: None,
                             reexport: false,
+                            lazy: false,
                             span,
                         };
                         let mut sub = resolve_imports(
@@ -3054,6 +3108,126 @@ fn resolve_imports_inner(
     }
 
     (result, exported_names.into_iter().collect())
+}
+
+/// Return `true` if any `Expr::Call` or `Expr::Ref` in `decls` has a name
+/// that starts with `prefix`. Used by the lazy-import gate to decide whether
+/// a deferred module is actually needed.
+fn decls_reference_prefix(decls: &[ast::Decl], prefix: &str) -> bool {
+    fn expr_refs(expr: &ast::Expr, prefix: &str) -> bool {
+        match expr {
+            ast::Expr::Call { function, args, .. } => {
+                if function.starts_with(prefix) {
+                    return true;
+                }
+                args.iter().any(|a| expr_refs(a, prefix))
+            }
+            ast::Expr::Ref(name) => name.starts_with(prefix),
+            ast::Expr::BinOp { left, right, .. } => {
+                expr_refs(left, prefix) || expr_refs(right, prefix)
+            }
+            ast::Expr::UnaryOp { operand, .. } => expr_refs(operand, prefix),
+            ast::Expr::Ok(inner) | ast::Expr::Err(inner) => expr_refs(inner, prefix),
+            ast::Expr::List(items) => items.iter().any(|e| expr_refs(e, prefix)),
+            ast::Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_refs(e, prefix)),
+            ast::Expr::Field { object, .. } => expr_refs(object, prefix),
+            ast::Expr::Index { object, .. } => expr_refs(object, prefix),
+            ast::Expr::Match { subject, arms } => {
+                subject
+                    .as_deref()
+                    .map(|s| expr_refs(s, prefix))
+                    .unwrap_or(false)
+                    || arms
+                        .iter()
+                        .any(|arm| arm.body.iter().any(|s| stmt_refs(&s.node, prefix)))
+            }
+            ast::Expr::NilCoalesce { value, default } => {
+                expr_refs(value, prefix) || expr_refs(default, prefix)
+            }
+            ast::Expr::With { object, updates } => {
+                expr_refs(object, prefix) || updates.iter().any(|(_, e)| expr_refs(e, prefix))
+            }
+            ast::Expr::Ternary {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                expr_refs(condition, prefix)
+                    || expr_refs(then_expr, prefix)
+                    || expr_refs(else_expr, prefix)
+            }
+            ast::Expr::MakeClosure { captures, .. } => {
+                captures.iter().any(|e| expr_refs(e, prefix))
+            }
+            ast::Expr::AnonRecord { fields, .. } => {
+                fields.iter().any(|(_, e)| expr_refs(e, prefix))
+            }
+            ast::Expr::Literal(_) | ast::Expr::Todo(_) | ast::Expr::Panic(_) => false,
+        }
+    }
+
+    fn stmt_refs(stmt: &ast::Stmt, prefix: &str) -> bool {
+        match stmt {
+            ast::Stmt::Let { value, .. } | ast::Stmt::Destructure { value, .. } => {
+                expr_refs(value, prefix)
+            }
+            ast::Stmt::Expr(e) | ast::Stmt::Return(e) => expr_refs(e, prefix),
+            ast::Stmt::Break(Some(e)) => expr_refs(e, prefix),
+            ast::Stmt::Break(None) | ast::Stmt::Continue => false,
+            ast::Stmt::Guard {
+                condition,
+                body,
+                else_body,
+                ..
+            } => {
+                expr_refs(condition, prefix)
+                    || body.iter().any(|s| stmt_refs(&s.node, prefix))
+                    || else_body
+                        .as_deref()
+                        .map(|b| b.iter().any(|s| stmt_refs(&s.node, prefix)))
+                        .unwrap_or(false)
+            }
+            ast::Stmt::Match { subject, arms } => {
+                subject
+                    .as_ref()
+                    .map(|s| expr_refs(s, prefix))
+                    .unwrap_or(false)
+                    || arms
+                        .iter()
+                        .any(|arm| arm.body.iter().any(|s| stmt_refs(&s.node, prefix)))
+            }
+            ast::Stmt::ForEach {
+                collection, body, ..
+            } => expr_refs(collection, prefix) || body.iter().any(|s| stmt_refs(&s.node, prefix)),
+            ast::Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                expr_refs(start, prefix)
+                    || expr_refs(end, prefix)
+                    || body.iter().any(|s| stmt_refs(&s.node, prefix))
+            }
+            ast::Stmt::While { condition, body } => {
+                expr_refs(condition, prefix) || body.iter().any(|s| stmt_refs(&s.node, prefix))
+            }
+            ast::Stmt::Defer { expr, .. } => expr_refs(expr, prefix),
+        }
+    }
+
+    for decl in decls {
+        let referenced = match decl {
+            ast::Decl::Function { body, .. } => body.iter().any(|s| stmt_refs(&s.node, prefix)),
+            ast::Decl::Tool { .. }
+            | ast::Decl::TypeDef { .. }
+            | ast::Decl::SumType { .. }
+            | ast::Decl::Alias { .. }
+            | ast::Decl::Use { .. }
+            | ast::Decl::Error { .. } => false,
+        };
+        if referenced {
+            return true;
+        }
+    }
+    false
 }
 
 /// Rename all named declarations in `decls` by prepending `alias-` to their name.
@@ -7027,6 +7201,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -7068,6 +7243,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7106,6 +7282,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7363,6 +7540,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -7388,6 +7566,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -7514,6 +7693,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -7554,6 +7734,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -7593,6 +7774,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7633,6 +7815,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7676,6 +7859,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7706,6 +7890,7 @@ mod tests {
     #[test]
     fn resolve_imports_conditional_wasm_true_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
+        use std::io::Write;
         let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
         let native_path = "/tmp/ilo_cond_native_ILO399.ilo";
         std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
@@ -7718,6 +7903,7 @@ mod tests {
             predicate: Some(ast::UsePredicate::Wasm),
             alt_path: Some("ilo_cond_native_ILO399.ilo".into()),
             reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7773,6 +7959,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7815,6 +8002,7 @@ mod tests {
             predicate: Some(ast::UsePredicate::Wasm),
             alt_path: Some("ilo_cond2_native_ILO399.ilo".into()),
             reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7865,6 +8053,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7907,6 +8096,7 @@ mod tests {
             predicate: Some(ast::UsePredicate::Test),
             alt_path: Some("ilo_cond_real_ILO399.ilo".into()),
             reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7928,6 +8118,121 @@ mod tests {
 
         std::fs::remove_file(stub_path).ok();
         std::fs::remove_file(real_path).ok();
+    }
+
+    // ── resolve_imports: lazy loading (ILO-400) ───────────────────────────────
+
+    #[test]
+    fn resolve_imports_lazy_not_loaded_when_unreferenced() {
+        // A `use lazy:"./big-mod.ilo"` where no `big-mod-*` symbol appears in the
+        // program body → the file must never be opened (module skipped).
+        use std::io::Write;
+        // Use a path that does NOT exist so any file-open attempt causes an error.
+        let lib_path = "/tmp/ilo_lazy_SHOULD_NOT_OPEN_ILO400.ilo";
+        // Remove to ensure it doesn't exist
+        std::fs::remove_file(lib_path).ok();
+
+        // Importer has a function that does NOT reference big-mod-* symbols.
+        let caller = ast::Decl::Function {
+            name: "main".into(),
+            type_params: vec![],
+            params: vec![],
+            return_type: ast::Type::Number,
+            body: vec![ast::Spanned::unknown(ast::Stmt::Return(
+                ast::Expr::Literal(ast::Literal::Number(42.0)),
+            ))],
+            span: ast::Span::UNKNOWN,
+        };
+
+        let lazy_use = ast::Decl::Use {
+            path: "ilo_lazy_SHOULD_NOT_OPEN_ILO400.ilo".into(),
+            only: None,
+            alias: Some("ilo-lazy-SHOULD-NOT-OPEN-ILO400".into()),
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            lazy: true,
+            span: ast::Span::UNKNOWN,
+        };
+
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![lazy_use, caller],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        // No diagnostics: the file was never opened (missing file → no error).
+        assert!(
+            diags.is_empty(),
+            "lazy module must not be opened when unreferenced, got diags: {diags:?}"
+        );
+        // Only `main` should appear.
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert_eq!(names, vec!["main"], "expected only main, got: {names:?}");
+    }
+
+    #[test]
+    fn resolve_imports_lazy_loaded_when_referenced() {
+        // A `use lazy:"./mod.ilo"` where a `mod-*` symbol IS referenced →
+        // the module is loaded and its declarations appear in the result.
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_lazy_load_ILO400.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "mod-helper>n;99").unwrap();
+        drop(f);
+
+        // Caller references `mod-helper` (a `mod-` prefixed symbol).
+        let caller = ast::Decl::Function {
+            name: "main".into(),
+            type_params: vec![],
+            params: vec![],
+            return_type: ast::Type::Number,
+            body: vec![ast::Spanned::unknown(ast::Stmt::Return(ast::Expr::Call {
+                function: "mod-helper".into(),
+                args: vec![],
+                unwrap: ast::UnwrapMode::None,
+            }))],
+            span: ast::Span::UNKNOWN,
+        };
+
+        let lazy_use = ast::Decl::Use {
+            path: "ilo_lazy_load_ILO400.ilo".into(),
+            only: None,
+            alias: Some("mod".into()),
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            lazy: true,
+            span: ast::Span::UNKNOWN,
+        };
+
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![lazy_use, caller],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        // The loaded module function is prefixed with `mod-`
+        assert!(
+            names.iter().any(|n| n.starts_with("mod-")),
+            "expected mod-* symbol from loaded lazy module, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"main"),
+            "main must also be present: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
     }
 
     #[test]
@@ -9007,6 +9312,7 @@ mod tests {
             predicate: None,
             alt_path: None,
             reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         }
     }

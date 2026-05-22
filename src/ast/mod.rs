@@ -215,6 +215,10 @@ pub enum Decl {
     /// `use re:"path/to/file.ilo" [name1 name2]` — import AND re-export the named
     ///   declarations: they become part of this module's public surface.
     /// Resolved before verification; replaced by the imported declarations in
+    /// `use lazy:"./big-module"` — lazy (on-demand) import: the module is only
+    ///   loaded if at least one `<stem>-*` symbol from it is referenced in the
+    ///   program. Symbols are prefixed with the path stem (e.g. `big-module-fn`).
+    ///   Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
         path: String,
@@ -233,6 +237,12 @@ pub enum Decl {
         /// of this module's public surface (visible to consumers of this module).
         /// Without this flag, imported names are internal to this module only.
         reexport: bool,
+        /// Lazy (on-demand) import: `use lazy:"./path"`.
+        /// When `true`, the module is only loaded if a `<stem>-*` symbol is
+        /// referenced elsewhere in the program. The alias is derived from the
+        /// path stem (last component without extension).
+        #[serde(default)]
+        lazy: bool,
         #[serde(skip)]
         span: Span,
     },

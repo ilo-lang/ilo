@@ -972,6 +972,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 predicate: Some(predicate),
                 alt_path: Some(false_path),
                 reexport: false,
+                lazy: false,
                 span: start.merge(end),
             });
         }
@@ -1060,6 +1061,24 @@ statement boundary; bind the chain to a local first. For example, split \
 
         // Optional `[name1 name2 ...]` scoped import list.
         // Incompatible with alias form; required for re-export form.
+        // Detect lazy import: `use lazy:"./path"` — `lazy` is a reserved
+        // modifier, not a real alias. The effective alias is derived from the
+        // path stem (last path component without extension), e.g.
+        // `use lazy:"./big-module"` → alias `big-module`, lazy = true.
+        let (alias, lazy) = match alias {
+            Some(ref a) if a == "lazy" => {
+                // Derive alias from the path stem.
+                let stem = std::path::Path::new(&path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&path)
+                    .to_string();
+                (Some(stem), true)
+            }
+            other => (other, false),
+        };
+
+        // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
         let only = if self.peek() == Some(&Token::LBracket) {
             if alias.is_some() {
                 return Err(self.error(
@@ -1107,6 +1126,7 @@ statement boundary; bind the chain to a local first. For example, split \
             predicate: None,
             alt_path: None,
             reexport,
+            lazy,
             span: start.merge(end),
         })
     }
@@ -9631,6 +9651,45 @@ mod tests {
             errors.iter().any(|e| e.code == "ILO-P016"),
             "expected ILO-P016 for missing colon: {errors:?}"
         );
+    }
+
+    // --- lazy use (ILO-400) ---
+
+    #[test]
+    fn parse_use_lazy_sets_lazy_flag_and_stem_alias() {
+        // `use lazy:"./big-module.ilo"` → lazy=true, alias="big-module"
+        let prog = parse_str(r#"use lazy:"./big-module.ilo""#);
+        let Decl::Use {
+            path, alias, lazy, ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use, got {:?}", prog.declarations)
+        };
+        assert_eq!(path, "./big-module.ilo");
+        assert_eq!(alias.as_deref(), Some("big-module"));
+        assert!(*lazy, "lazy flag must be true");
+    }
+
+    #[test]
+    fn parse_use_lazy_no_extension() {
+        // Path without extension: stem is the whole basename
+        let prog = parse_str(r#"use lazy:"./utils""#);
+        let Decl::Use { alias, lazy, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(alias.as_deref(), Some("utils"));
+        assert!(*lazy, "lazy flag must be true");
+    }
+
+    #[test]
+    fn parse_use_non_lazy_alias_unchanged() {
+        // Non-lazy alias: `use m:"lib.ilo"` should leave lazy=false
+        let prog = parse_str(r#"use m:"lib.ilo""#);
+        let Decl::Use { alias, lazy, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(alias.as_deref(), Some("m"));
+        assert!(!lazy, "lazy must be false for non-lazy import");
     }
 
     #[test]
