@@ -126,6 +126,22 @@ pub enum Builtin {
     // `Err("rdin: stdin not available on wasm")`.
     Rdin,
     Rdinl,
+    // `for-line stdin > LazyStdinLines` — lazy line iterator over stdin.
+    // Unlike `rdinl` (which buffers all of stdin before returning), `for-line`
+    // produces a lazy handle that the `@binding` foreach consumes one line at
+    // a time. This enables processing unbounded streams (e.g. `tail -f` output,
+    // streaming log producers) without ever buffering the full input.
+    //
+    // Canonical usage:
+    //   `@line (for-line stdin) { prnt line }`
+    //
+    // The single argument must be the text "stdin"; other values are a
+    // runtime error (ILO-R009). On WASM the builtin returns Err immediately.
+    // Partial trailing lines at EOF are emitted unchanged (no newline added).
+    // Tree-interpreter only in this release; VM/Cranelift inherit via the
+    // tree-bridge (OP_CALL_BUILTIN_TREE) because the return type
+    // (`LazyStdinLines`) is opaque to the register-based engines.
+    ForLine,
     Wr,
     Wra,
     Wro,
@@ -484,6 +500,7 @@ impl Builtin {
             "rdb" => Some(Builtin::Rdb),
             "rdin" => Some(Builtin::Rdin),
             "rdinl" => Some(Builtin::Rdinl),
+            "for-line" => Some(Builtin::ForLine),
             "wr" => Some(Builtin::Wr),
             "wra" => Some(Builtin::Wra),
             "wro" => Some(Builtin::Wro),
@@ -687,6 +704,7 @@ impl Builtin {
             Builtin::Rdb => "rdb",
             Builtin::Rdin => "rdin",
             Builtin::Rdinl => "rdinl",
+            Builtin::ForLine => "for-line",
             Builtin::Wr => "wr",
             Builtin::Wra => "wra",
             Builtin::Wro => "wro",
@@ -1133,18 +1151,11 @@ impl Builtin {
         // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
-        // `sha256-hex hex:t > t` — SHA-256 of hex-decoded bytes, lowercase hex.
-        // `sha256d hex:t > t` — double-SHA256 (Bitcoin Merkle shape), lowercase hex.
-        // Both error on odd-length or non-hex input. Tree-bridge eligible: pure
-        // text-in / text-out, no FnRef args, no I/O, no Result wrapper.
+        // `for-line stdin > LazyStdinLines` — lazy stdin line iterator (ILO-70).
         // Appended last to preserve every existing on-wire tag.
-        Builtin::Sha256Hex,
-        Builtin::Sha256d,
-        // `idxof s sub > O n` — Unicode code-point index of first occurrence of
-        // `sub` in `s`. Returns nil when not found. Tree-bridge eligible: pure
-        // 2-arg text-in / option-n-out, no FnRef args, no I/O, no Result wrapper.
-        // Appended last to preserve every existing on-wire tag.
-        Builtin::Idxof,
+        // Returns a LazyStdinLines handle that ForEach drains one line at a time,
+        // enabling processing of unbounded piped input without buffering.
+        Builtin::ForLine,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1802,6 +1813,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "for-line",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

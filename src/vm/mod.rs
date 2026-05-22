@@ -859,6 +859,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Linspace, 3) => true,
         (Builtin::Ones, 1) => true,
         (Builtin::Rep, 2) => true,
+        // `for-line stdin > LazyStdinLines` (ILO-70). 1-arg, no FnRef.
+        // The return type (LazyStdinLines) is opaque to the register engines;
+        // the bridge lets VM and Cranelift produce the handle without a new
+        // opcode. ForEach in the tree interpreter drains it one line at a time.
+        (Builtin::ForLine, 1) => true,
         _ => false,
     }
 }
@@ -6969,6 +6974,12 @@ enum HeapObj {
         id: u32,
         captures: Vec<NanVal>,
     },
+    /// Lazy stdin line iterator — produced by `for-line stdin` (ILO-70).
+    /// Wraps the tree-level StdinLinesHandle so the VM's OP_FOREACH can
+    /// drain it one line at a time without converting to a List first.
+    /// The Arc makes this cheaply cloneable; the Mutex enables interior
+    /// mutability across the VM's ownership model.
+    LazyStdinLines(crate::interpreter::StdinLinesHandle),
 }
 
 impl Drop for HeapObj {
@@ -7004,6 +7015,10 @@ impl Drop for HeapObj {
                 for v in captures {
                     v.drop_rc();
                 }
+            }
+            HeapObj::LazyStdinLines(_) => {
+                // The Arc inside StdinLinesHandle is cheaply dropped (refcount decrement).
+                // No NanVal children to drop_rc.
             }
         }
     }
@@ -7044,10 +7059,10 @@ fn materialize_list_view(v: NanVal) -> NanVal {
                 .collect();
             NanVal::heap_list(items)
         }
-        // Tag-checked above, so unreachable for these variants. Closure
-        // shares TAG_LIST but is not list-shaped — materialize_list_view is
-        // a no-op for closures (they don't have a list-view sibling).
-        HeapObj::Closure { .. } => v,
+        // Tag-checked above, so unreachable for these variants. Closure and
+        // LazyStdinLines share TAG_LIST but are not list-shaped — materialize
+        // is a no-op for them.
+        HeapObj::Closure { .. } | HeapObj::LazyStdinLines(_) => v,
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
@@ -7105,7 +7120,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         | HeapObj::Record { .. }
         | HeapObj::OkVal(_)
         | HeapObj::ErrVal(_)
-        | HeapObj::Closure { .. } => {
+        | HeapObj::Closure { .. }
+        | HeapObj::LazyStdinLines(_) => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -7139,7 +7155,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
                 | HeapObj::Record { .. }
                 | HeapObj::OkVal(_)
                 | HeapObj::ErrVal(_)
-                | HeapObj::Closure { .. } => {
+                | HeapObj::Closure { .. }
+                | HeapObj::LazyStdinLines(_) => {
                     debug_assert!(false, "ListView::src does not reference HeapObj::List");
                     &[]
                 }
@@ -7266,6 +7283,12 @@ impl NanVal {
     /// the closure (no clone_rc here); the closure's Drop releases them.
     fn heap_closure(kind: FnRefKind, id: u32, captures: Vec<NanVal>) -> Self {
         let rc = Rc::new(HeapObj::Closure { kind, id, captures });
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
+    }
+
+    fn heap_stdin_lines(handle: crate::interpreter::StdinLinesHandle) -> Self {
+        let rc = Rc::new(HeapObj::LazyStdinLines(handle));
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
@@ -7507,6 +7530,11 @@ impl NanVal {
                 // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
             }
+            Value::LazyStdinLines(handle) => {
+                // Wrap the lazy stdin handle in a HeapObj so the VM's OP_FOREACH
+                // can drain it one line at a time without buffering.
+                NanVal::heap_stdin_lines(handle.clone())
+            }
         }
     }
 
@@ -7732,6 +7760,10 @@ impl NanVal {
                             captures: captures.iter().map(|v| v.to_value()).collect(),
                         }
                     }
+                    HeapObj::LazyStdinLines(handle) => {
+                        // Round-trip the lazy handle back to Value::LazyStdinLines.
+                        Value::LazyStdinLines(handle.clone())
+                    }
                 }
             },
         }
@@ -7817,6 +7849,7 @@ impl NanVal {
                                     .collect(),
                             }
                         }
+                        HeapObj::LazyStdinLines(handle) => Value::LazyStdinLines(handle.clone()),
                     }
                 }
             }
@@ -9524,6 +9557,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("index access on non-list"))
                             }
@@ -9564,6 +9598,7 @@ impl<'a> VM<'a> {
                                 | HeapObj::Record { .. }
                                 | HeapObj::OkVal(_)
                                 | HeapObj::ErrVal(_)
+                                | HeapObj::LazyStdinLines(_)
                                 | HeapObj::Closure { .. } => {
                                     vm_err!(VmError::Type("foreach requires a list"))
                                 }
@@ -9601,11 +9636,30 @@ impl<'a> VM<'a> {
                                 }
                                 // else: empty list → fall through to JMP exit
                             }
+                            HeapObj::LazyStdinLines(handle) => {
+                                // Lazy stdin: pull the first line.
+                                match handle.next_line() {
+                                    None => {
+                                        // EOF immediately — fall through to JMP exit (empty).
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "for-line: stdin read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
+                            }
                             HeapObj::Str(_)
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
@@ -9623,17 +9677,17 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
                     let list = reg!(b);
-                    // idx_reg holds the current index (a number); increment it.
-                    // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
-                    // only modified here by addition of 1.0).
-                    let new_idx = reg!(c).as_number() + 1.0;
-                    reg_set!(c, NanVal::number(new_idx));
-                    // SAFETY: list is the same heap List validated by FOREACHPREP on entry.
+                    // SAFETY: list is the same heap value validated by FOREACHPREP on entry.
                     debug_assert!(list.is_heap(), "OP_FOREACHNEXT on non-heap value");
                     unsafe {
                         let heap = list.as_heap_ref();
                         match heap {
                             HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                // idx_reg holds the current index (a number); increment it.
+                                // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
+                                // only modified here by addition of 1.0).
+                                let new_idx = reg!(c).as_number() + 1.0;
+                                reg_set!(c, NanVal::number(new_idx));
                                 let items = slice_of(heap);
                                 let i = new_idx as usize;
                                 if i < items.len() {
@@ -9644,11 +9698,31 @@ impl<'a> VM<'a> {
                                 }
                                 // else: out of bounds → fall through to JMP exit
                             }
+                            HeapObj::LazyStdinLines(handle) => {
+                                // Lazy stdin: pull next line. idx_reg is unused
+                                // for streaming — we just call next_line().
+                                match handle.next_line() {
+                                    None => {
+                                        // EOF — fall through to JMP exit.
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "for-line: stdin read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
+                            }
                             HeapObj::Str(_)
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 // Should never happen: list was validated by FOREACHPREP.
                                 vm_err!(VmError::Type("foreach requires a list"))
@@ -10677,6 +10751,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("len requires string, list, or map"))
                             }
@@ -11825,6 +11900,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("has requires a list or text"))
                             }
@@ -11869,6 +11945,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("hd requires a list or text"))
                             }
@@ -11945,6 +12022,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("at requires a list or text"))
                             }
@@ -12343,6 +12421,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("tl requires a list or text"))
                             }
@@ -12449,6 +12528,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rev requires a list or text"))
                             }
@@ -12563,6 +12643,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("srt requires a list or text"))
                             }
@@ -12631,6 +12712,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rsrt requires a list or text"))
                             }
@@ -12862,6 +12944,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("slc requires a list or text"))
                             }
@@ -12917,6 +13000,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("lst requires a list"))
                             }
@@ -13071,6 +13155,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("take requires a list or text"))
                             }
@@ -13122,6 +13207,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("drop requires a list or text"))
                             }
@@ -13200,6 +13286,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 return Err(VmError::Type("+= requires a list"));
                             }
@@ -13226,6 +13313,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("+= requires a list"))
                             }
@@ -14027,6 +14115,9 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                         };
                         serde_json::Value::String(format!("<closure:{}>", name))
                     }
+                    HeapObj::LazyStdinLines(_) => {
+                        serde_json::Value::String("<stdin-lines>".to_string())
+                    }
                 }
             }
         }
@@ -14194,7 +14285,8 @@ fn nanval_truthy(v: NanVal) -> bool {
                     | HeapObj::Record { .. }
                     | HeapObj::OkVal(_)
                     | HeapObj::ErrVal(_)
-                    | HeapObj::Closure { .. } => true,
+                    | HeapObj::Closure { .. }
+                    | HeapObj::LazyStdinLines(_) => true,
                 }
             },
         }

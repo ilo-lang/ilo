@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use crate::caps::Caps;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub mod json;
 
@@ -220,6 +220,68 @@ pub fn map_key_to_value(k: &MapKey) -> Value {
     }
 }
 
+/// A lazy handle to stdin's line iterator.
+///
+/// Wraps a `BufRead::lines()` iterator behind `Arc<Mutex<>>` so that
+/// `Value::LazyStdinLines` can be `Clone` (cheaply: only the Arc refcount
+/// is bumped) and `PartialEq` (identity: two handles are equal iff they
+/// share the same underlying stdin). Produced by `for-line stdin` and
+/// consumed by the tree-walker's `Stmt::ForEach` arm, which calls
+/// `next()` on each iteration rather than collecting all lines upfront.
+///
+/// On WASM the variant is never constructed (the builtin returns Err early).
+/// The `Debug` impl shows `<stdin-lines>` to keep output readable.
+pub struct StdinLinesHandle {
+    inner: Arc<Mutex<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>>>,
+}
+
+impl std::fmt::Debug for StdinLinesHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<stdin-lines>")
+    }
+}
+
+impl Clone for StdinLinesHandle {
+    fn clone(&self) -> Self {
+        StdinLinesHandle {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl PartialEq for StdinLinesHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl StdinLinesHandle {
+    /// Create a new handle owning a locked stdin lines iterator.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new() -> Self {
+        use std::io::{BufRead, BufReader};
+        // Wrap stdin in a BufReader (which is Send) rather than holding a
+        // StdinLock (which is not Send). A single ilo program is
+        // single-threaded on the hot path, so the per-read locking that
+        // Stdin does internally is fine.
+        let reader = BufReader::new(std::io::stdin());
+        let stdin_box: Box<
+            dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send,
+        > = Box::new(reader.lines());
+        StdinLinesHandle {
+            inner: Arc::new(Mutex::new(stdin_box)),
+        }
+    }
+
+    /// Pull the next line from the underlying iterator.
+    pub fn next_line(&self) -> Option<std::result::Result<String, std::io::Error>> {
+        self.inner
+            .lock()
+            .expect("StdinLinesHandle lock poisoned")
+            .next()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -248,6 +310,12 @@ pub enum Value {
         fn_name: String,
         captures: Vec<Value>,
     },
+    /// Lazy stdin line iterator.  Produced by `for-line stdin`.
+    /// Consumed by `Stmt::ForEach`: each iteration calls `next_line()`,
+    /// so lines are read one at a time as the loop runs — stdin is never
+    /// fully buffered.  On WASM the builtin returns `Err` before this
+    /// variant is constructed.
+    LazyStdinLines(StdinLinesHandle),
 }
 
 impl std::fmt::Display for Value {
@@ -315,6 +383,7 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, "]>")
             }
+            Value::LazyStdinLines(_) => write!(f, "<stdin-lines>"),
         }
     }
 }
@@ -6679,6 +6748,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Rdinl) && args.is_empty() {
         return rdinl_impl();
     }
+    // for-line stdin > LazyStdinLines — lazy line iterator over stdin.
+    // Takes exactly one argument: the text literal "stdin".
+    // Returns Value::LazyStdinLines (not wrapped in Result) so it can be
+    // passed directly to `@binding (for-line stdin) {...}` foreach.
+    // On WASM stdin is unavailable; returns Err immediately.
+    if builtin == Some(Builtin::ForLine) && args.len() == 1 {
+        return for_line_impl(&args[0]);
+    }
     if builtin == Some(Builtin::Wr) && (args.len() == 2 || args.len() == 3) {
         return wr_run(env, args);
     }
@@ -8196,6 +8273,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::Closure { fn_name, .. } => {
             serde_json::Value::String(format!("<closure:{}>", fn_name))
         }
+        Value::LazyStdinLines(_) => serde_json::Value::String("<stdin-lines>".to_string()),
     }
 }
 
@@ -8847,6 +8925,47 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                                 unreachable!("TailCall escaping non-tail loop body");
                             }
                             BodyResult::Value(v) => last = v,
+                        }
+                    }
+                    Ok(Some(BodyResult::Value(last)))
+                }
+                // `for-line stdin` produces a lazy stdin iterator.
+                // We read one line at a time so the loop can process
+                // unbounded streams (e.g. `tail -f`) without buffering.
+                // Partial trailing lines at EOF are emitted unchanged.
+                // I/O errors terminate the loop via RuntimeError.
+                Value::LazyStdinLines(handle) => {
+                    let mut last = Value::Nil;
+                    loop {
+                        let line = handle.next_line();
+                        match line {
+                            None => break,
+                            Some(Err(e)) => {
+                                return Err(RuntimeError::new(
+                                    "ILO-R012",
+                                    format!("for-line: stdin read error: {}", e),
+                                ));
+                            }
+                            Some(Ok(s)) => {
+                                env.push_scope();
+                                env.define(binding, Value::Text(Arc::new(s)));
+                                let result = eval_body(env, body, false);
+                                env.pop_scope();
+                                match result? {
+                                    BodyResult::Return(v) => {
+                                        return Ok(Some(BodyResult::Return(v)));
+                                    }
+                                    BodyResult::Break(v) => {
+                                        last = v;
+                                        break;
+                                    }
+                                    BodyResult::Continue => continue,
+                                    BodyResult::TailCall { .. } => {
+                                        unreachable!("TailCall escaping non-tail loop body");
+                                    }
+                                    BodyResult::Value(v) => last = v,
+                                }
+                            }
                         }
                     }
                     Ok(Some(BodyResult::Value(last)))
@@ -9592,6 +9711,35 @@ fn rdinl_impl() -> Result<Value> {
             }
             Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))),
         })
+    }
+}
+
+/// `for-line` implementation — returns a lazy stdin line iterator.
+///
+/// Takes one argument which must be the text "stdin". Returns
+/// `Value::LazyStdinLines` so callers can iterate with `@binding` foreach.
+/// On WASM stdin is unavailable; returns `Err` immediately.
+fn for_line_impl(source: &Value) -> Result<Value> {
+    match source {
+        Value::Text(s) if s.as_str() == "stdin" => {
+            #[cfg(target_family = "wasm")]
+            {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                    "for-line: stdin not available on wasm".to_string(),
+                )))));
+            }
+            #[cfg(not(target_family = "wasm"))]
+            {
+                Ok(Value::LazyStdinLines(StdinLinesHandle::new()))
+            }
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "for-line: argument must be the text \"stdin\", got {:?}",
+                other
+            ),
+        )),
     }
 }
 
