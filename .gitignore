@@ -14,6 +14,7 @@ __pycache__/
 research/*
 !research/closed-loop-bench/
 !research/BENCHMARK-METHODOLOGY.md
+!research/finetune-comparison.md
 # PNGs in the benchmark charts/ are dataset artefacts and must be tracked.
 !research/closed-loop-bench/charts/*.png
 # Per-cell raw results and tool caches are reproducible from the driver -
@@ -42,6 +43,7 @@ CLAUDE.md
 # Internal strategy and exploration (kept local, not public)
 zero-gap-specs/
 research/
+!research/finetune-comparison.md
 .claude/commands/
 .env.example
 .zero/
