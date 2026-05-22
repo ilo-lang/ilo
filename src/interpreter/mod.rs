@@ -220,6 +220,9 @@ pub fn map_key_to_value(k: &MapKey) -> Value {
     }
 }
 
+type StdinLinesInner =
+    Arc<Mutex<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>>>;
+
 /// A lazy handle to stdin's line iterator.
 ///
 /// Wraps a `BufRead::lines()` iterator behind `Arc<Mutex<>>` so that
@@ -232,7 +235,7 @@ pub fn map_key_to_value(k: &MapKey) -> Value {
 /// On WASM the variant is never constructed (the builtin returns Err early).
 /// The `Debug` impl shows `<stdin-lines>` to keep output readable.
 pub struct StdinLinesHandle {
-    inner: Arc<Mutex<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>>>,
+    inner: StdinLinesInner,
 }
 
 impl std::fmt::Debug for StdinLinesHandle {
@@ -252,6 +255,13 @@ impl Clone for StdinLinesHandle {
 impl PartialEq for StdinLinesHandle {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Default for StdinLinesHandle {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

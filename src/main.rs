@@ -2271,12 +2271,12 @@ impl BuildTarget {
     /// Evaluate a `UsePredicate` against this target: returns `true` when
     /// the predicate matches (i.e. the "true" branch should be imported).
     pub fn eval(self, pred: ast::UsePredicate) -> bool {
-        match (self, pred) {
-            (BuildTarget::Wasm, ast::UsePredicate::Wasm) => true,
-            (BuildTarget::Native, ast::UsePredicate::Native) => true,
-            (BuildTarget::Test, ast::UsePredicate::Test) => true,
-            _ => false,
-        }
+        matches!(
+            (self, pred),
+            (BuildTarget::Wasm, ast::UsePredicate::Wasm)
+                | (BuildTarget::Native, ast::UsePredicate::Native)
+                | (BuildTarget::Test, ast::UsePredicate::Test)
+        )
     }
 }
 
@@ -7110,6 +7110,7 @@ mod tests {
     #[test]
     fn resolve_imports_conditional_wasm_true_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
+        #[allow(unused_imports)]
         use std::io::Write;
         let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
         let native_path = "/tmp/ilo_cond_native_ILO399.ilo";

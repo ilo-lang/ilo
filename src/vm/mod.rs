@@ -9659,7 +9659,6 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
-                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
@@ -9722,7 +9721,6 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
-                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 // Should never happen: list was validated by FOREACHPREP.
                                 vm_err!(VmError::Type("foreach requires a list"))
