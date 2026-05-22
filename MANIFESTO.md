@@ -18,7 +18,7 @@ Total cost = spec loading + generation + context loading + error feedback + retr
 
 Every design decision is evaluated against this number. If a feature reduces it, it's in. If it increases it, it's out. No exceptions for elegance, readability, or convention. Note: until agents are trained on ilo, spec clarity is itself a token cost - a confusing spec means more retries. Some decisions that look like "readability" concessions are actually optimising the spec-loading term.
 
-## The Five Principles
+## The Six Principles
 
 ### 1. Token-Conservative
 
@@ -113,6 +113,28 @@ Writing code costs the same tokens regardless of program size. But *reading* cod
 
 **What the agent cares about:** "How much do I need to read before I can write?"
 **How this helps:** The agent loads the target function's source, its dependencies' signatures, and the types it references - nothing more. As programs grow, the savings compound: the subgraph stays small even as the program gets large.
+
+### 6. Structured Compiler-to-Agent Surface
+
+Every path from the compiler to an agent is machine-readable by default.
+
+Diagnostics, AST output, call graphs, fix plans, skill content, size reports — all of it ships as structured JSON. Not as an optional flag you might forget to pass, but as the default contract. Prose output exists for human TTYs; JSON is the agent path.
+
+The concrete commitments:
+
+- Every CLI subcommand has a `--json` mode. An agent driving `ilo check`, `ilo graph`, `ilo bench`, or any other subcommand gets a typed, parseable response with no screen-scraping.
+- Every emitted artifact carries a stable `schemaVersion` field. Schemas evolve; the version field lets agents detect and adapt to changes rather than silently misparse them.
+- Every diagnostic carries machine-readable fields: error code, source span, candidate fixes, and related locations. An agent reading a diagnostic knows exactly what went wrong, where it went wrong, and what to try next — without parsing human prose.
+- Fix plans are typed ([ILO-360](https://linear.app/ilo-lang/issue/ILO-360/typed-fix-plans-fixsafety-taxonomy-phase-2)): each suggested repair carries a `FixSafety` classification so the agent can decide autonomously whether to apply it.
+- Golden diagnostics and provenance matrices are structured ([ILO-363](https://linear.app/ilo-lang/issue/ILO-363/provenance-matrix-golden-file-diagnostics-phase-4)): regression tests compare JSON, not text, so the error contract is explicit and auditable.
+- Closed-loop benchmarks emit structured cost tables ([ILO-364](https://linear.app/ilo-lang/issue/ILO-364/closed-loop-benchmark-ilo-vs-zero-per-task-economics-phase-5)): token cost per task, per phase, per engine — queryable, not just printable.
+
+This principle is downstream of Constrained — a closed-world verifier is what makes deterministic, schema-stable output possible — but it earns its own line because the structured-output discipline is the single biggest driver of per-task cost reduction in cached steady-state. When an agent can parse one JSON response instead of retrying after a misread prose error, that saves more tokens than any syntax decision. Per the economics analysis in `zero-gap-specs/lessons-from-zero.md`, tooling structure dominates the steady-state cost table.
+
+The corollary: future CLI surface additions ship `--json` from day one, not as a follow-up. Structured output is not polish — it is load-bearing.
+
+**What the agent cares about:** "Can I parse the compiler's response without writing a regex?"
+**How this helps:** Zero screen-scraping, zero retry cycles caused by format ambiguity. The agent reads typed JSON, acts on it, and moves on.
 
 ## Principles We Considered and Dropped
 
