@@ -35902,6 +35902,136 @@ main>n
             other => panic!("expected VmError::Arity, got {other:?}"),
         }
     }
+
+    /// Regression test: every tree-bridge-eligible (Builtin, arity) pair whose
+    /// verify.rs signature returns `R ...` must appear in
+    /// `tree_bridge_returns_result`, so that the auto-unwrap (`!` / `!!`)
+    /// protocol works correctly in the VM and Cranelift backends.
+    ///
+    /// The "result-returning eligible" set below is derived from the
+    /// `src/verify.rs` BUILTINS table: any entry whose return-type string
+    /// starts with `"R "` and whose name maps to a Builtin that also appears
+    /// in `is_tree_bridge_eligible`.  When a new tree-bridge builtin is added
+    /// that returns an ILO Result type, it must be added to BOTH
+    /// `is_tree_bridge_eligible` AND `tree_bridge_returns_result`.
+    ///
+    /// ILO-397: audit for the same gap found in ILO-376 (wro).
+    #[test]
+    fn tree_bridge_eligible_result_builtins_are_in_returns_result() {
+        use crate::builtins::Builtin;
+
+        // (Builtin, representative arity) pairs where:
+        //   1. is_tree_bridge_eligible(B, arity) == true, AND
+        //   2. verify.rs BUILTINS signature returns "R ..." (ILO Result)
+        //
+        // Update this list whenever a new Result-returning builtin is added
+        // to the tree bridge.
+        let result_eligible: &[(Builtin, usize)] = &[
+            (Builtin::Rd, 2),
+            (Builtin::Rdb, 2),
+            (Builtin::Ls, 1),
+            (Builtin::Walk, 1),
+            (Builtin::Glob, 2),
+            (Builtin::Fsize, 1),
+            (Builtin::Mtime, 1),
+            (Builtin::TzOffset, 2),
+            (Builtin::Run, 2),
+            (Builtin::Run2, 2),
+            (Builtin::EnvAll, 0),
+            (Builtin::Jkeys, 2),
+            (Builtin::Rdin, 0),
+            (Builtin::Rdinl, 0),
+            (Builtin::Wra, 2),
+            (Builtin::Wro, 2),
+            (Builtin::DtparseRel, 2),
+            (Builtin::DurParse, 1),
+            (Builtin::GetTo, 2),
+            (Builtin::PstTo, 3),
+            (Builtin::Getx, 1),
+            (Builtin::Getx, 2),
+            (Builtin::Pstx, 2),
+            (Builtin::Pstx, 3),
+            (Builtin::Put, 2),
+            (Builtin::Put, 3),
+            (Builtin::Pat, 2),
+            (Builtin::Pat, 3),
+            (Builtin::Del, 1),
+            (Builtin::Del, 2),
+            (Builtin::Hed, 1),
+            (Builtin::Hed, 2),
+            (Builtin::Opt, 1),
+            (Builtin::Opt, 2),
+            (Builtin::Urldec, 1),
+            (Builtin::B64uDec, 1),
+            (Builtin::B64Dec, 1),
+        ];
+
+        for &(builtin, arity) in result_eligible {
+            assert!(
+                is_tree_bridge_eligible(builtin, arity),
+                "Builtin {:?} arity {} is listed as result-eligible but \
+                 is_tree_bridge_eligible returned false — add it to \
+                 is_tree_bridge_eligible or remove it from this list",
+                builtin,
+                arity
+            );
+            assert!(
+                tree_bridge_returns_result(builtin),
+                "Builtin {:?} (arity {}) has a verify.rs signature starting \
+                 with 'R ' but is missing from tree_bridge_returns_result — \
+                 add it to that function so auto-unwrap (! / !!) works \
+                 correctly in the VM and Cranelift backends",
+                builtin,
+                arity
+            );
+        }
+
+        // Inverse check: every builtin in tree_bridge_returns_result must be
+        // eligible for at least one arity (or be Mapr, which is compiled
+        // natively via OP_CALL_DYN and retains a legacy guard entry).
+        let returns_result_builtins = [
+            Builtin::Rd,
+            Builtin::Rdb,
+            Builtin::Mapr, // native (OP_CALL_DYN path), legacy guard entry
+            Builtin::Ls,
+            Builtin::Walk,
+            Builtin::Glob,
+            Builtin::Fsize,
+            Builtin::Mtime,
+            Builtin::EnvAll,
+            Builtin::Run,
+            Builtin::Run2,
+            Builtin::Jkeys,
+            Builtin::Rdin,
+            Builtin::Rdinl,
+            Builtin::Wra,
+            Builtin::Wro,
+            Builtin::DtparseRel,
+            Builtin::DurParse,
+            Builtin::GetTo,
+            Builtin::PstTo,
+            Builtin::Getx,
+            Builtin::Pstx,
+            Builtin::Put,
+            Builtin::Pat,
+            Builtin::Del,
+            Builtin::Hed,
+            Builtin::Opt,
+            Builtin::Urldec,
+            Builtin::B64uDec,
+            Builtin::B64Dec,
+            Builtin::TzOffset,
+        ];
+        for builtin in returns_result_builtins {
+            assert!(
+                tree_bridge_returns_result(builtin),
+                "Builtin {:?} is in the expected returns_result set but \
+                 tree_bridge_returns_result returned false — update either \
+                 the function or this test",
+                builtin
+            );
+        }
+    }
 }
 
 #[cfg(all(test, feature = "cranelift"))]
