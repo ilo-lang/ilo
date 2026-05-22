@@ -7078,6 +7078,8 @@ fn collect_err_literals_expr(expr: &Expr, out: &mut std::collections::BTreeSet<S
             }
         }
         Expr::MakeClosure { .. } | Expr::Literal(_) | Expr::Ref(_) => {}
+        Expr::Todo(inner) => collect_err_literals_expr(inner, out),
+        Expr::Panic(inner) => collect_err_literals_expr(inner, out),
         Expr::Ternary {
             condition,
             then_expr,

@@ -3253,6 +3253,7 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             body,
             span,
             type_params,
+            effect_set,
         } => ast::Decl::Function {
             name: format!("{}-{}", alias, name),
             params,
@@ -3260,6 +3261,7 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             body,
             span,
             type_params,
+            effect_set,
         },
         ast::Decl::Tool {
             name,
