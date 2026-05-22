@@ -187,6 +187,24 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
             out.push_str(&fmt_type(target));
         }
 
+        Decl::SumType { name, variants, .. } => {
+            out.push_str("type ");
+            out.push_str(name);
+            out.push_str(" =");
+            for (i, v) in variants.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" |");
+                }
+                out.push(' ');
+                out.push_str(&v.name);
+                if let Some(ty) = &v.payload {
+                    out.push('(');
+                    out.push_str(&fmt_type(ty));
+                    out.push(')');
+                }
+            }
+        }
+
         Decl::Use { .. } => {}   // resolved before codegen — skip
         Decl::Error { .. } => {} // poison node — skip
     }
@@ -231,6 +249,9 @@ fn fmt_type(ty: &Type) -> String {
             s
         }
         Type::Named(name) => name.clone(),
+        Type::U32 => "U32".to_string(),
+        Type::U64 => "U64".to_string(),
+        Type::I64 => "I64".to_string(),
     }
 }
 
@@ -679,6 +700,10 @@ fn fmt_pattern(pat: &Pattern) -> String {
         Pattern::Err(binding) => format!("^{}", binding),
         Pattern::Literal(lit) => fmt_literal(lit),
         Pattern::TypeIs { ty, binding } => format!("{} {}", fmt_type(ty), binding),
+        Pattern::Variant { tag, binding } => match binding {
+            Some(b) => format!("{tag}({b})"),
+            None => tag.clone(),
+        },
         Pattern::Or(alts) => alts.iter().map(fmt_pattern).collect::<Vec<_>>().join("|"),
     }
 }
@@ -1318,6 +1343,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: Span::UNKNOWN,
         };
         let s = format_decl(&use_decl, FmtMode::Dense);

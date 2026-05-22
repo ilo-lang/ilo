@@ -31,10 +31,23 @@ pub enum Token {
     MapType,
     #[token("S")]
     SumType,
+    /// `W` — the capability World type (ILO-68). Mirrors `L`, `R`, `M`, etc.
+    /// Usage in type position: `w:W` declares a World capability parameter.
+    #[token("W")]
+    WorldType,
 
     // Step keyword for range loops: `@i 0..n by 2{...}`
     #[token("by")]
     By,
+
+    // Integer width types — listed before single-letter sigils so logos
+    // matches the longer `U32`/`U64`/`I64` before falling back to `U`/`I`.
+    #[token("U32")]
+    U32Type,
+    #[token("U64")]
+    U64Type,
+    #[token("I64")]
+    I64Type,
 
     // Reserved keywords from other languages — not valid in ilo, emit friendly errors
     #[token("if")]
@@ -265,6 +278,10 @@ impl Token {
             Token::OptType => "`O`".into(),
             Token::MapType => "`M`".into(),
             Token::SumType => "`S`".into(),
+            Token::U32Type => "`U32`".into(),
+            Token::U64Type => "`U64`".into(),
+            Token::I64Type => "`I64`".into(),
+            Token::WorldType => "`W`".into(),
 
             // Reserved cross-language keywords
             Token::KwIf => "`if`".into(),

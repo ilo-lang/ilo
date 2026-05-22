@@ -51,6 +51,11 @@ pub struct ParseContext {
     /// parsed as a bare Ref (list element) rather than a function call.
     /// Set only inside list-literal element parsing.
     pub no_whitespace_call: bool,
+    /// When true, a `{` that looks like a brace-lambda (`{params> stmts}`) is
+    /// NOT treated as an operand start. Set when parsing the collection /
+    /// range-bound expression in a foreach/for-range statement so that
+    /// `@x xs{body}` is never mis-parsed as `@x (xs {lambda})`.
+    pub no_brace_lambda_operand: bool,
 }
 
 pub struct Parser {
@@ -521,6 +526,17 @@ impl Parser {
             Some(Token::Greater) => true,
             // name param:type ... — has params
             Some(Token::Ident(_)) => matches!(self.token_at(pos + 2), Some(Token::Colon)),
+            // name<a:bound> ... — generic type-parameter block
+            // Recognise `name <` when `<` is followed by a single-char lowercase
+            // ident (the type variable) so we don't misfire on `x < y` in expression
+            // position where `y` would be longer or be a param name (multi-char).
+            Some(Token::Less) => matches!(
+                self.token_at(pos + 2),
+                Some(Token::Ident(v))
+                    if v.len() == 1
+                        && v.chars().next().is_some_and(|c|
+                            c.is_lowercase() && !matches!(c, 'n' | 't' | 'b'))
+            ),
             _ => false,
         }
     }
@@ -960,18 +976,24 @@ statement boundary; bind the chain to a local first. For example, split \
                 alias: None,
                 predicate: Some(predicate),
                 alt_path: Some(false_path),
+                reexport: false,
+                lazy: false,
                 span: start.merge(end),
             });
         }
 
-        // Detect named-module form: `use alias:"path"` — ident immediately
-        // followed by `:` then a string literal.
-        // Distinguished from the plain form `use "path"` by the leading ident.
-        let (alias, path) = match self.peek().cloned() {
+        // Three forms:
+        //   `use "path"`                — flat import
+        //   `use alias:"path"`          — named-module import (symbols prefixed with `alias-`)
+        //   `use re:"path" [n1 n2]`     — re-export: import AND expose listed names to consumers
+        //
+        // Detected by whether the next token is a string literal or an ident followed by `:`.
+        // The special ident `re` triggers the re-export form; any other ident triggers the alias form.
+        let (alias, path, reexport) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
                 // Plain form: `use "path"`
                 self.advance();
-                (None, p)
+                (None, p, false)
             }
             Some(Token::Ident(a)) => {
                 // Peek ahead: must be followed by Colon then Text.
@@ -982,13 +1004,20 @@ statement boundary; bind the chain to a local first. For example, split \
                         match self.peek().cloned() {
                             Some(Token::Text(p)) => {
                                 self.advance();
-                                (Some(a), p)
+                                if a == "re" {
+                                    // Re-export form: `use re:"path"` — no alias prefix
+                                    (None, p, true)
+                                } else {
+                                    // Named-module alias form: `use alias:"path"`
+                                    (Some(a), p, false)
+                                }
                             }
                             Some(tok) => {
                                 return Err(self.error(
                                     "ILO-P016",
                                     format!(
-                                        "expected a string path after `use alias:`, got {}",
+                                        "expected a string path after `use {}:`, got {}",
+                                        a,
                                         tok.user_facing_name()
                                     ),
                                 ));
@@ -996,7 +1025,7 @@ statement boundary; bind the chain to a local first. For example, split \
                             None => {
                                 return Err(self.error(
                                     "ILO-P016",
-                                    "expected a string path after `use alias:`, got EOF".into(),
+                                    format!("expected a string path after `use {}:`, got EOF", a),
                                 ));
                             }
                         }
@@ -1035,6 +1064,25 @@ statement boundary; bind the chain to a local first. For example, split \
             }
         };
 
+        // Optional `[name1 name2 ...]` scoped import list.
+        // Incompatible with alias form; required for re-export form.
+        // Detect lazy import: `use lazy:"./path"` — `lazy` is a reserved
+        // modifier, not a real alias. The effective alias is derived from the
+        // path stem (last path component without extension), e.g.
+        // `use lazy:"./big-module"` → alias `big-module`, lazy = true.
+        let (alias, lazy) = match alias {
+            Some(ref a) if a == "lazy" => {
+                // Derive alias from the path stem.
+                let stem = std::path::Path::new(&path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&path)
+                    .to_string();
+                (Some(stem), true)
+            }
+            other => (other, false),
+        };
+
         // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
         let only = if self.peek() == Some(&Token::LBracket) {
             if alias.is_some() {
@@ -1064,6 +1112,14 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             Some(names)
         } else {
+            if reexport {
+                return Err(self.error(
+                    "ILO-P016",
+                    "re-export form (`use re:\"path\"`) requires a `[name1 name2]` list — \
+                     use `use \"path\"` to import all without re-exporting"
+                        .into(),
+                ));
+            }
             None
         };
 
@@ -1074,6 +1130,8 @@ statement boundary; bind the chain to a local first. For example, split \
             alias,
             predicate: None,
             alt_path: None,
+            reexport,
+            lazy,
             span: start.merge(end),
         })
     }
@@ -1082,7 +1140,21 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_type_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Type)?;
-        let name = self.expect_decl_name()?;
+        let name = self.expect_ident()?;
+        // `type Result<a,b> = ok(a) | err(b)` — generic sum type with type params
+        let type_params = self.parse_sum_type_params()?;
+        // `type Name = Circle(n) | Square(n) | red` — sum type with payloads
+        if self.peek() == Some(&Token::Eq) {
+            self.advance(); // consume `=`
+            return self.parse_sum_type_body(name, type_params, start);
+        }
+        // Non-sum type decls cannot have type params
+        if !type_params.is_empty() {
+            return Err(self.error(
+                "ILO-P023",
+                "generic type parameters `<...>` are only allowed on sum type declarations (`type Name<a> = ...`)".into(),
+            ));
+        }
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -1101,6 +1173,138 @@ statement boundary; bind the chain to a local first. For example, split \
             fields,
             span: start.merge(end),
         })
+    }
+
+    /// Parse the body of `type Name = Variant1(type) | Variant2 | Variant3(type)`.
+    /// Called after `type Name<...> =` has been consumed.
+    fn parse_sum_type_body(
+        &mut self,
+        name: String,
+        type_params: Vec<(String, crate::ast::Bound)>,
+        start: Span,
+    ) -> Result<Decl> {
+        // Set of declared type-variable names (e.g. {"a", "b"}) so the payload
+        // parser can treat them as Named type variables rather than primitives.
+        let type_var_names: std::collections::HashSet<String> =
+            type_params.iter().map(|(n, _)| n.clone()).collect();
+        let mut variants = Vec::new();
+        loop {
+            // Each variant: `ident` optionally followed by `(type)`.
+            // `nil` is a keyword in expressions but is a perfectly valid variant
+            // name in a sum type declaration (e.g. `type list = nil | cons(n)`),
+            // so we accept Token::Nil here in addition to plain identifiers.
+            let vname = match self.peek().cloned() {
+                Some(Token::Nil) => {
+                    self.advance();
+                    "nil".to_string()
+                }
+                _ => self.expect_ident().map_err(|_| {
+                    self.error(
+                        "ILO-P010",
+                        "expected variant name in sum type declaration".into(),
+                    )
+                })?,
+            };
+            let payload = if self.peek() == Some(&Token::LParen) {
+                self.advance(); // consume `(`
+                let ty = self.parse_type_in_sum_context(&type_var_names)?;
+                self.expect(&Token::RParen)?;
+                Some(ty)
+            } else {
+                None
+            };
+            variants.push(crate::ast::Variant {
+                name: vname,
+                payload,
+            });
+            // Variants separated by `|`
+            if self.peek() == Some(&Token::Pipe) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if variants.is_empty() {
+            return Err(self.error("ILO-P010", "sum type requires at least one variant".into()));
+        }
+        let end = self.prev_span();
+        Ok(Decl::SumType {
+            name,
+            type_params,
+            variants,
+            span: start.merge(end),
+        })
+    }
+
+    /// Parse optional type-parameter block for sum type declarations.
+    /// Syntax: `<a b>` or `<a,b>` (commas optional as separators).
+    /// Returns empty vec if no `<` follows.
+    fn parse_sum_type_params(&mut self) -> Result<Vec<(String, crate::ast::Bound)>> {
+        use crate::ast::Bound;
+        if self.peek() != Some(&Token::Less) {
+            return Ok(vec![]);
+        }
+        self.advance(); // consume `<`
+        let mut params = Vec::new();
+        loop {
+            // Skip optional commas between type vars
+            while self.peek() == Some(&Token::Comma) {
+                self.advance();
+            }
+            if self.peek() == Some(&Token::Greater) {
+                self.advance(); // consume `>`
+                break;
+            }
+            match self.peek().cloned() {
+                Some(Token::Ident(ref n))
+                    if n.len() == 1 && n.chars().next().is_some_and(|c| c.is_lowercase()) =>
+                {
+                    let var_name = n.clone();
+                    self.advance();
+                    // Optional bound annotation `:bound`
+                    let bound = if self.peek() == Some(&Token::Colon) {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Ident(ref b)) => {
+                                let bound = match b.as_str() {
+                                    "comparable" => Bound::Comparable,
+                                    "numeric" => Bound::Numeric,
+                                    "text" => Bound::Text,
+                                    "any" => Bound::Any,
+                                    other => {
+                                        return Err(self.error_hint(
+                                            "ILO-P022",
+                                            format!("unknown bound '{other}' — expected comparable, numeric, text, or any"),
+                                            "write `<a:comparable>` or `<a:numeric>` etc.".to_string(),
+                                        ));
+                                    }
+                                };
+                                self.advance();
+                                bound
+                            }
+                            _ => {
+                                return Err(self.error_hint(
+                                    "ILO-P022",
+                                    "expected bound name after ':'".to_string(),
+                                    "valid bounds: comparable, numeric, text, any".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        Bound::Any
+                    };
+                    params.push((var_name, bound));
+                }
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P022",
+                        "expected single-letter type variable in generic sum type param list".to_string(),
+                        "write `type Foo<a b>` or `type Foo<a,b>` — type variables must be single lowercase letters".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(params)
     }
 
     /// `tool name"desc" params>return timeout:n,retry:n`
@@ -1204,6 +1408,10 @@ statement boundary; bind the chain to a local first. For example, split \
                 format!("rename to something like `my{name}` or `{name}of`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch to `{canonical}`."),
             ));
         }
+        // Optional generic type-parameter block: `<a:Comparable b>` or `<a b c>`.
+        // The `<` token is unambiguous here (function-header position has no
+        // left-hand operand for the less-than binary operator).
+        let type_params = self.parse_type_params()?;
         let params = self.parse_params()?;
         // After params, before we touch `>` and the return type, make sure we
         // haven't crossed a top-level decl boundary. If we have, the header
@@ -1269,6 +1477,7 @@ statement boundary; bind the chain to a local first. For example, split \
         let end = self.prev_span();
         Ok(Decl::Function {
             name,
+            type_params,
             params,
             return_type,
             body,
@@ -1559,6 +1768,26 @@ statement boundary; bind the chain to a local first. For example, split \
 
     // ---- Types ----
 
+    /// Like `parse_type` but treats any declared type-variable name (even
+    /// primitive-keyword letters like `n`, `t`, `b`) as `Type::Named` instead
+    /// of the primitive. Used when parsing variant payloads inside generic sum
+    /// type declarations so `type Result<a,b> = ok(a) | err(b)` treats `b` as
+    /// the type variable, not the `bool` primitive.
+    fn parse_type_in_sum_context(
+        &mut self,
+        type_vars: &std::collections::HashSet<String>,
+    ) -> Result<Type> {
+        // Check whether the next token is a single-letter ident that is a
+        // declared type variable. If so, consume it and return Named.
+        if let Some(Token::Ident(s)) = self.peek().cloned() {
+            if type_vars.contains(&s) && s.len() == 1 {
+                self.advance();
+                return Ok(Type::Named(s));
+            }
+        }
+        self.parse_type()
+    }
+
     fn parse_type(&mut self) -> Result<Type> {
         self.check_depth()?;
         self.depth_inc();
@@ -1692,14 +1921,34 @@ statement boundary; bind the chain to a local first. For example, split \
                 let return_type = types.pop().expect("F type requires at least a return type");
                 Ok(Type::Fn(types, Box::new(return_type)))
             }
+            Some(Token::U32Type) => {
+                self.advance();
+                Ok(Type::U32)
+            }
+            Some(Token::U64Type) => {
+                self.advance();
+                Ok(Type::U64)
+            }
+            Some(Token::I64Type) => {
+                self.advance();
+                Ok(Type::I64)
+            }
             Some(Token::Ident(name)) => {
                 self.advance();
                 Ok(Type::Named(name))
             }
+            Some(Token::WorldType) => {
+                // `W` — capability World type (ILO-68). Parsed as Named("World")
+                // so the AST is backwards-compatible; the verifier converts it
+                // to Ty::World in `convert_type_with_aliases`.
+                self.advance();
+                Ok(Type::Named("World".to_string()))
+            }
             Some(tok) => Err(self.error_hint(
                 "ILO-P007",
                 format!("expected type, got {}", tok.user_facing_name()),
-                "valid types: n, t, b, L n, R n t, F n>n, or a record type name".to_string(),
+                "valid types: n, t, b, U32, U64, I64, L n, R n t, F n>n, W (World), or a record type name"
+                    .to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
@@ -1719,9 +1968,92 @@ statement boundary; bind the chain to a local first. For example, split \
             Some(Token::ResultType) => true,
             Some(Token::SumType) => true,
             Some(Token::FnType) => true,
+            Some(Token::WorldType) => true,
             Some(Token::LParen) => true,
+            Some(Token::U32Type) => true,
+            Some(Token::U64Type) => true,
+            Some(Token::I64Type) => true,
             _ => false,
         }
+    }
+
+    /// Parse optional generic type-parameter block: `<a:Comparable b:Numeric c>`.
+    ///
+    /// Syntax: `<` ( letter ( `:` bound )? )+ `>` where `letter` is a single
+    /// lowercase ASCII letter (the type-variable name) and `bound` is one of
+    /// `Comparable`, `Numeric`, `Text`, or `Any`.
+    ///
+    /// Returns an empty vec if the next token is not `<`.
+    /// Emits `ILO-P022` for malformed type-param blocks and returns the empty vec
+    /// on error (the declaration continues; the type checker will treat all vars
+    /// as `Any`-bounded).
+    fn parse_type_params(&mut self) -> Result<Vec<(String, crate::ast::Bound)>> {
+        use crate::ast::Bound;
+        if self.peek() != Some(&Token::Less) {
+            return Ok(vec![]);
+        }
+        self.advance(); // consume `<`
+        let mut params = Vec::new();
+        loop {
+            if self.peek() == Some(&Token::Greater) {
+                self.advance(); // consume `>`
+                break;
+            }
+            // Expect a single lowercase letter ident
+            match self.peek().cloned() {
+                Some(Token::Ident(ref name))
+                    if name.len() == 1 && name.chars().next().is_some_and(|c| c.is_lowercase()) =>
+                {
+                    let var_name = name.clone();
+                    self.advance();
+                    let bound = if self.peek() == Some(&Token::Colon) {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Ident(ref b)) => {
+                                let bound = match b.as_str() {
+                                    "comparable" => Bound::Comparable,
+                                    "numeric" => Bound::Numeric,
+                                    "text" => Bound::Text,
+                                    "any" => Bound::Any,
+                                    other => {
+                                        return Err(self.error_hint(
+                                            "ILO-P022",
+                                            format!("unknown bound '{other}' — expected comparable, numeric, text, or any"),
+                                            "write `<a:comparable>` or `<a:numeric>` etc.".to_string(),
+                                        ));
+                                    }
+                                };
+                                self.advance();
+                                bound
+                            }
+                            _ => {
+                                return Err(self.error_hint(
+                                    "ILO-P022",
+                                    "expected bound name after ':'".to_string(),
+                                    "valid bounds: comparable, numeric, text, any".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        Bound::Any
+                    };
+                    params.push((var_name, bound));
+                }
+                Some(Token::Greater) => {
+                    // handled by loop condition; shouldn't reach here
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P022",
+                        "expected single-letter type variable in generic param list".to_string(),
+                        "write `<a>` or `<a:Comparable>` — type variables must be single lowercase letters".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(params)
     }
 
     /// Parse parameter list: `name:type name:type ...`
@@ -2601,6 +2933,19 @@ statement boundary; bind the chain to a local first. For example, split \
                 if self.token_at(self.pos + 1) == Some(&Token::Colon) {
                     return false;
                 }
+                // Variant pattern: `Ident ( binding ) :` — sum type arm.
+                if self.token_at(self.pos + 1) == Some(&Token::LParen) {
+                    // Check for ident/underscore followed by `)` then `:`
+                    let p2 = self.token_at(self.pos + 2);
+                    let p3 = self.token_at(self.pos + 3);
+                    let p4 = self.token_at(self.pos + 4);
+                    let inner_ok = matches!(p2, Some(Token::Ident(_) | Token::Underscore));
+                    let close_ok = p3 == Some(&Token::RParen);
+                    let colon_ok = p4 == Some(&Token::Colon);
+                    if inner_ok && close_ok && colon_ok {
+                        return false;
+                    }
+                }
                 // Otherwise an ident followed by `=` or any operator is a
                 // statement.
                 true
@@ -2731,6 +3076,23 @@ statement boundary; bind the chain to a local first. For example, split \
                     )
                 )
             }
+            // ident(binding): → payload variant pattern (e.g., `circle(r):`)
+            Some(Token::Ident(_))
+                if self.token_at(after_semi + 1) == Some(&Token::LParen)
+                    && matches!(
+                        self.token_at(after_semi + 2),
+                        Some(Token::Ident(_) | Token::Underscore)
+                    )
+                    && self.token_at(after_semi + 3) == Some(&Token::RParen)
+                    && self.token_at(after_semi + 4) == Some(&Token::Colon) =>
+            {
+                true
+            }
+            // ident: → payload-less variant pattern
+            Some(Token::Ident(_)) => {
+                after_semi + 1 < self.tokens.len()
+                    && self.token_at(after_semi + 1) == Some(&Token::Colon)
+            }
             _ => false,
         }
     }
@@ -2799,7 +3161,16 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             Some(Token::Nil) => {
                 self.advance();
-                Ok(Pattern::Literal(Literal::Nil))
+                // `nil:` in a match arm can mean either:
+                //  - the built-in nil literal (Optional/nil check)
+                //  - a sum-type variant named `nil` (e.g. `type list = nil | cons(n)`)
+                // We emit Pattern::Variant so the same arm covers both cases.
+                // The interpreter and VM both handle this: matching Value::Nil
+                // as well as Value::Variant { tag: "nil" }.
+                Ok(Pattern::Variant {
+                    tag: "nil".to_string(),
+                    binding: None,
+                })
             }
             Some(Token::Ident(name)) if matches!(name.as_str(), "n" | "t" | "b" | "l") => {
                 let ty = match name.as_str() {
@@ -2819,6 +3190,25 @@ statement boundary; bind the chain to a local first. For example, split \
                 };
                 Ok(Pattern::TypeIs { ty, binding })
             }
+            // `Tag(binding):` — named-sum variant pattern with optional payload binding
+            Some(Token::Ident(_)) => {
+                let tag = self.expect_ident()?;
+                let binding = if self.peek() == Some(&Token::LParen) {
+                    self.advance(); // consume `(`
+                    let b = match self.peek() {
+                        Some(Token::Underscore) => {
+                            self.advance();
+                            "_".to_string()
+                        }
+                        _ => self.expect_ident()?,
+                    };
+                    self.expect(&Token::RParen)?;
+                    Some(b)
+                } else {
+                    None
+                };
+                Ok(Pattern::Variant { tag, binding })
+            }
             Some(tok) => Err(self.error(
                 "ILO-P011",
                 format!("expected pattern, got {}", tok.user_facing_name()),
@@ -2837,6 +3227,13 @@ statement boundary; bind the chain to a local first. For example, split \
         // token starts an operand, so `@j 0..len xs{...}` parses cleanly as
         // `0..Call(len,[xs])`. See tests/regression_range_expr.rs for the
         // cross-engine matrix.
+        //
+        // With brace-lambda syntax, `{params> stmts}` is a valid operand —
+        // but NOT here: the `{...}` after the collection/range-end is always
+        // the loop body, never a brace-lambda argument.  Set the context flag
+        // so `can_start_atom` treats `{` as a non-operand in this position,
+        // restoring the pre-brace-lambda behaviour for foreach/range heads.
+        let saved_ctx = self.push_ctx(|c| c.no_brace_lambda_operand = true);
         let start_expr = self.parse_expr_inner()?;
         // Check for range syntax: start..end
         if self.peek() == Some(&Token::DotDot) {
@@ -2849,6 +3246,7 @@ statement boundary; bind the chain to a local first. For example, split \
             } else {
                 None
             };
+            self.pop_ctx(saved_ctx);
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
@@ -2858,6 +3256,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 body,
             });
         }
+        self.pop_ctx(saved_ctx);
         let body = self.parse_brace_body()?;
         Ok(Stmt::ForEach {
             binding,
@@ -3937,7 +4336,12 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `env-all!` / etc. Never consume args — return immediately as
                 // a 0-arg call. Without this guard the greedy args loop below
                 // would steal the first token of the next statement.
-                if name == "rdin" || name == "rdinl" || name == "env-all" {
+                if name == "rdin"
+                    || name == "rdinl"
+                    || name == "env-all"
+                    || name == "world"
+                    || name == "world-no-net"
+                {
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
@@ -3994,7 +4398,9 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "rdinl"
                 || name == "pi"
                 || name == "tau"
-                || name == "e")
+                || name == "e"
+                || name == "world"
+                || name == "world-no-net")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -4666,8 +5072,11 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         if self.is_anon_record_literal() {
             return true;
         }
-        // Brace-lambda `{params> stmts}` is also a valid atom start.
-        if self.looks_like_brace_lambda() {
+        // Brace-lambda `{params> stmts}` is also a valid atom start, unless
+        // the caller has disabled brace-lambda consumption (e.g. foreach
+        // collection expressions where `@x xs{body}` must not parse `xs` as
+        // a call with the loop body as a brace-lambda argument).
+        if !self.ctx.no_brace_lambda_operand && self.looks_like_brace_lambda() {
             return true;
         }
         matches!(
@@ -4800,7 +5209,9 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     || name == "rdinl"
                     || name == "pi"
                     || name == "tau"
-                    || name == "e" =>
+                    || name == "e"
+                    || name == "world"
+                    || name == "world-no-net" =>
             {
                 let name = name.clone();
                 self.advance();
@@ -4843,7 +5254,12 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             }
             Some(Token::Nil) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Nil))
+                // Emit as Expr::Ref("nil") so that, when a sum-type variant
+                // named `nil` is in scope, it resolves to the variant
+                // constructor (returning the sum type).  The verifier and
+                // interpreter both fall back to the ordinary nil value when no
+                // such variant is registered.
+                Ok(Expr::Ref("nil".to_string()))
             }
             Some(Token::Underscore) => {
                 // `_ident` (no whitespace between `_` and the following ident) →
@@ -5247,6 +5663,7 @@ For variable-position list indexing bind the head first: \
         let span = start.merge(end);
         self.lifted_decls.push(Decl::Function {
             name: name.clone(),
+            type_params: vec![],
             params: lifted_params,
             return_type,
             body,
@@ -5394,6 +5811,7 @@ For variable-position list indexing bind the head first: \
             return_type: Type::Any,
             body,
             span,
+            type_params: vec![],
         });
         if free.is_empty() {
             Ok(Expr::Ref(fn_name))
@@ -9377,6 +9795,77 @@ mod tests {
         );
     }
 
+    // --- lazy use (ILO-400) ---
+
+    #[test]
+    fn parse_use_lazy_sets_lazy_flag_and_stem_alias() {
+        // `use lazy:"./big-module.ilo"` → lazy=true, alias="big-module"
+        let prog = parse_str(r#"use lazy:"./big-module.ilo""#);
+        let Decl::Use {
+            path, alias, lazy, ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use, got {:?}", prog.declarations)
+        };
+        assert_eq!(path, "./big-module.ilo");
+        assert_eq!(alias.as_deref(), Some("big-module"));
+        assert!(*lazy, "lazy flag must be true");
+    }
+
+    #[test]
+    fn parse_use_lazy_no_extension() {
+        // Path without extension: stem is the whole basename
+        let prog = parse_str(r#"use lazy:"./utils""#);
+        let Decl::Use { alias, lazy, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(alias.as_deref(), Some("utils"));
+        assert!(*lazy, "lazy flag must be true");
+    }
+
+    #[test]
+    fn parse_use_non_lazy_alias_unchanged() {
+        // Non-lazy alias: `use m:"lib.ilo"` should leave lazy=false
+        let prog = parse_str(r#"use m:"lib.ilo""#);
+        let Decl::Use { alias, lazy, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(alias.as_deref(), Some("m"));
+        assert!(!lazy, "lazy must be false for non-lazy import");
+    }
+
+    #[test]
+    fn parse_use_reexport_form() {
+        let prog = parse_str(r#"use re:"lib.ilo" [foo bar]"#);
+        let Decl::Use {
+            path,
+            only,
+            alias,
+            reexport,
+            ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "lib.ilo");
+        assert!(alias.is_none(), "re: form should set no alias");
+        assert!(*reexport, "re: form should set reexport=true");
+        let names = only.as_ref().unwrap();
+        assert_eq!(names, &["foo", "bar"]);
+    }
+
+    #[test]
+    fn parse_use_reexport_requires_bracket_list() {
+        let (_, errors) = parse_str_errors(r#"use re:"lib.ilo""#);
+        assert!(!errors.is_empty(), "re: form without brackets should error");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-P016" && e.message.contains("requires a `[name1 name2]`")),
+            "expected ILO-P016 about required bracket list: {errors:?}"
+        );
+    }
+
     #[test]
     fn parse_private_fn_decl() {
         let prog = parse_str("_helper n:n>n;+n 1");
@@ -10669,7 +11158,10 @@ mod tests {
 
     #[test]
     fn parse_match_nil_literal_pattern() {
-        // `?x{nil:0;_:1}` — nil token as a match pattern (Pattern::Literal(Literal::Nil))
+        // `?x{nil:0;_:1}` — nil token as a match pattern.
+        // Since ILO-403, `nil:` in a match arm is emitted as
+        // Pattern::Variant { tag: "nil" } so it covers both built-in nil
+        // values (Optional) and sum-type variants named `nil`.
         let prog = parse_str("f x:n>n;?x{nil:0;_:1}");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
@@ -10677,7 +11169,10 @@ mod tests {
         let Stmt::Match { arms, .. } = &body[0].node else {
             panic!("expected match")
         };
-        assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Nil)));
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Variant { tag, binding: None } if tag == "nil"
+        ));
     }
 
     // ── Coverage: L975 — parse_expr_or_guard: guard with else body ─────────────
@@ -10858,14 +11353,17 @@ mod tests {
 
     #[test]
     fn parse_nil_literal_operand() {
-        // `nil` as an expression operand — exercises Token::Nil in parse_operand
+        // `nil` as an expression operand.
+        // Since ILO-403, Token::Nil produces Expr::Ref("nil") so that sum-type
+        // variants named `nil` resolve correctly via the variant_constructors map.
+        // When no `nil` variant is in scope the interpreter/VM fall back to nil.
         let prog = parse_str("f>_;nil");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
         assert!(matches!(
             &body[0].node,
-            Stmt::Expr(Expr::Literal(Literal::Nil))
+            Stmt::Expr(Expr::Ref(name)) if name == "nil"
         ));
     }
 
@@ -11083,6 +11581,8 @@ mod tests {
     // Nil literal in match pattern
     #[test]
     fn cov_nil_literal_pattern() {
+        // Since ILO-403, `nil:` in a match arm is Pattern::Variant { tag: "nil" }
+        // (covers both built-in nil and sum-type variants named `nil`).
         let prog = parse_str(r#"f x:n>n;?x{nil:0;_:1}"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
@@ -11090,7 +11590,10 @@ mod tests {
         let Stmt::Match { arms, .. } = &body[0].node else {
             panic!("expected match")
         };
-        assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Nil)));
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Variant { tag, binding: None } if tag == "nil"
+        ));
     }
 
     // parse_let single-brace desugar: v=cond{body} → Guard { condition, body: [Let{name,...}] }

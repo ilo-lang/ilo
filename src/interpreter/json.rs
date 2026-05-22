@@ -65,8 +65,29 @@ impl Value {
             }
             Value::FnRef(_) => Err("functions cannot be serialized".to_string()),
             Value::Closure { .. } => Err("closures cannot be serialized".to_string()),
+            Value::Variant { tag, payload, .. } => {
+                let mut map = serde_json::Map::with_capacity(2);
+                map.insert("tag".to_string(), serde_json::Value::String(tag.clone()));
+                if let Some(p) = payload {
+                    map.insert("payload".to_string(), p.to_json()?);
+                }
+                Ok(serde_json::Value::Object(map))
+            }
             Value::LazyStdinLines(_) => {
                 Err("stdin-lines iterator cannot be serialized".to_string())
+            }
+            Value::World {
+                net,
+                read,
+                write,
+                run,
+            } => {
+                let mut map = serde_json::Map::with_capacity(4);
+                map.insert("net".to_string(), serde_json::Value::Bool(*net));
+                map.insert("read".to_string(), serde_json::Value::Bool(*read));
+                map.insert("write".to_string(), serde_json::Value::Bool(*write));
+                map.insert("run".to_string(), serde_json::Value::Bool(*run));
+                Ok(serde_json::Value::Object(map))
             }
         }
     }

@@ -149,6 +149,14 @@ pub enum Builtin {
     Wrl,
     Prnt,
     Env,
+    /// `world > World` — return the current capability World value.
+    /// Zero args; reads from the runtime's active `Caps`.
+    WorldCap,
+    /// `world-no-net > World` — construct a World with net=false.
+    /// All other caps (read, write, run) are inherited from the runtime `Caps`.
+    /// Used to pass a restricted capability token to a sub-function that should
+    /// not perform network I/O; the verifier enforces this statically (ILO-T044).
+    WorldNoNet,
     Ls,
     Walk,
     Glob,
@@ -231,6 +239,14 @@ pub enum Builtin {
     // clean dot-access: r.stdout, r.stderr, r.exit (n, not t). Non-zero
     // exit is NOT an error; Err only on spawn failure. Tree-bridge eligible.
     Run2,
+    // `run-bg cmd:t args:L t > R n t` — fire-and-forget background spawn.
+    // Launches the child process and immediately returns `Ok(pid:n)` without
+    // waiting for it to finish. stdout/stderr are inherited from the parent
+    // (agents usually redirect via shell or the child itself). Err only on
+    // spawn failure. The returned pid is a positive integer; callers that
+    // need to reap the child can pass it to a platform wait(2) equivalent.
+    // Tree-bridge eligible.
+    RunBg,
 
     // Map (associative array)
     Mmap,
@@ -356,6 +372,15 @@ pub enum Builtin {
     Sha256Hex,
     Sha256d,
 
+    // `tokcount s > n` — approximate cl100k_base token count of string `s`.
+    // Uses a bytes/3.4 approximation (mean bytes-per-token for English prose
+    // under cl100k_base). Fast, allocation-minimal, and correct within ~5%
+    // for natural-language skill files. A follow-up (ILO-47) will replace
+    // this with the full tiktoken-rs BPE tokeniser once the crate's WASM
+    // and licence story is confirmed. Pure text-in / number-out; tree-bridge
+    // eligible. Added in 0.12.2 (experimental).
+    Tokcount,
+
     // `where cond xs ys > L a` — parallel-list conditional select.
     // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
     // All three lists must have the same length; mismatch raises ILO-R009.
@@ -411,6 +436,81 @@ pub enum Builtin {
     // eligible: pure t → t, no FnRef args, no I/O. Appended last to
     // preserve every existing on-wire tag.
     HexRev,
+
+    // Bitwise ops (f64-only, mod 2^32 semantics). All tree-bridge eligible:
+    // pure numeric-in / numeric-out, no FnRef args, no I/O, no Result wrapper.
+    // Inputs are truncated to u32 via `as u64 & 0xFFFF_FFFF`; output is
+    // returned as f64. Closes the crypto-track gap without a new integer type.
+    // Added in 0.12.x (ILO-58 MVP).
+    //
+    // band x y  — bitwise AND  (x & y)
+    // bor  x y  — bitwise OR   (x | y)
+    // bxor x y  — bitwise XOR  (x ^ y)
+    // bnot x    — bitwise NOT  (^x, 32-bit)
+    // bshl x n  — logical shift left  (x << n, mod 32)
+    // bshr x n  — logical shift right (x >> n, mod 32)
+    // brot x n  — rotate left 32-bit  (x.rotate_left(n))
+    Band,
+    Bor,
+    Bxor,
+    Bnot,
+    Bshl,
+    Bshr,
+    Brot,
+    // 64-bit bitwise variants (ILO-395). Same shape as 32-bit but mask to u64.
+    // f64 can exactly represent integers up to 2^53; values >= 2^53 may lose
+    // precision on the f64↔u64 round-trip. Keep inputs within safe range.
+    //
+    // band64 x y  — bitwise AND  (x & y, u64)
+    // bor64  x y  — bitwise OR   (x | y, u64)
+    // bxor64 x y  — bitwise XOR  (x ^ y, u64)
+    // bnot64 x    — bitwise NOT  (^x, 64-bit)
+    // bshl64 x n  — logical shift left  (x << n, mod 64)
+    // bshr64 x n  — logical shift right (x >> n, mod 64)
+    // brot64 x n  — rotate left 64-bit  (x.rotate_left(n))
+    Band64,
+    Bor64,
+    Bxor64,
+    Bnot64,
+    Bshl64,
+    Bshr64,
+    Brot64,
+
+    // Numeric-pipeline constructors and stack combinators (0.13.0).
+    // All are tree-bridge eligible: pure numeric/list ops, no FnRef args,
+    // no I/O. Appended last to preserve every existing on-wire tag.
+    //
+    // `arange start:n stop:n step:n > L n` — evenly-spaced values in
+    //   [start, stop) with the given step (numpy `arange` semantics).
+    //   step > 0 required; empty list when start >= stop.
+    //
+    // `zeros n:n > L n` — list of n 0.0 values. Mirror of `ones`.
+    //
+    // `vstack matrices:L > L` — vertical stack: concatenate a list of
+    //   row-lists, i.e., `flat` on a list of matrices. Each inner list
+    //   must be a list of rows (lists). Equivalent to numpy `vstack` for
+    //   2-d inputs. Returns a flat list of rows.
+    //
+    // `hstack matrices:L > L` — horizontal stack: concatenate the rows of
+    //   corresponding row-lists column-wise. All inner matrices must have
+    //   the same number of rows; output rows are the pairwise `cat` of
+    //   corresponding rows. Equivalent to numpy `hstack` for 2-d inputs.
+    //
+    // `column-stack vecs:L > L` — treat each element (a 1-d vector or
+    //   single-column matrix) as a column and return a 2-d matrix (list of
+    //   rows). Equivalent to numpy `column_stack`. All vectors must have
+    //   the same length.
+    //
+    // `hist xs:L n_bins:n > L n` — fixed-width histogram over the numeric
+    //   list `xs` into `n_bins` equal-width bins spanning [min, max].
+    //   Returns a list of n_bins integer counts. Empty xs → all-zero bins.
+    //   n_bins must be a positive integer (≤ 1_000_000).
+    Arange,
+    Zeros,
+    Vstack,
+    Hstack,
+    ColumnStack,
+    Hist,
 }
 
 impl Builtin {
@@ -519,6 +619,8 @@ impl Builtin {
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
+            "world" => Some(Builtin::WorldCap),
+            "world-no-net" => Some(Builtin::WorldNoNet),
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
@@ -551,6 +653,7 @@ impl Builtin {
             "rdjl" => Some(Builtin::Rdjl),
             "run" => Some(Builtin::Run),
             "run2" => Some(Builtin::Run2),
+            "run-bg" => Some(Builtin::RunBg),
             "get" => Some(Builtin::Get),
             // 0.12.0 rename: `post` → `pst`. Brings post into line with the
             // I/O compression family (rd, wr, srt, flt, fld, fmt). Clean
@@ -607,6 +710,7 @@ impl Builtin {
             "sha256-hex" => Some(Builtin::Sha256Hex),
             "sha256d" => Some(Builtin::Sha256d),
             "hex-rev" => Some(Builtin::HexRev),
+            "tokcount" => Some(Builtin::Tokcount),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -616,6 +720,26 @@ impl Builtin {
             "ravg" => Some(Builtin::Ravg),
             "rmin" => Some(Builtin::Rmin),
             "idxof" => Some(Builtin::Idxof),
+            "band" => Some(Builtin::Band),
+            "bor" => Some(Builtin::Bor),
+            "bxor" => Some(Builtin::Bxor),
+            "bnot" => Some(Builtin::Bnot),
+            "bshl" => Some(Builtin::Bshl),
+            "bshr" => Some(Builtin::Bshr),
+            "brot" => Some(Builtin::Brot),
+            "band64" => Some(Builtin::Band64),
+            "bor64" => Some(Builtin::Bor64),
+            "bxor64" => Some(Builtin::Bxor64),
+            "bnot64" => Some(Builtin::Bnot64),
+            "bshl64" => Some(Builtin::Bshl64),
+            "bshr64" => Some(Builtin::Bshr64),
+            "brot64" => Some(Builtin::Brot64),
+            "arange" => Some(Builtin::Arange),
+            "zeros" => Some(Builtin::Zeros),
+            "vstack" => Some(Builtin::Vstack),
+            "hstack" => Some(Builtin::Hstack),
+            "column-stack" => Some(Builtin::ColumnStack),
+            "hist" => Some(Builtin::Hist),
             _ => None,
         }
     }
@@ -725,6 +849,8 @@ impl Builtin {
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
+            Builtin::WorldCap => "world",
+            Builtin::WorldNoNet => "world-no-net",
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
@@ -757,6 +883,7 @@ impl Builtin {
             Builtin::Rdjl => "rdjl",
             Builtin::Run => "run",
             Builtin::Run2 => "run2",
+            Builtin::RunBg => "run-bg",
             Builtin::Get => "get",
             Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
@@ -809,6 +936,7 @@ impl Builtin {
             Builtin::Sha256Hex => "sha256-hex",
             Builtin::Sha256d => "sha256d",
             Builtin::HexRev => "hex-rev",
+            Builtin::Tokcount => "tokcount",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -818,6 +946,26 @@ impl Builtin {
             Builtin::Ravg => "ravg",
             Builtin::Rmin => "rmin",
             Builtin::Idxof => "idxof",
+            Builtin::Band => "band",
+            Builtin::Bor => "bor",
+            Builtin::Bxor => "bxor",
+            Builtin::Bnot => "bnot",
+            Builtin::Bshl => "bshl",
+            Builtin::Bshr => "bshr",
+            Builtin::Brot => "brot",
+            Builtin::Band64 => "band64",
+            Builtin::Bor64 => "bor64",
+            Builtin::Bxor64 => "bxor64",
+            Builtin::Bnot64 => "bnot64",
+            Builtin::Bshl64 => "bshl64",
+            Builtin::Bshr64 => "bshr64",
+            Builtin::Brot64 => "brot64",
+            Builtin::Arange => "arange",
+            Builtin::Zeros => "zeros",
+            Builtin::Vstack => "vstack",
+            Builtin::Hstack => "hstack",
+            Builtin::ColumnStack => "column-stack",
+            Builtin::Hist => "hist",
         }
     }
 
@@ -920,6 +1068,8 @@ impl Builtin {
         Builtin::Wrl,
         Builtin::Prnt,
         Builtin::Env,
+        Builtin::WorldCap,
+        Builtin::WorldNoNet,
         Builtin::Trm,
         Builtin::Upr,
         Builtin::Lwr,
@@ -1109,6 +1259,11 @@ impl Builtin {
         // loose M t t that `run` returns, giving clean dot-access. Appended
         // last to preserve every existing on-wire tag; tree-bridge eligible.
         Builtin::Run2,
+        // `run-bg cmd:t args:L t > R n t` — fire-and-forget background spawn.
+        // Returns Ok(pid:n) immediately; child inherits parent stdout/stderr.
+        // Err only on spawn failure. Appended last to preserve every existing
+        // on-wire tag; tree-bridge eligible.
+        Builtin::RunBg,
         // Numeric prelude (0.12.1). Three list constructors hit repeatedly by
         // linear-regression (linspace for evenly-spaced sample points),
         // distance-matrix (ones for a design-matrix column), and monte-carlo
@@ -1175,13 +1330,46 @@ impl Builtin {
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
         // `for-line stdin > LazyStdinLines` — lazy stdin line iterator (ILO-70).
-        // Appended last to preserve every existing on-wire tag.
         // Returns a LazyStdinLines handle that ForEach drains one line at a time,
         // enabling processing of unbounded piped input without buffering.
         Builtin::ForLine,
-        // `idxof s sub > O n` — text-search builtin (0.13.0). Appended last
-        // to preserve every existing on-wire tag.
+        // `idxof s sub > O n` — text-search builtin (0.13.0).
         Builtin::Idxof,
+        // tokcount (ILO-47): approximate cl100k_base token count (bytes/3.4 stub).
+        // Follow-up (ILO-413) will replace this stub with the full tiktoken-rs BPE
+        // tokeniser once the crate's WASM and licence story is confirmed.
+        // Appended last to preserve every existing on-wire tag.
+        Builtin::Tokcount,
+        // Bitwise ops (ILO-58 MVP). All tree-bridge eligible: pure numeric-in /
+        // numeric-out, no FnRef args, no I/O, no Result wrapper. Inputs
+        // truncated to u32 mod 2^32; output returned as f64. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Band,
+        Builtin::Bor,
+        Builtin::Bxor,
+        Builtin::Bnot,
+        Builtin::Bshl,
+        Builtin::Bshr,
+        Builtin::Brot,
+        // 64-bit bitwise ops (ILO-395). All tree-bridge eligible: pure numeric-in /
+        // numeric-out, no FnRef args, no I/O, no Result wrapper. Inputs
+        // truncated to u64 mod 2^64; output returned as f64. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Band64,
+        Builtin::Bor64,
+        Builtin::Bxor64,
+        Builtin::Bnot64,
+        Builtin::Bshl64,
+        Builtin::Bshr64,
+        Builtin::Brot64,
+        // Numeric-pipeline primitives (0.13.0). Appended last; tree-bridge
+        // eligible. Preserves all existing on-wire tags.
+        Builtin::Arange,
+        Builtin::Zeros,
+        Builtin::Vstack,
+        Builtin::Hstack,
+        Builtin::ColumnStack,
+        Builtin::Hist,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1202,12 +1390,22 @@ impl Builtin {
             | Builtin::PstTo
             | Builtin::TzOffset
             | Builtin::Run2
+            | Builtin::RunBg
             | Builtin::RgxallMulti
             | Builtin::Fmod
             | Builtin::DtparseRel
             | Builtin::DurParse
             | Builtin::DurFmt
-            | Builtin::Idxof => "experimental",
+            | Builtin::Idxof
+            | Builtin::HexRev
+            | Builtin::Tokcount
+            // Numeric-pipeline primitives (0.13.0) — experimental.
+            | Builtin::Arange
+            | Builtin::Zeros
+            | Builtin::Vstack
+            | Builtin::Hstack
+            | Builtin::ColumnStack
+            | Builtin::Hist => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1573,6 +1771,27 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "tokcount",
+            "band",
+            "bor",
+            "bxor",
+            "bnot",
+            "bshl",
+            "bshr",
+            "brot",
+            "band64",
+            "bor64",
+            "bxor64",
+            "bnot64",
+            "bshl64",
+            "bshr64",
+            "brot64",
+            "arange",
+            "zeros",
+            "vstack",
+            "hstack",
+            "column-stack",
+            "hist",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1842,6 +2061,15 @@ mod tests {
             "rmin",
             "bisect",
             "for-line",
+            "idxof",
+            "hex-rev",
+            "tokcount",
+            "arange",
+            "zeros",
+            "vstack",
+            "hstack",
+            "column-stack",
+            "hist",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

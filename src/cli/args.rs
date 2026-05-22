@@ -116,9 +116,17 @@ pub enum Cmd {
     /// Run `-- run:` / `-- out:` / `-- err:` assertions in `.ilo` files.
     Test(TestArgs),
 
+    /// Serve HTTP requests with a user-supplied ilo handler function.
+    Httpd(HttpdArgs),
+
     /// Print version.
     Version,
 
+    /// Fetch a GitHub-hosted ilo package into the local cache (~/.ilo/pkgs/).
+    Add(AddArgs),
+
+    /// Re-fetch a cached package to its latest commit on the default branch.
+    Update(UpdateArgs),
     /// Trace program execution, emitting one JSON line per statement.
     Trace(TraceArgs),
 }
@@ -264,6 +272,21 @@ pub struct ServArgs {
     /// HTTP tool provider config (JSON).
     #[arg(long = "tools")]
     pub tools_path: Option<String>,
+}
+
+// ── Httpd ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct HttpdArgs {
+    /// Port to listen on.
+    #[arg(long, short = 'p', default_value = "8080")]
+    pub port: u16,
+
+    /// Source file containing the handler function.
+    pub handler: String,
+
+    /// Name of the handler function (default: `handler`).
+    pub func: Option<String>,
 }
 
 // ── Tools ──────────────────────────────────────────────────────────────────────
@@ -449,8 +472,25 @@ pub enum SkillCmd {
     Show { name: String },
 }
 
-// ── Trace ──────────────────────────────────────────────────────────────────────
+// ── Add ────────────────────────────────────────────────────────────────────────
 
+#[derive(Args, Debug)]
+pub struct AddArgs {
+    /// Package to fetch, in `<owner>/<repo>` or `<owner>/<repo>@<ref>` form.
+    /// Example: `ilo add myorg/helpers` or `ilo add myorg/helpers@v1.2`.
+    pub package: String,
+}
+
+// ── Update ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Package to update, in `<owner>/<repo>` form.
+    /// Omit to update all packages recorded in `ilo.lock`.
+    pub package: Option<String>,
+}
+
+// ── Trace ──────────────────────────────────────────────────────────────────────
 /// Granularity of trace events.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TraceDepth {
@@ -460,28 +500,24 @@ pub enum TraceDepth {
     /// Emit one event per sub-expression in addition to per-statement events.
     Expr,
 }
-
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct TraceArgs {
     /// Source file to trace.
+    #[arg(value_name = "FILE")]
     pub source: String,
-
     /// Entry function name (defaults to first function).
+    #[arg(long = "func", value_name = "NAME")]
     pub func: Option<String>,
-
     /// Trace granularity: `statement` (default) or `expr` (per sub-expression).
     #[arg(long = "depth", value_enum, default_value = "statement")]
     pub depth: TraceDepth,
-
     /// Only emit events that touch this variable name (may be repeated).
     #[arg(long = "watch", value_name = "NAME", action = clap::ArgAction::Append)]
     pub watch: Vec<String>,
-
     /// Call arguments passed to the entry function.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 }
-
 // ── OutputMode resolution ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

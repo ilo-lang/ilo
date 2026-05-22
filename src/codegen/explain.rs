@@ -119,6 +119,18 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                 "alias",
                 0,
             )),
+
+            Decl::SumType { name, variants, .. } => {
+                let vs = variants
+                    .iter()
+                    .map(|v| match &v.payload {
+                        Some(ty) => format!("{}({})", v.name, fmt_type(ty)),
+                        None => v.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                Some(annotate_line(&format!("type {name} = {vs}"), "sum type", 0))
+            }
         };
 
         if let Some(s) = snippet {
@@ -219,6 +231,9 @@ fn fmt_type_long(ty: &Type) -> String {
             format!("fn({}) → {}", ps.join(", "), fmt_type_long(ret))
         }
         Type::Named(name) => name.clone(),
+        Type::U32 => "u32".into(),
+        Type::U64 => "u64".into(),
+        Type::I64 => "i64".into(),
     }
 }
 
@@ -244,6 +259,9 @@ fn fmt_type(ty: &Type) -> String {
             s
         }
         Type::Named(name) => name.clone(),
+        Type::U32 => "U32".into(),
+        Type::U64 => "U64".into(),
+        Type::I64 => "I64".into(),
     }
 }
 
@@ -557,6 +575,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: Span::UNKNOWN,
         });
         prog.declarations.push(Decl::Error {

@@ -1,0 +1,59 @@
+-- Generic sum types demo (ILO-402)
+--
+-- Syntax: `type Name<a b> = variant1(a) | variant2(b)`
+-- Type variables in `<...>` are substituted at use-sites (erased at runtime).
+-- Letters n, t, b are treated as type variables when declared in `<...>`.
+
+-- Either: holds a value of one of two types
+type either<a,b> = left(a) | right(b)
+
+-- Option: present or absent
+type option<a> = some(a) | none
+
+-- Result: success or failure
+type result<a,b> = ok(a) | err(b)
+
+-- Wrap a number in Either's left
+wrap-n x:n>either;left x
+
+-- Wrap a text in Either's right
+wrap-t x:t>either;right x
+
+-- Extract left number (0 if right)
+get-n e:either>n;?e{left(v):v;right(v):0}
+
+-- Extract right text ("" if left)
+get-t e:either>t;?e{left(v):"";right(v):v}
+
+-- Safe head: returns option
+safe-hd xs:L n>option
+  =(len xs) 0{ret none}
+  some hd xs
+
+-- Safe division: returns result
+safe-div x:n y:n>result
+  =(y) 0{ret err "division by zero"}
+  ok /x y
+
+main>t
+  -- Either usage
+  ln=wrap-n 42
+  lt=wrap-t "hello"
+  a=get-n ln
+  c=get-t lt
+
+  -- Option usage
+  xs=[10 20 30]
+  oh=safe-hd xs
+  oe=safe-hd []
+  hv=?oh{some(v):str v;none:"empty"}
+  he=?oe{some(v):str v;none:"empty"}
+
+  -- Result usage
+  dv=safe-div 10 2
+  de=safe-div 10 0
+  rv=?dv{ok(v):str v;err(msg):msg}
+  re=?de{ok(v):str v;err(msg):msg}
+
+  prnt fmt "either-n={} either-t={} opt-hd={} opt-empty={} div-ok={} div-err={}" a c hv he rv re
+  "done"

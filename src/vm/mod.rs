@@ -100,6 +100,10 @@ pub enum CompileError {
         #[allow(dead_code)]
         span: crate::ast::Span,
     },
+    /// Sum types with payloads are not yet natively compiled by the VM.
+    /// The caller should fall back to the tree interpreter.
+    #[error("sum type `{name}` is not yet supported by the VM; falling back to tree interpreter")]
+    SumTypeNotSupported { name: String },
 }
 
 #[cfg(feature = "cranelift")]
@@ -672,6 +676,17 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // parity for free. Returns R RunResult t; auto-unwrap (`run2!`)
         // supported via `tree_bridge_returns_result`.
         (Builtin::Run2, 2) => true,
+        // `run cmd argv stdin` — arity-3 extension of `run` that pipes
+        // stdin text into the child. Same bridge contract: tree interpreter
+        // handles spawn + IO; VM/Cranelift get parity for free. Returns
+        // R (M t t) t; auto-unwrap supported.
+        (Builtin::Run, 3) => true,
+        // `run2 cmd argv stdin` — arity-3 extension of `run2` with stdin.
+        // Returns R RunResult t; auto-unwrap supported.
+        (Builtin::Run2, 3) => true,
+        // `run-bg cmd argv` — fire-and-forget spawn. Returns R n t (the pid).
+        // Tree-bridge eligible: no FnRef args, returns Result.
+        (Builtin::RunBg, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -840,6 +855,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // inherit cross-engine parity at zero opcode cost.
         (Builtin::Sha256Hex, 1) => true,
         (Builtin::Sha256d, 1) => true,
+        // tokcount s — bytes/3.4 token-count stub. Pure text-in / number-out,
+        // no FnRef args, no Result wrapper. Tree-bridge eligible; VM and
+        // Cranelift inherit cross-engine parity at zero opcode cost.
+        (Builtin::Tokcount, 1) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
@@ -877,11 +896,35 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Linspace, 3) => true,
         (Builtin::Ones, 1) => true,
         (Builtin::Rep, 2) => true,
-        // `for-line stdin > LazyStdinLines` (ILO-70). 1-arg, no FnRef.
-        // The return type (LazyStdinLines) is opaque to the register engines;
-        // the bridge lets VM and Cranelift produce the handle without a new
-        // opcode. ForEach in the tree interpreter drains it one line at a time.
-        (Builtin::ForLine, 1) => true,
+        // Bitwise ops (ILO-58 MVP). Pure numeric-in / numeric-out, no FnRef
+        // args, no I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in
+        // lockstep with the tree interpreter at zero opcode cost. bnot is
+        // 1-arg; all others are 2-arg.
+        (Builtin::Band, 2) => true,
+        (Builtin::Bor, 2) => true,
+        (Builtin::Bxor, 2) => true,
+        (Builtin::Bnot, 1) => true,
+        (Builtin::Bshl, 2) => true,
+        (Builtin::Bshr, 2) => true,
+        (Builtin::Brot, 2) => true,
+        // 64-bit bitwise ops (ILO-395). Pure numeric-in / numeric-out, no FnRef
+        // args, no I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in
+        // lockstep with the tree interpreter at zero opcode cost.
+        (Builtin::Band64, 2) => true,
+        (Builtin::Bor64, 2) => true,
+        (Builtin::Bxor64, 2) => true,
+        (Builtin::Bnot64, 1) => true,
+        (Builtin::Bshl64, 2) => true,
+        (Builtin::Bshr64, 2) => true,
+        (Builtin::Brot64, 2) => true,
+        // Numeric-pipeline primitives (0.13.0). Pure constructors and stack
+        // combinators; no FnRef args, no I/O, no Result wrapper.
+        (Builtin::Zeros, 1) => true,
+        (Builtin::Arange, 3) => true,
+        (Builtin::Vstack, 1) => true,
+        (Builtin::Hstack, 1) => true,
+        (Builtin::ColumnStack, 1) => true,
+        (Builtin::Hist, 2) => true,
         _ => false,
     }
 }
@@ -904,6 +947,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::EnvAll
             | Builtin::Run
             | Builtin::Run2
+            | Builtin::RunBg
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl
@@ -1809,6 +1853,13 @@ struct RegCompiler {
     /// covers the rebind shape; this flag covers the tail-position
     /// `mset m k v` shape inside helper fns reached via OP_CALL_OWN1.
     in_tail_position: bool,
+    /// Sum-type variant constructors: maps variant name → (type_id, tag_index, has_payload).
+    /// Registered during compile_program when a Decl::SumType is encountered.
+    /// type_id is the record type registered as `__variant_<typename>` with
+    /// fields ["tag", "payload"]. tag_index is the 0-based ordinal of the
+    /// variant within the sum type declaration.  has_payload is true when the
+    /// variant was declared with a payload argument (e.g. `circle(n)`).
+    variant_map: HashMap<String, (u16, usize, bool)>,
     /// Set to true while lowering a function that contains at least one
     /// `defer` / `errdefer` statement.  When true, `emit_ret` inserts an
     /// OP_DEFER_DRAIN instruction immediately before every OP_RET.
@@ -1843,6 +1894,7 @@ impl RegCompiler {
             current_fn_name: String::new(),
             current_fn_span: crate::ast::Span::UNKNOWN,
             in_tail_position: false,
+            variant_map: HashMap::new(),
             current_fn_has_defer: false,
             defer_thunk_counter: 0,
             deferred_thunk_chunks: Vec::new(),
@@ -2193,7 +2245,11 @@ impl RegCompiler {
     }
 
     fn compile_program(mut self, program: &Program) -> Result<CompiledProgram, CompileError> {
-        // Build type registry from TypeDefs
+        // Build type registry from TypeDefs and SumTypes.
+        // SumTypes are represented as 2-field heap records with type name
+        // `__variant_<typename>`, fields ["tag", "payload"].  The `tag` slot
+        // holds the variant's 0-based ordinal as a Number; `payload` holds the
+        // constructor argument (or Nil for payload-less variants).
         for decl in &program.declarations {
             if let Decl::TypeDef { name, fields, .. } = decl {
                 let field_names: Vec<String> = fields.iter().map(|p| p.name.clone()).collect();
@@ -2205,6 +2261,25 @@ impl RegCompiler {
                 }
                 self.type_registry
                     .register(name.clone(), field_names, num_fields);
+            }
+        }
+
+        // Register sum-type variant record types and build variant_map.
+        for decl in &program.declarations {
+            if let Decl::SumType { name, variants, .. } = decl {
+                // Shared record type for all variants of this sum type.
+                // Fields: [0] = "tag" (numeric ordinal), [1] = "payload".
+                // Bit 0 of num_fields is set because field 0 ("tag") is always Number.
+                let type_name = format!("__variant_{}", name);
+                let type_id = self.type_registry.register(
+                    type_name,
+                    vec!["tag".to_string(), "payload".to_string()],
+                    0b01, // field 0 ("tag") is numeric
+                );
+                for (idx, v) in variants.iter().enumerate() {
+                    self.variant_map
+                        .insert(v.name.clone(), (type_id, idx, v.payload.is_some()));
+                }
             }
         }
 
@@ -2234,6 +2309,7 @@ impl RegCompiler {
                     is_defer_fn.push(false);
                 }
                 Decl::TypeDef { .. }
+                | Decl::SumType { .. }
                 | Decl::Alias { .. }
                 | Decl::Use { .. }
                 | Decl::Error { .. } => {}
@@ -2398,6 +2474,56 @@ impl RegCompiler {
             ast: None,
             defer_fns,
         })
+    }
+
+    /// Emit a 2-field variant record: { tag: <tag_idx as Number>, payload: <payload_reg or Nil> }.
+    /// Returns the result register holding the new record.
+    fn emit_variant_record(&mut self, type_id: u16, tag_idx: usize, payload_reg: Option<u8>) -> u8 {
+        // Allocate tag constant
+        let tag_val = Value::Number(tag_idx as f64);
+        let tag_ki = self.current.add_const(tag_val);
+        let tag_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, tag_reg, tag_ki);
+        self.reg_is_num[tag_reg as usize] = true;
+
+        let payload_r = match payload_reg {
+            Some(r) => r,
+            None => {
+                let nil_ki = self.current.add_const(Value::Nil);
+                let nil_reg = self.alloc_reg();
+                self.emit_abx(OP_LOADK, nil_reg, nil_ki);
+                nil_reg
+            }
+        };
+
+        // OP_RECNEW: result in `a`, fields starting at `fields_base`.
+        // Layout: fields_base+0 = tag, fields_base+1 = payload.
+        // bx encodes (type_id << 8) | n_fields.
+        let a = self.alloc_reg();
+        let fields_base = self.next_reg;
+        // Ensure tag_reg and payload_r are in consecutive slots at fields_base.
+        if tag_reg != fields_base {
+            self.emit_abc(OP_MOVE, fields_base, tag_reg, 0);
+        }
+        self.next_reg = fields_base + 1;
+        if self.next_reg > self.max_reg {
+            self.max_reg = self.next_reg;
+        }
+        if payload_r != fields_base + 1 {
+            let _ = self.alloc_reg(); // reserve fields_base+1
+            self.emit_abc(OP_MOVE, fields_base + 1, payload_r, 0);
+        } else {
+            self.next_reg = fields_base + 2;
+            if self.next_reg > self.max_reg {
+                self.max_reg = self.next_reg;
+            }
+        }
+        let bx = (type_id << 8) | 2u16;
+        self.emit_abx(OP_RECNEW, a, bx);
+        self.reg_record_type[a as usize] = type_id;
+        // Reclaim scratch registers; only `a` stays live.
+        self.next_reg = a + 1;
+        a
     }
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
@@ -3356,6 +3482,81 @@ impl RegCompiler {
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
                 }
+                Pattern::Variant { tag, binding } => {
+                    // Sum-type variant pattern: check sub_reg.tag == expected_idx,
+                    // optionally bind sub_reg.payload.
+                    //
+                    // Emitted sequence:
+                    //   tag_reg  = OP_RECFLD sub_reg, 0    ; extract tag field
+                    //   cmp_reg  = OP_LOADK  <tag_idx>
+                    //   eq_reg   = OP_EQ     tag_reg, cmp_reg
+                    //              OP_JMPF  eq_reg, <skip>
+                    //   [bind_reg = OP_RECFLD sub_reg, 1]   ; if binding present
+                    //   <body>
+                    //   OP_JMP <end>          ; added to end_jumps
+                    // skip:
+                    if let Some(&(type_id, tag_idx, _)) = self.variant_map.get(tag) {
+                        // Extract the tag field (index 0).
+                        let tag_reg = self.alloc_reg();
+                        self.emit_abc(OP_RECFLD, tag_reg, sub_reg, 0);
+                        self.reg_is_num[tag_reg as usize] = true;
+
+                        // Load the expected tag index as a constant.
+                        let cmp_ki = self.current.add_const(Value::Number(tag_idx as f64));
+                        let cmp_reg = self.alloc_reg();
+                        self.emit_abx(OP_LOADK, cmp_reg, cmp_ki);
+                        self.reg_is_num[cmp_reg as usize] = true;
+
+                        // Compare and branch if not equal.
+                        let eq_reg = self.alloc_reg();
+                        self.emit_abc(OP_EQ, eq_reg, tag_reg, cmp_reg);
+                        let skip = self.emit_jmpf(eq_reg);
+
+                        // Optionally bind payload (field index 1).
+                        if let Some(bind_name) = binding {
+                            let bind_reg = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD, bind_reg, sub_reg, 1);
+                            self.reg_record_type[bind_reg as usize] = u16::MAX;
+                            self.add_local(bind_name, bind_reg);
+                        }
+
+                        let body_result = self.compile_body(&arm.body);
+                        if let Some(br) = body_result
+                            && br != result_reg
+                        {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                        end_jumps.push(self.emit_jmp_placeholder());
+                        self.current.patch_jump(skip);
+                        let _ = type_id; // type_id used for future type-tracking
+                    } else if tag == "nil" {
+                        // `nil:` was emitted as Pattern::Variant { tag: "nil" } by the
+                        // parser (to also cover sum-type variants named `nil`).  When
+                        // the variant_map has no `nil` entry the subject is a plain
+                        // Optional/nil value, so fall back to a nil-literal equality
+                        // check — same code path as the old Pattern::Literal(Nil) arm.
+                        let nil_ki = self.current.add_const(Value::Nil);
+                        let nil_reg = self.alloc_reg();
+                        self.emit_abx(OP_LOADK, nil_reg, nil_ki);
+                        let eq_reg = self.alloc_reg();
+                        self.emit_abc(OP_EQ, eq_reg, sub_reg, nil_reg);
+                        let skip = self.emit_jmpf(eq_reg);
+
+                        let body_result = self.compile_body(&arm.body);
+                        if let Some(br) = body_result
+                            && br != result_reg
+                        {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                        end_jumps.push(self.emit_jmp_placeholder());
+                        self.current.patch_jump(skip);
+                    } else {
+                        // Unknown variant tag — variant_map was not populated
+                        // (e.g. the variant is from a type defined elsewhere).
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: tag.clone() });
+                    }
+                }
 
                 Pattern::Or(alts) => {
                     // Emit: if alt1 matches OR alt2 matches OR ... → body, else skip.
@@ -3951,6 +4152,20 @@ impl RegCompiler {
             Expr::Ref(name) => {
                 if let Some(reg) = self.resolve_local(name) {
                     reg // FREE — no instruction needed!
+                } else if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(name) {
+                    if !has_payload {
+                        // 0-payload variant used as a bare value: emit the 2-field
+                        // record (tag=tag_idx, payload=Nil) directly.
+                        self.emit_variant_record(type_id, tag_idx, None)
+                    } else {
+                        // Payload variant used as a bare reference (first-class
+                        // constructor value). This is uncommon; fall through to the
+                        // UndefinedVariable error path so callers get a clear message
+                        // rather than silent wrong behaviour.
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: name.clone() });
+                        0
+                    }
                 } else if let Some(idx) = self.func_names.iter().position(|n| n == name) {
                     // User function used as a value (passed to a HOF, stored,
                     // etc.). Encode as a FnRef NanVal via OP_LOADFN. Bx high
@@ -3969,6 +4184,15 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     let bx = 0x8000u16 | (b.tag() as u16);
                     self.emit_abx(OP_LOADFN, ra, bx);
+                    ra
+                } else if name == "nil" {
+                    // `nil` is emitted as Expr::Ref("nil") by the parser so that
+                    // sum-type variants named `nil` resolve via variant_map above.
+                    // When no such variant is registered, fall back to loading the
+                    // built-in nil constant (backward-compatible Optional / nil usage).
+                    let ra = self.alloc_reg();
+                    let ki = self.current.add_const(Value::Nil);
+                    self.emit_abx(OP_LOADK, ra, ki);
                     ra
                 } else {
                     self.first_error
@@ -5806,6 +6030,27 @@ impl RegCompiler {
                     }
 
                     return a;
+                }
+
+                // ── Sum-type variant constructor ──────────────────────────────
+                // Intercept calls like `circle 5` or `point` where `circle`/`point`
+                // are variant names registered in variant_map.  Emit inline record
+                // construction (OP_RECNEW) rather than a function call.
+                if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(function) {
+                    let payload_reg = if has_payload {
+                        if args.len() == 1 {
+                            Some(self.compile_expr(&args[0]))
+                        } else {
+                            self.first_error
+                                .get_or_insert(CompileError::UndefinedFunction {
+                                    name: function.clone(),
+                                });
+                            return 0;
+                        }
+                    } else {
+                        None
+                    };
+                    return self.emit_variant_record(type_id, tag_idx, payload_reg);
                 }
 
                 // Compiling args of this call: each arg is NOT in tail
@@ -7777,10 +8022,48 @@ impl NanVal {
                 // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
             }
+            Value::Variant { tag, payload, .. } => {
+                // Variants are not natively representable in NanVal — the VM
+                // bridge falls back to the tree interpreter for sum-type programs.
+                // Encode as a string sentinel so the conversion doesn't panic.
+                let s = match payload {
+                    Some(p) => format!("{}({})", tag, p),
+                    None => tag.clone(),
+                };
+                NanVal::heap_string(s)
+            }
             Value::LazyStdinLines(handle) => {
                 // Wrap the lazy stdin handle in a HeapObj so the VM's OP_FOREACH
                 // can drain it one line at a time without buffering.
                 NanVal::heap_stdin_lines(handle.clone())
+            }
+            Value::World {
+                net,
+                read,
+                write,
+                run,
+            } => {
+                // World tokens are opaque at the VM level — represented as a
+                // tagged record so the VM can pass them through without special
+                // opcodes. Decode in `to_value` matches this layout.
+                use crate::vm::TypeInfo;
+                let type_info = Rc::new(TypeInfo {
+                    name: "World".to_string(),
+                    fields: vec![
+                        "net".to_string(),
+                        "read".to_string(),
+                        "write".to_string(),
+                        "run".to_string(),
+                    ],
+                    num_fields: 0,
+                });
+                let flat: Box<[NanVal]> = Box::new([
+                    NanVal::boolean(*net),
+                    NanVal::boolean(*read),
+                    NanVal::boolean(*write),
+                    NanVal::boolean(*run),
+                ]);
+                NanVal::heap_record(type_info, flat)
             }
         }
     }
@@ -10222,6 +10505,33 @@ impl<'a> VM<'a> {
                         reg_set!(base + a as usize, nan_result);
                         // ip was already saved above; continue to next instruction
                         continue;
+                    }
+
+                    // If this function contains defer/errdefer, bridge to the tree-walker.
+                    // The tree interpreter has native defer support; the VM does not (v1 MVP).
+                    let is_defer_call = self
+                        .program
+                        .is_defer_fn
+                        .get(func_idx as usize)
+                        .copied()
+                        .unwrap_or(false);
+                    if is_defer_call {
+                        if let Some(ast) = &self.program.ast {
+                            let callee_name = &self.program.func_names[func_idx as usize].clone();
+                            let mut value_args = Vec::with_capacity(n_args);
+                            for i in 0..n_args {
+                                value_args.push(reg!(base + a as usize + 1 + i).to_value());
+                            }
+                            let tree_result =
+                                crate::interpreter::run(ast, Some(callee_name), value_args)
+                                    .map_err(|e| VmError::Runtime(e.message))?;
+                            let nan_result = NanVal::from_value(&tree_result);
+                            reg_set!(base + a as usize, nan_result);
+                            continue;
+                        }
+                        // AST not available — fall through to normal VM dispatch
+                        // (defer semantics will be silently absent, but this path
+                        // is not reachable in practice since compile() always sets ast).
                     }
 
                     // Push args directly onto the stack (no intermediate Vec).
@@ -17784,6 +18094,17 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // of bytes). Surface on Cranelift in lockstep rather than
             // degenerating silently to nil.
             | Builtin::HexRev
+            // tokcount: raises ILO-R009 on non-text input. Surface on
+            // Cranelift in lockstep rather than degenerating silently to nil.
+            | Builtin::Tokcount
+            // Numeric-pipeline primitives (0.13.0). Raise ILO-R009 on bad
+            // inputs; surface on Cranelift in lockstep rather than silently nil.
+            | Builtin::Zeros
+            | Builtin::Arange
+            | Builtin::Vstack
+            | Builtin::Hstack
+            | Builtin::ColumnStack
+            | Builtin::Hist
     )
 }
 
@@ -23216,6 +23537,7 @@ mod tests {
             .collect();
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params,
                 body: vec![],
@@ -36817,6 +37139,75 @@ main>n
         }
     }
 
+    // ── ILO-401: Sum-type VM/JIT codegen ─────────────────────────────────────
+
+    /// VM can construct a payload-less variant and pattern-match on it.
+    #[test]
+    fn sum_type_vm_zero_payload_variant() {
+        let v = vm_run_main_for_test(
+            "type color = red | green | blue\n\
+             pick c:color>t;?c{red:\"r\";green:\"g\";blue:\"b\"}\n\
+             main>t;pick red",
+        );
+        assert_eq!(v, Value::Text(std::sync::Arc::new("r".to_string())));
+    }
+
+    /// VM can construct a payload-carrying variant and extract the payload in a match.
+    #[test]
+    fn sum_type_vm_payload_variant_match() {
+        // circle area = 3.14159 * 25 = 78.53975; square area = 9; sum = 87.53975
+        let v = vm_run_main_for_test(
+            "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)",
+        );
+        match v {
+            Value::Number(n) => {
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
+            }
+            _ => panic!("expected Number, got {v:?}"),
+        }
+    }
+
+    /// Regression: same program runs identically under tree interpreter and VM.
+    #[test]
+    fn sum_type_vm_matches_interpreter() {
+        let src = "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).unwrap();
+        let vm_result = run(&compiled, Some("main"), vec![]).unwrap();
+        let interp_result = crate::interpreter::run(&prog, Some("main"), vec![]).unwrap();
+        assert_eq!(
+            vm_result, interp_result,
+            "VM and tree interpreter disagree on sum-type result"
+        );
+    }
+
+    /// VM compile step must not return ILO-E803 (SumTypeNotSupported).
+    #[test]
+    fn sum_type_vm_no_e803_bailout() {
+        let src = "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("sum-type program must compile without ILO-E803");
+        let val = run(&compiled, Some("main"), vec![]).unwrap();
+        match val {
+            Value::Number(n) => {
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
+            }
+            _ => panic!("expected Number, got {val:?}"),
+        }
+    }
+
     /// Regression test: every tree-bridge-eligible (Builtin, arity) pair whose
     /// verify.rs signature returns `R ...` must appear in
     /// `tree_bridge_returns_result`, so that the auto-unwrap (`!` / `!!`)
@@ -36851,6 +37242,9 @@ main>n
             (Builtin::TzOffset, 2),
             (Builtin::Run, 2),
             (Builtin::Run2, 2),
+            (Builtin::Run, 3),
+            (Builtin::Run2, 3),
+            (Builtin::RunBg, 2),
             (Builtin::EnvAll, 0),
             (Builtin::Jkeys, 2),
             (Builtin::Rdin, 0),
@@ -36915,6 +37309,7 @@ main>n
             Builtin::EnvAll,
             Builtin::Run,
             Builtin::Run2,
+            Builtin::RunBg,
             Builtin::Jkeys,
             Builtin::Rdin,
             Builtin::Rdinl,
@@ -36945,6 +37340,57 @@ main>n
                 builtin
             );
         }
+    }
+
+    // ── ILO-402: Generic sum types — VM cross-engine regression ──────────────
+
+    /// VM: `type either<a,b> = left(a) | right(b)` — construct and match left.
+    #[test]
+    fn vm_generic_sum_either_left_number() {
+        let v = vm_run_main_for_test(
+            "type either<a,b> = left(a) | right(b)\n\
+             wrap-n x:n>either;left x\n\
+             main>n;v=wrap-n 42;?v{left(x):x;right(x):0}",
+        );
+        assert_eq!(v, Value::Number(42.0));
+    }
+
+    /// VM: `type either<a,b>` — construct right with text payload.
+    #[test]
+    fn vm_generic_sum_either_right_text() {
+        let v = vm_run_main_for_test(
+            "type either<a,b> = left(a) | right(b)\n\
+             wrap-t x:t>either;right x\n\
+             main>t;v=wrap-t \"hi\";?v{left(x):\"L\";right(x):x}",
+        );
+        assert_eq!(v, Value::Text(std::sync::Arc::new("hi".to_string())));
+    }
+
+    /// VM: `type result<a,b>` where `b` is a declared type var (not bool).
+    #[test]
+    fn vm_generic_sum_result_b_type_var() {
+        let v = vm_run_main_for_test(
+            "type result<a,b> = ok(a) | err(b)\n\
+             safe-div x:n y:n>result\n  =(y) 0{ret err \"zero\"}\n  ok /x y\n\
+             main>n;dv=safe-div 10 2;?dv{ok(v):v;err(msg):0}",
+        );
+        assert_eq!(v, Value::Number(5.0));
+    }
+
+    /// VM: generic sum type matches interpreter.
+    #[test]
+    fn vm_generic_sum_matches_interpreter() {
+        let src = "type either<a,b> = left(a) | right(b)\n\
+             wrap-n x:n>either;left x\n\
+             main>n;v=wrap-n 99;?v{left(x):x;right(x):0}";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).unwrap();
+        let vm_result = run(&compiled, Some("main"), vec![]).unwrap();
+        let interp_result = crate::interpreter::run(&prog, Some("main"), vec![]).unwrap();
+        assert_eq!(
+            vm_result, interp_result,
+            "VM and interpreter disagree on generic sum type result"
+        );
     }
 }
 

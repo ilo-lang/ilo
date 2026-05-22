@@ -868,7 +868,7 @@ fn with_field_type_mismatch() {
 fn with_anon_record_new_field_rejected() {
     // ILO-368: `with` on an anonymous record must not add new fields
     let src = "main>_;r={x:1 y:2};r with z:3";
-    assert_err(src, "ILO-T044", "main");
+    assert_err(src, "ILO-T045", "main");
 }
 
 #[test]

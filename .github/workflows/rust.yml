@@ -29,16 +29,13 @@ jobs:
       run: pip install git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref
     - name: Validate Agent Skills spec conformance
       run: skills-ref validate skills/ilo/
-    - name: Install tiktoken
-      run: pip install tiktoken
-    - name: Enforce modular-skill token budget (cl100k_base)
+    - name: Enforce modular-skill token budget (cl100k_base approx)
       # Aggressive per-module caps set in ILO-382 (measured baseline + ~50-token
-      # headroom). See scripts/check-skill-tokens.py for per-module overrides.
-      # Aggregate across all modules ≤ 12,500. The in-binary
-      # tests/skill_modular.rs enforces a byte proxy for the same limit,
-      # but this step is the canonical check using the same tokeniser
-      # an agent host uses to size the context window.
-      run: python3 scripts/check-skill-tokens.py
+      # headroom). See scripts/check-skill-tokens.ilo for per-module overrides.
+      # Aggregate across all modules ≤ 12,500. Uses the built-in `tokcount`
+      # bytes/3.4 approximation (within ~5% for natural-language skill files);
+      # ILO-47 tracks upgrading to the full tiktoken-rs BPE tokeniser.
+      run: cargo run --quiet -- run scripts/check-skill-tokens.ilo
     - name: Shellcheck install.sh
       run: shellcheck -s sh scripts/install/install.sh
     - name: Verify install.sh sha256 verification (offline regression test)

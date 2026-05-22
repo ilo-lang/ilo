@@ -74,6 +74,7 @@ Result unwrap mid-body: `v=call!` extracts the Ok value and propagates Err out o
 | `M t n` | map from text keys to numbers |
 | `S red green blue` | sum type - one of named text variants |
 | `F n t` | function type: takes n, returns t (used in HOF params) |
+| `W` | capability World token — `w:W` declares a capability parameter (ILO-68) |
 | `order` | named type |
 | `a` | type variable - any single lowercase letter except n, t, b |
 
@@ -99,6 +100,48 @@ color x:S red green blue > t
 ```
 
 Sum types are compatible with `t` - a sum value can be passed to any `t` parameter.
+
+### Discriminated union types (`type Foo = A | B(n) | C(t)`)
+
+Named sum types with optional per-variant payloads (Rust-style enums). Each variant is either payload-less or carries exactly one value of a primitive type.
+
+```
+type shape = circle(n) | square(n) | point
+
+area s:shape > n
+  ?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}
+```
+
+- **Declaration**: `type Name = V1 | V2(payloadType) | ...` at top level.
+- **Construction**: `circle 5` (payload variant), `point` (payload-less variant used as value directly).
+- **Pattern match**: `?s{circle(r):...; square(side):...; point:...}` using `tag(binding):` or `tag:` arms.
+- **Exhaustiveness**: verifier (ILO-T024) checks all variants are covered; the error lists every missing variant by name and suggests the correct arm syntax (`tag(v): <expr>` for payload variants, `tag: <expr>` for payload-less). A wildcard `_:` arm satisfies exhaustiveness. Missing multiple variants produces a single diagnostic naming all of them.
+- **VM**: programs using discriminated unions fall back to the tree interpreter (JIT codegen deferred).
+
+### Generic discriminated union types (`type Result<a,b> = ok(a) | err(b)`)
+
+Sum type declarations accept type parameters (ILO-402), enabling reusable polymorphic variants.
+
+```
+type result<a,b> = ok(a) | err(b)
+type option<a>   = some(a) | none
+type either<a,b> = left(a) | right(b)
+```
+
+- **Syntax**: `type Name<a b>` or `type Name<a,b>` — one or more single-letter type variables (commas optional).
+- **Type variables**: declared letters (including `n`, `t`, `b`) are treated as type variables in variant payloads, not as primitives.
+- **Erasure**: type variables are erased at runtime — no boxing or specialisation. The verifier accepts any concrete type for a type-variable payload.
+- **Usage**: construct and match exactly like non-generic sum types; the concrete type is inferred from context.
+
+```
+safe-div x:n y:n>result
+  =(y) 0{ret err "division by zero"}
+  ok /x y
+
+main>t
+  dv=safe-div 10 2
+  ?dv{ok(v):str v;err(msg):msg}   -- "5"
+```
 
 ### Map type (`M k v`)
 
@@ -141,14 +184,50 @@ scores>M t n
 
 ### Type variables
 
-A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable, treated as `unknown` during verification. Used for higher-order function signatures:
+A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable. Used for higher-order function signatures:
 
 ```
 identity x:a>a;x
 apply f:F a a x:a>a;f x
 ```
 
-Type variables provide weak generics - the verifier accepts any type for `a` without consistency checking across call sites.
+**Without a bound declaration** type variables are treated as `unknown` during verification — the verifier accepts any type for `a` without consistency checking across call sites (legacy behaviour; backward compatible).
+
+### Bounded generics
+
+Explicit generic type parameters allow the verifier to enforce two properties at call sites:
+
+1. All arguments bound to the same type variable have the same concrete type.
+2. The concrete type satisfies the declared bound.
+
+**Syntax:** `name<a:bound b:bound ...>` before the parameter list. Bounds are optional per variable; omitting `:bound` defaults to `any`.
+
+```
+gmn<a:comparable> x:a y:a>a   -- min of two comparable values
+gadd<a:numeric> x:a y:a>a     -- addition, numeric values only
+grep<a:text> s:a n:n>t         -- repeat text
+gid<a> x:a>a                  -- identity, any type
+```
+
+**Bound set** (small and fixed):
+
+| Bound        | Permitted concrete types              |
+|--------------|---------------------------------------|
+| `any`        | any type (default when bound omitted) |
+| `comparable` | `n`, `t`, `b`                         |
+| `numeric`    | `n`                                   |
+| `text`       | `t`                                   |
+
+**Call-site checking:**
+
+```
+gmn 3 7          -- ok: both n
+gmn "a" "b"      -- ok: both t
+gmn 1 "two"      -- ILO-T044: 'a' bound to n then t (inconsistent)
+gadd "x" "y"     -- ILO-T044: 't' does not satisfy numeric bound
+```
+
+Unbounded legacy type-variable usage (`identity x:a>a;x`) continues to work without changes.
 
 ### Inline lambdas
 
@@ -277,7 +356,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 ```
 1-char  e
 2-char  at hd pi tl rd wr ct
-3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
+3-char  abs avg b64 bor cap cat cel chr cos del det dot env ewm exp fft fld flr
         flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
         mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
         run sin slc spl srt str sum tan tau trm unq upr wra wrl wro zip
@@ -285,7 +364,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `band`, `bxor`, `bnot`, `bshl`, `bshr`, `brot`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `ones`, `linspace`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
@@ -687,10 +766,12 @@ Called like functions, compiled to dedicated opcodes.
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
 | `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
+| `tokcount s` | approximate cl100k_base token count of string `s` (bytes/3.4 stub; within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. ILO-47 tracks replacing the stub with a real BPE tokeniser. *Experimental.* | `n` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
+| `world` | return the current capability World token (see [Capability World](#capability-world)) | `W` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
@@ -1141,6 +1222,51 @@ env-all!         -- auto-unwrap to M t t
 
 Non-UTF-8 environment variables are silently skipped (same policy as Rust's `std::env::vars`); the snapshot is always `Ok` today.
 
+### Capability World
+
+`world` returns the capability World token, a value of type `W`. It encodes the four CLI capability flags — `net`, `read`, `write`, `run` — as boolean fields, making the side-effect surface of a function visible in its signature.
+
+```
+w=world          -- W: capability World token (constructed from --allow-* flags)
+w.net            -- b: true iff net access is permitted
+w.read           -- b: true iff filesystem read is permitted
+w.write          -- b: true iff filesystem write is permitted
+w.run            -- b: true iff process spawn is permitted
+```
+
+`W` is a first-class type token used in function signatures:
+
+```
+fetch-page w:W url:t>R t t;get w.net url   -- error: net=false caught at caller
+send-mail  w:W body:t>_;...                 -- signals: uses network
+pure-fn    x:n>n;+x 1                       -- no W param: provably no I/O
+```
+
+**Capability values match CLI flags.** Under the permissive default (no `--allow-*` flags) all four flags are `true`. Under `--allow-net=*` only, `net=true`; the other three remain `true` because unspecified flags default to permissive. To restrict a dimension to nothing, pass `--allow-read=` (empty string = block all reads).
+
+**Static enforcement for known-denied Worlds.** `world-no-net` constructs a `W` token with `net=false` known at compile time. The verifier emits **ILO-T044** if any net builtin (`get`, `pst`, `put`, `pat`, `del`, `hed`, `opt`, `getx`, `pstx`, `get-many`, `get-to`, `pst-to`) is called in the same scope:
+
+```
+wn = world-no-net          -- W: net=false, read/write/run=true
+wn.net                     -- b: false
+
+fetch url:t>R t t
+  wn = world-no-net
+  get url                  -- ERROR ILO-T044: 'wn' is a World with net=false
+```
+
+Dynamic worlds (from `world` or `w:W` parameters) are not checked statically — their cap values are determined at runtime via `--allow-*` flags.
+
+```
+fetch w:W url:t>R t t;get url        -- ok: w is dynamic, enforced at runtime
+main>t;
+  w=world
+  r=fetch w "https://api.example.com/data"
+  ...
+```
+
+See `examples/capability-world.ilo` and `examples/world-static-enforce.ilo` for working examples.
+
 ### JSON builtins
 
 `jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index. **Note: `jpth` is dot-path only, not JSONPath.** A leading `$`, `*` wildcard, or `[...]` bracket selector triggers a diagnostic error pointing at the dot-path form; iterate arrays yourself with `@i` or `map` if you need wildcard behaviour.
@@ -1217,6 +1343,68 @@ b64u-dec! (b64u "hello, world!")             -- "hello, world!"
 ```
 
 Both decoders return `Result` so malformed input surfaces typed at the boundary; both encoders are total. Use `!` to auto-unwrap inside an `R`-returning function, or pattern-match on the Result to handle the Err arm explicitly.
+
+### Bitwise ops
+
+`band`, `bor`, `bxor`, `bnot`, `bshl`, `bshr`, `brot` are the bitwise builtin cluster (ILO-58 MVP). All operate on `f64` values via `u32` mod 2^32 conversion and return `f64`. This bridges the crypto-track gap without introducing a new integer type.
+
+| builtin | signature | description |
+|---------|-----------|-------------|
+| `band x y` | `n n > n` | bitwise AND |
+| `bor x y` | `n n > n` | bitwise OR |
+| `bxor x y` | `n n > n` | bitwise XOR |
+| `bnot x` | `n > n` | bitwise NOT (32-bit: all 32 bits flipped) |
+| `bshl x n` | `n n > n` | logical shift left (shift amount mod 32) |
+| `bshr x n` | `n n > n` | logical shift right (shift amount mod 32) |
+| `brot x n` | `n n > n` | rotate left 32-bit (rotate count mod 32) |
+
+All inputs are converted to `u32` via `(x as i64) as u32`, which gives mod 2^32 truncation for positive values. Shift and rotate counts are taken mod 32 so out-of-range amounts don't panic. All seven are tree-bridge eligible — VM and Cranelift inherit through the bridge without new opcodes.
+
+```ilo
+band 12 10    -- 8   (0b1100 & 0b1010)
+bor  12 10    -- 14  (0b1100 | 0b1010)
+bxor 12 10    -- 6   (0b1100 ^ 0b1010)
+bnot 0        -- 4294967295 (all 32 bits set)
+bshl 1 4      -- 16
+bshr 256 3    -- 32
+brot 1 1      -- 2
+brot 1 31     -- 2147483648 (bit 31 set)
+```
+
+Note: these ops use 32-bit semantics for portability across platforms. Values above 2^32 are truncated. For full 64-bit bitwise math see `band64` and friends below.
+
+---
+
+### Bitwise ops (64-bit)
+
+`band64`, `bor64`, `bxor64`, `bnot64`, `bshl64`, `bshr64`, `brot64` are the 64-bit bitwise builtin cluster (ILO-395). Same shape as the 32-bit cluster but mask inputs to `u64` instead of `u32`.
+
+**Precision note:** `f64` can exactly represent integers up to 2^53. Operations on values >= 2^53 may lose precision on the `f64`↔`u64` round-trip. Powers of 2 up to 2^63 are always exact. Keep inputs within safe range when precision matters.
+
+| builtin | signature | description |
+|---------|-----------|-------------|
+| `band64 x y` | `n n > n` | bitwise AND (64-bit) |
+| `bor64 x y` | `n n > n` | bitwise OR (64-bit) |
+| `bxor64 x y` | `n n > n` | bitwise XOR (64-bit) |
+| `bnot64 x` | `n > n` | bitwise NOT (64-bit: all 64 bits flipped) |
+| `bshl64 x n` | `n n > n` | logical shift left (shift amount mod 64) |
+| `bshr64 x n` | `n n > n` | logical shift right (shift amount mod 64) |
+| `brot64 x n` | `n n > n` | rotate left 64-bit (rotate count mod 64) |
+
+All inputs are converted to `u64` via `(x as i64) as u64`. Shift and rotate counts are taken mod 64. All seven are tree-bridge eligible — VM and Cranelift inherit through the bridge without new opcodes.
+
+```ilo
+band64 12 10       -- 8
+bor64  12 10       -- 14
+bxor64 12 10       -- 6
+band64 (bnot64 0) 255   -- 255 (low 8 bits of all-ones)
+bshl64 1 33        -- 8589934592 (2^33, within 2^53 safe range)
+bshr64 8589934592 33    -- 1
+brot64 1 1         -- 2
+bshr64 (brot64 1 63) 63  -- 1  (rotate left 63 then right 63 round-trips)
+```
+
+---
 
 ### Crypto primitives
 
@@ -1778,9 +1966,10 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 Split programs across files with `use`:
 
 ```
-use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo"               -- flat import: all declarations (including _-private ones by convention)
 use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
-use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
+use alias:"path/to/file.ilo"         -- named-module import: public declarations prefixed with alias-
+use re:"path/to/file.ilo" [name1 name2] -- re-export: import AND expose those names to consumers
 ```
 
 **Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
@@ -1788,6 +1977,8 @@ use alias:"path/to/file.ilo"        -- named-module import: public declarations 
 **Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
 
 **Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
+
+**Re-export** (`re:"path" [names]`) imports the listed names and also adds them to this module's public surface so consumers can import them from this module directly. Requires a `[...]` list; `re:` without a list is an error.
 
 ```
 -- math-lib.ilo
@@ -1799,6 +1990,13 @@ half n:n>n; /n 2
 use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
 use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
 run n:n>n; m-dbl! half n
+
+-- facade.ilo
+use re:"math-lib.ilo" [dbl half] -- re-export: dbl and half are part of facade's public API
+extra n:n>n; +n 100
+
+-- consumer.ilo
+use "facade.ilo" [dbl extra]    -- dbl came from math-lib but is visible via re-export
 ```
 
 ### Module privacy
@@ -1817,6 +2015,7 @@ Declaring a private function: `_helper-name params:type > return-type; body`
 - Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
 - Circular imports are an error (`ILO-P018`)
 - Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Re-export form (`re:"path"`) requires a `[...]` list
 - Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
@@ -1827,6 +2026,58 @@ Declaring a private function: `_helper-name params:type > return-type; body`
 | `ILO-P017` | File not found or `use` in inline mode |
 | `ILO-P018` | Circular import detected |
 | `ILO-P019` | Name in `[...]` list not declared in the imported file |
+
+---
+
+## Package Registry
+
+ilo has a lightweight GitHub-based package registry.  There is no central server — GitHub is the substrate.
+
+### Installing packages
+
+```
+ilo add <owner>/<repo>            -- fetch latest default branch
+ilo add <owner>/<repo>@<ref>      -- fetch a specific branch, tag, or SHA prefix
+ilo update                        -- re-fetch all installed packages
+ilo update <owner>/<repo>         -- re-fetch one package
+```
+
+`ilo add` performs a shallow `git clone` into `~/.ilo/pkgs/<owner>/<repo>/` and writes a line to `ilo.lock` in the current directory.
+
+### Using installed packages
+
+After `ilo add myorg/helpers`, import the package's `index.ilo` with:
+
+```
+use "myorg/helpers"               -- imports ~/.ilo/pkgs/myorg/helpers/index.ilo
+use "myorg/helpers" [foo bar]     -- selective import
+use "myorg/helpers/utils.ilo"     -- import a specific file from the package
+```
+
+A `use` path whose first component contains no `.` is treated as a package reference, not a local file path.  To import a local file in a sibling directory, use an explicit leading `./`:
+
+```
+use "./sibling.ilo"               -- always local
+use "myorg/helpers"               -- always a package
+```
+
+### Lockfile (`ilo.lock`)
+
+`ilo add` writes/updates `ilo.lock` in the current working directory.  Commit this file to source control.
+
+```
+# ilo.lock — generated by `ilo add`; commit to source control
+myorg/helpers	<sha40>	https://github.com/myorg/helpers
+```
+
+Format: tab-separated columns `slug`, `sha`, `url`.  Lines starting with `#` are comments.
+
+### Non-goals (v1)
+
+- Centralised registry hosting (GitHub is the substrate)
+- Semantic versioning enforcement
+- Private registry / auth
+- Transitive dependency resolution
 
 ---
 
@@ -2159,6 +2410,7 @@ ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
 ilo serv                          -- long-lived JSON request/response loop
+ilo httpd handler.ilo [--port N]  -- HTTP server: calls handler fn per request (default port 8080)
 ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; protects `ilo serv`
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
@@ -2178,6 +2430,38 @@ ilo run --allow-run[=CMDS] <file>    -- restrict subprocess spawning to comma-se
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
 
 **`ilo test`.** Runs the `-- run: <fn> <args>` / `-- out: <expected>` (or `-- err: <stderr>`) annotations embedded in `.ilo` source files - the same format the in-tree `tests/examples_engines.rs` integration harness already uses. A file path tests that one file; a directory walks `*.ilo` recursively. Each case runs as a subprocess (`ilo <file> --vm <args>`), output is asserted against the expected payload, and the result prints as `PASS  path::fn (line N)` / `FAIL  path::fn (line N) (got: X, want: Y)`. The final line reports `N passed, M failed`. Exit 0 if everything passed, 1 if any case failed or no annotations were found. The default engine is `--vm`; pass `--engine jit` or `--engine all` to widen the matrix. Per-file `-- engine-skip: vm jit` annotations skip the listed engines, matching the integration harness. Because every example under `examples/` uses this annotation format already, `ilo test examples/` doubles as a smoke test for the language itself and as a worked reference an agent can read when writing tests for its own programs.
+
+**`ilo httpd`.** Starts an HTTP/1.1 server that calls a user-defined ilo handler function for every incoming request. The handler receives a `Request` record and must return a `Response` record (or a bare record with at least `status` and `body` fields). One OS thread is spawned per accepted connection. The handler is loaded once at startup; re-reads require a restart.
+
+```
+ilo httpd handler.ilo               -- serve on :8080 (default)
+ilo httpd --port 3000 handler.ilo   -- serve on :3000
+ilo httpd handler.ilo myhandler     -- call function `myhandler` instead of `handler`
+```
+
+Handler signature:
+
+```
+-- Request fields injected by ilo httpd at runtime:
+--   method:t   HTTP verb (GET, POST, ...)
+--   path:t     request path including query string
+--   headers:M t t  request headers (keys lowercased)
+--   body:t     request body (empty string when absent)
+--
+-- Response fields read by ilo httpd:
+--   status:n   HTTP status code (200, 404, 500, ...)
+--   body:t     response body
+--   headers:M t t  optional response headers
+
+type rsp{status:n;body:t}
+
+handler req:_>rsp
+  p=req.path
+  msg=+"Hello! You requested: " p
+  rsp status:200 body:msg
+```
+
+Use `req:_` (wildcard) for the request param type — the `Request` record is created by the ilo httpd runtime and its field types cannot be declared in the handler source without a `type` alias that re-exports them. The dot-access `req.path`, `req.method`, `req.body`, `req.headers` work because ilo resolves record field access by name at runtime. `Content-Type` defaults to `text/plain; charset=utf-8` when not set in the response headers map. Distinct from `ilo serv` (which speaks the agent-protocol JSON-RPC loop); `httpd` is for user-facing HTTP traffic.
 
 **`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 

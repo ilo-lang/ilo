@@ -56,6 +56,7 @@ fn emit_type_comment(ty: &Type) -> String {
             format!("({}) => {}", ps.join(", "), emit_type_comment(ret))
         }
         Type::Named(name) => name.clone(),
+        Type::U32 | Type::U64 | Type::I64 => "number".to_string(),
     }
 }
 
@@ -156,6 +157,29 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
         }
         Decl::Use { .. } => {}
         Decl::Error { .. } => {}
+        Decl::SumType { name, variants, .. } => {
+            // Emit each variant as a tagged-tuple constructor function.
+            // Payload-less variant `red` -> `const red = ["red", null];`
+            // Payload variant `circle(n)` -> `const circle = (payload) => ["circle", payload];`
+            indent(out, level);
+            out.push_str(&format!("// sum type: {}\n", name));
+            for v in variants {
+                indent(out, level);
+                if v.payload.is_some() {
+                    out.push_str(&format!(
+                        "const {} = (payload) => [\"{}\", payload];\n",
+                        js_name(&v.name),
+                        v.name
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "const {} = [\"{}\", null];\n",
+                        js_name(&v.name),
+                        v.name
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -387,6 +411,17 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                     })
                     .collect();
                 out.push_str(&format!("{} ({}) {{\n", kw, conds.join(" || ")));
+            }
+            Pattern::Variant { tag, binding } => {
+                let kw = if i == 0 { "if" } else { "else if" };
+                out.push_str(&format!(
+                    "{} (Array.isArray({}) && {}[0] === \"{}\") {{\n",
+                    kw, subj_str, subj_str, tag
+                ));
+                if let Some(b) = binding {
+                    indent(out, level + 1);
+                    out.push_str(&format!("const {} = {}[1];\n", js_name(b), subj_str));
+                }
             }
         }
         emit_body(out, &arm.body, level + 1, true);
@@ -818,6 +853,21 @@ fn emit_match_expr(
                     .collect();
                 indent(&mut body, level + 1);
                 body.push_str(&format!("{} ({}) {{\n", kw, conds.join(" || ")));
+                emit_body(&mut body, &arm.body, level + 2, true);
+                indent(&mut body, level + 1);
+                body.push_str("}\n");
+            }
+            Pattern::Variant { tag, binding } => {
+                let kw = if i == 0 { "if" } else { "else if" };
+                indent(&mut body, level + 1);
+                body.push_str(&format!(
+                    "{} (Array.isArray({}) && {}[0] === \"{}\") {{\n",
+                    kw, subj_var, subj_var, tag
+                ));
+                if let Some(b) = binding {
+                    indent(&mut body, level + 2);
+                    body.push_str(&format!("const {} = {}[1];\n", js_name(b), subj_var));
+                }
                 emit_body(&mut body, &arm.body, level + 2, true);
                 indent(&mut body, level + 1);
                 body.push_str("}\n");

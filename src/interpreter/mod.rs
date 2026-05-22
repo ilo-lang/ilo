@@ -309,6 +309,16 @@ pub enum Value {
     },
     Ok(Box<Value>),
     Err(Box<Value>),
+    /// Capability world token — produced by the `world` builtin.
+    /// Carries the four boolean capability flags derived from CLI `--allow-*`
+    /// flags at startup. Passed to I/O-performing functions as an explicit
+    /// proof-of-authority parameter (Zig/Zero pattern).
+    World {
+        net: bool,
+        read: bool,
+        write: bool,
+        run: bool,
+    },
     /// A reference to a named function — produced when a function name is used as a value.
     FnRef(String),
     /// A closure: a named (lifted) function plus by-value capture snapshots.
@@ -322,6 +332,13 @@ pub enum Value {
     Closure {
         fn_name: String,
         captures: Vec<Value>,
+    },
+    /// A tagged variant value from a named sum type declaration.
+    /// `Circle 5.0` → `Variant { type_name: "shape", tag: "circle", payload: Some(Number(5.0)) }`
+    Variant {
+        type_name: String,
+        tag: String,
+        payload: Option<Box<Value>>,
     },
     /// Lazy stdin line iterator.  Produced by `for-line stdin`.
     /// Consumed by `Stmt::ForEach`: each iteration calls `next_line()`,
@@ -385,6 +402,17 @@ impl std::fmt::Display for Value {
             }
             Value::Ok(v) => write!(f, "~{}", v),
             Value::Err(v) => write!(f, "^{}", v),
+            Value::World {
+                net,
+                read,
+                write,
+                run,
+            } => {
+                write!(
+                    f,
+                    "World {{net: {net}, read: {read}, write: {write}, run: {run}}}"
+                )
+            }
             Value::FnRef(name) => write!(f, "<fn:{}>", name),
             Value::Closure { fn_name, captures } => {
                 write!(f, "<closure:{}[", fn_name)?;
@@ -396,6 +424,10 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, "]>")
             }
+            Value::Variant { tag, payload, .. } => match payload {
+                Some(p) => write!(f, "{tag}({p})"),
+                None => write!(f, "{tag}"),
+            },
             Value::LazyStdinLines(_) => write!(f, "<stdin-lines>"),
         }
     }
@@ -432,6 +464,9 @@ struct Env {
     /// Stack of indices into `vars` marking where each scope starts.
     scope_marks: Vec<usize>,
     functions: HashMap<String, Decl>,
+    /// Variant constructors from `Decl::SumType`. Maps variant name → (type_name, has_payload).
+    /// Used by `call_function` to construct `Value::Variant`.
+    sum_variants: HashMap<String, (String, bool)>,
     call_stack: Vec<String>,
     tool_provider: Option<std::sync::Arc<dyn crate::tools::ToolProvider>>,
     #[cfg(feature = "tools")]
@@ -450,6 +485,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: None,
             #[cfg(feature = "tools")]
@@ -464,6 +500,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: None,
             #[cfg(feature = "tools")]
@@ -481,6 +518,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
@@ -499,6 +537,7 @@ impl Env {
             vars: Vec::new(),
             scope_marks: vec![0],
             functions: HashMap::new(),
+            sum_variants: HashMap::new(),
             call_stack: Vec::new(),
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
@@ -560,10 +599,29 @@ impl Env {
         if self.functions.contains_key(name) {
             return Ok(Value::FnRef(name.to_string()));
         }
+        // Variant constructor names: 0-arg variants resolve directly to Value::Variant;
+        // payload variants resolve to FnRef so they can be called with an argument.
+        if let Some((type_name, has_payload)) = self.sum_variants.get(name) {
+            if *has_payload {
+                return Ok(Value::FnRef(name.to_string()));
+            } else {
+                return Ok(Value::Variant {
+                    type_name: type_name.clone(),
+                    tag: name.to_string(),
+                    payload: None,
+                });
+            }
+        }
         // Builtin names also resolve to FnRef so they can be passed to
         // higher-order builtins (e.g. `fld max xs 0`).
         if Builtin::is_builtin(name) {
             return Ok(Value::FnRef(name.to_string()));
+        }
+        // `nil` is emitted as Expr::Ref("nil") by the parser (so that sum-type
+        // variants named `nil` resolve correctly).  When no `nil` variant is
+        // registered, fall back to the built-in nil value.
+        if name == "nil" {
+            return Ok(Value::Nil);
         }
         Err(RuntimeError::new(
             "ILO-R001",
@@ -655,6 +713,12 @@ pub fn call_builtin_for_bridge_with_program(
             Decl::Function { name, .. } | Decl::Tool { name, .. } => {
                 env.functions.insert(name.clone(), decl.clone());
             }
+            Decl::SumType { name, variants, .. } => {
+                for v in variants {
+                    env.sum_variants
+                        .insert(v.name.clone(), (name.clone(), v.payload.is_some()));
+                }
+            }
             Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
         }
     }
@@ -700,11 +764,17 @@ fn run_with_env(
     args: Vec<Value>,
     mut env: Env,
 ) -> Result<Value> {
-    // Register all functions and tools
+    // Register all functions, tools, and sum type variant constructors
     for decl in &program.declarations {
         match decl {
             Decl::Function { name, .. } | Decl::Tool { name, .. } => {
                 env.functions.insert(name.clone(), decl.clone());
+            }
+            Decl::SumType { name, variants, .. } => {
+                for v in variants {
+                    env.sum_variants
+                        .insert(v.name.clone(), (name.clone(), v.payload.is_some()));
+                }
             }
             Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
         }
@@ -2401,6 +2471,32 @@ fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
 }
 
 #[inline(never)]
+fn tokcount_impl(arg: &Value) -> Result<Value> {
+    // tokcount s > n — approximate cl100k_base token count of string s.
+    //
+    // STUB: uses a bytes/3.4 approximation (empirical mean bytes-per-token for
+    // English prose under cl100k_base). Correct within ~5% for natural-language
+    // skill files. A follow-up (ILO-47) will replace this with a real BPE
+    // tokeniser (tiktoken-rs or similar) once crate WASM and licence questions
+    // are resolved.
+    //
+    // f64::ceil ensures we round up, matching Python tiktoken's exact count
+    // on short strings where the approximation could otherwise round down
+    // and produce a false-passing token budget check.
+    match arg {
+        Value::Text(s) => {
+            let bytes = s.len() as f64;
+            let count = (bytes / 3.4_f64).ceil();
+            Ok(Value::Number(count))
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!("tokcount requires text, got {:?}", other),
+        )),
+    }
+}
+
+#[inline(never)]
 fn b64_impl(arg: &Value) -> Result<Value> {
     // b64 s > t — standard base64 (RFC 4648 §4) encode of the UTF-8 bytes of
     // s, with `=` padding. Distinct from `b64u` which uses the URL-safe
@@ -2765,6 +2861,143 @@ fn day_of_week_impl(arg: &Value) -> Result<Value> {
 /// well-defined-but-meaningless rather than an error. Matches Python's
 /// `bisect` module which also documents but does not enforce sortedness.
 ///
+/// Bitwise op helpers (ILO-58 MVP). Each operand is converted to `u32` by
+/// truncating to `u64` and masking to 32 bits (mod 2^32). The result is
+/// cast back to `f64`. Shift/rotate amounts are taken mod 32 so out-of-
+/// range values don't panic or saturate — consistent with Lua, Java, and
+/// JavaScript's unsigned right-shift semantics.
+///
+/// `#[inline(never)]` keeps the call_function dispatch frame compact,
+/// matching the established per-builtin helper pattern.
+#[inline(never)]
+fn run_bitwise(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> {
+    use crate::builtins::Builtin;
+
+    /// Extract a u32 from a Value::Number (mod 2^32).
+    fn to_u32(v: &Value, pos: &str, name: &str) -> Result<u32> {
+        match v {
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: {pos} must be a finite number, got {n}"),
+                    ));
+                }
+                Ok((*n as i64) as u32)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: {pos} must be a number, got {other:?}"),
+            )),
+        }
+    }
+
+    let name = b.name();
+    let result: u32 = match b {
+        Builtin::Band => {
+            to_u32(&args[0], "first arg", name)? & to_u32(&args[1], "second arg", name)?
+        }
+        Builtin::Bor => {
+            to_u32(&args[0], "first arg", name)? | to_u32(&args[1], "second arg", name)?
+        }
+        Builtin::Bxor => {
+            to_u32(&args[0], "first arg", name)? ^ to_u32(&args[1], "second arg", name)?
+        }
+        Builtin::Bnot => !to_u32(&args[0], "arg", name)?,
+        Builtin::Bshl => {
+            let x = to_u32(&args[0], "first arg", name)?;
+            let n = to_u32(&args[1], "second arg", name)? % 32;
+            x << n
+        }
+        Builtin::Bshr => {
+            let x = to_u32(&args[0], "first arg", name)?;
+            let n = to_u32(&args[1], "second arg", name)? % 32;
+            x >> n
+        }
+        Builtin::Brot => {
+            let x = to_u32(&args[0], "first arg", name)?;
+            let n = to_u32(&args[1], "second arg", name)? % 32;
+            x.rotate_left(n)
+        }
+        _ => unreachable!(),
+    };
+    Ok(Value::Number(result as f64))
+}
+
+/// 64-bit bitwise ops (ILO-395). Same shape as `run_bitwise` but masks to u64.
+///
+/// f64 can exactly represent integers up to 2^53; values >= 2^53 may lose
+/// precision on the f64↔u64 round-trip. Inputs should stay within safe range.
+///
+/// `#[inline(never)]` keeps the call_function dispatch frame compact,
+/// matching the established per-builtin helper pattern.
+#[inline(never)]
+fn run_bitwise_64(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> {
+    use crate::builtins::Builtin;
+
+    /// Extract a u64 from a Value::Number (mod 2^64 via cast).
+    ///
+    /// Negative f64 values are treated as signed and wrapped (matching the
+    /// 32-bit `to_u32` behaviour). For f64 >= 0, we cast directly to u64 to
+    /// avoid the i64 saturation that would occur for values in [2^63, 2^64).
+    fn to_u64(v: &Value, pos: &str, name: &str) -> Result<u64> {
+        match v {
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: {pos} must be a finite number, got {n}"),
+                    ));
+                }
+                let result = if *n < 0.0 {
+                    // Negative: treat as signed, wrap into u64 via i64.
+                    (*n as i64) as u64
+                } else {
+                    // Non-negative: cast directly to avoid i64 saturation for
+                    // values in [2^63, 2^64).
+                    *n as u64
+                };
+                Ok(result)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: {pos} must be a number, got {other:?}"),
+            )),
+        }
+    }
+
+    let name = b.name();
+    let result: u64 = match b {
+        Builtin::Band64 => {
+            to_u64(&args[0], "first arg", name)? & to_u64(&args[1], "second arg", name)?
+        }
+        Builtin::Bor64 => {
+            to_u64(&args[0], "first arg", name)? | to_u64(&args[1], "second arg", name)?
+        }
+        Builtin::Bxor64 => {
+            to_u64(&args[0], "first arg", name)? ^ to_u64(&args[1], "second arg", name)?
+        }
+        Builtin::Bnot64 => !to_u64(&args[0], "arg", name)?,
+        Builtin::Bshl64 => {
+            let x = to_u64(&args[0], "first arg", name)?;
+            let n = to_u64(&args[1], "second arg", name)? % 64;
+            x << n
+        }
+        Builtin::Bshr64 => {
+            let x = to_u64(&args[0], "first arg", name)?;
+            let n = to_u64(&args[1], "second arg", name)? % 64;
+            x >> n
+        }
+        Builtin::Brot64 => {
+            let x = to_u64(&args[0], "first arg", name)?;
+            let n = (to_u64(&args[1], "second arg", name)? % 64) as u32;
+            x.rotate_left(n)
+        }
+        _ => unreachable!(),
+    };
+    Ok(Value::Number(result as f64))
+}
+
 /// `#[inline(never)]` matches the established per-builtin helper pattern
 /// (see `day_of_week_impl` above and the `vm_*` family) so the
 /// call_function dispatch frame stays compact.
@@ -4610,6 +4843,45 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Bisect) && args.len() == 2 {
         return run_bisect(&args[0], &args[1]);
     }
+    // Bitwise ops (ILO-58 MVP). All operate on f64 → u32 (mod 2^32) → f64.
+    if matches!(
+        builtin,
+        Some(
+            Builtin::Band
+                | Builtin::Bor
+                | Builtin::Bxor
+                | Builtin::Bnot
+                | Builtin::Bshl
+                | Builtin::Bshr
+                | Builtin::Brot
+        )
+    ) {
+        let b = builtin.unwrap();
+        let expected_argc = if b == Builtin::Bnot { 1 } else { 2 };
+        if args.len() == expected_argc {
+            return run_bitwise(b, &args);
+        }
+    }
+    // 64-bit bitwise ops (ILO-395). Operate on f64 → u64 (mod 2^64) → f64.
+    // Values >= 2^53 may lose precision on the f64↔u64 round-trip.
+    if matches!(
+        builtin,
+        Some(
+            Builtin::Band64
+                | Builtin::Bor64
+                | Builtin::Bxor64
+                | Builtin::Bnot64
+                | Builtin::Bshl64
+                | Builtin::Bshr64
+                | Builtin::Brot64
+        )
+    ) {
+        let b = builtin.unwrap();
+        let expected_argc = if b == Builtin::Bnot64 { 1 } else { 2 };
+        if args.len() == expected_argc {
+            return run_bitwise_64(b, &args);
+        }
+    }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
         // 1-arg list form: returns the min/max element of a list of numbers.
         // Mirrors `avg`/`median` ergonomics so `max [1 2 3]` == 3.
@@ -5112,6 +5384,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::HexRev) && args.len() == 1 {
         return hex_rev_impl(&args[0]);
     }
+    if builtin == Some(Builtin::Tokcount) && args.len() == 1 {
+        return tokcount_impl(&args[0]);
+    }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
             Value::Number(n) => {
@@ -5363,6 +5638,295 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let v = &args[1];
         let out = vec![v.clone(); n as usize];
         return Ok(Value::List(Arc::new(out)));
+    }
+    // ----- zeros -----
+    if builtin == Some(Builtin::Zeros) && args.len() == 1 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("zeros: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("zeros: count must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("zeros too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let out = vec![Value::Number(0.0); n as usize];
+        return Ok(Value::List(Arc::new(out)));
+    }
+    // ----- arange -----
+    if builtin == Some(Builtin::Arange) && args.len() == 3 {
+        let (start, stop, step) = match (&args[0], &args[1], &args[2]) {
+            (Value::Number(a), Value::Number(b), Value::Number(s)) => (*a, *b, *s),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "arange requires three numbers (start stop step)".to_string(),
+                ));
+            }
+        };
+        if step <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("arange: step must be positive, got {step}"),
+            ));
+        }
+        if start >= stop {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        let n = ((stop - start) / step).ceil() as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("arange too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let mut out = Vec::with_capacity(n as usize);
+        let mut i = 0u64;
+        loop {
+            let v = start + step * (i as f64);
+            if v >= stop {
+                break;
+            }
+            out.push(Value::Number(v));
+            i += 1;
+            if i > 1_000_000 {
+                break;
+            }
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    // ----- vstack -----
+    // vstack matrices:L > L — vertical concatenation of a list of row-lists.
+    // Equivalent to flat on a list of matrices: [[r0,r1],[r2,r3]] → [r0,r1,r2,r3].
+    #[inline(never)]
+    fn vstack_run(matrices_val: &Value) -> Result<Value> {
+        let matrices = match matrices_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "vstack: argument must be a list of matrices".to_string(),
+                ));
+            }
+        };
+        let mut out: Vec<Value> = Vec::new();
+        for item in matrices.iter() {
+            match item {
+                Value::List(rows) => {
+                    for row in rows.iter() {
+                        out.push(row.clone());
+                    }
+                }
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "vstack: each element must be a list (matrix or vector)".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+    if builtin == Some(Builtin::Vstack) && args.len() == 1 {
+        return vstack_run(&args[0]);
+    }
+    // ----- hstack -----
+    // hstack matrices:L > L — horizontal concatenation: cat corresponding rows.
+    // All matrices must have the same number of rows; each output row is the
+    // concatenation of the corresponding input rows.
+    #[inline(never)]
+    fn hstack_run(matrices_val: &Value) -> Result<Value> {
+        let matrices = match matrices_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "hstack: argument must be a list of matrices".to_string(),
+                ));
+            }
+        };
+        if matrices.is_empty() {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        // Collect as Vec<Vec<&Value>> — each element is a list of rows.
+        let mut mats: Vec<Arc<Vec<Value>>> = Vec::with_capacity(matrices.len());
+        for item in matrices.iter() {
+            match item {
+                Value::List(rows) => mats.push(rows.clone()),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "hstack: each element must be a list (matrix)".to_string(),
+                    ));
+                }
+            }
+        }
+        let n_rows = mats[0].len();
+        for m in &mats {
+            if m.len() != n_rows {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "hstack: all matrices must have the same number of rows; expected {n_rows}, got {}",
+                        m.len()
+                    ),
+                ));
+            }
+        }
+        let mut out = Vec::with_capacity(n_rows);
+        for r in 0..n_rows {
+            let mut row: Vec<Value> = Vec::new();
+            for m in &mats {
+                match &m[r] {
+                    Value::List(cols) => {
+                        for col in cols.iter() {
+                            row.push(col.clone());
+                        }
+                    }
+                    other => row.push(other.clone()),
+                }
+            }
+            out.push(Value::List(Arc::new(row)));
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+    if builtin == Some(Builtin::Hstack) && args.len() == 1 {
+        return hstack_run(&args[0]);
+    }
+    // ----- column-stack -----
+    // column-stack vecs:L > L — treat each vector (1-d list) as a column,
+    // return a 2-d matrix (list of rows). All vectors must have the same length.
+    #[inline(never)]
+    fn column_stack_run(vecs_val: &Value) -> Result<Value> {
+        let vecs = match vecs_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "column-stack: argument must be a list of vectors".to_string(),
+                ));
+            }
+        };
+        if vecs.is_empty() {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        let mut cols: Vec<Arc<Vec<Value>>> = Vec::with_capacity(vecs.len());
+        for item in vecs.iter() {
+            match item {
+                Value::List(col) => cols.push(col.clone()),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "column-stack: each element must be a list (vector)".to_string(),
+                    ));
+                }
+            }
+        }
+        let n_rows = cols[0].len();
+        for col in &cols {
+            if col.len() != n_rows {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "column-stack: all vectors must have the same length; expected {n_rows}, got {}",
+                        col.len()
+                    ),
+                ));
+            }
+        }
+        let mut out = Vec::with_capacity(n_rows);
+        for r in 0..n_rows {
+            let row: Vec<Value> = cols.iter().map(|col| col[r].clone()).collect();
+            out.push(Value::List(Arc::new(row)));
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+    if builtin == Some(Builtin::ColumnStack) && args.len() == 1 {
+        return column_stack_run(&args[0]);
+    }
+    // ----- hist -----
+    // hist xs:L n_bins:n > L n — fixed-width histogram.
+    // Returns a list of n_bins integer counts for equal-width bins over [min,max].
+    #[inline(never)]
+    fn hist_run(xs_val: &Value, n_bins_val: &Value) -> Result<Value> {
+        let xs = match xs_val {
+            Value::List(xs) => xs.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "hist: first argument must be a numeric list".to_string(),
+                ));
+            }
+        };
+        let n_bins_raw = match n_bins_val {
+            Value::Number(n) => *n,
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "hist: n_bins must be a number".to_string(),
+                ));
+            }
+        };
+        if n_bins_raw.fract() != 0.0 || n_bins_raw <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hist: n_bins must be a positive integer, got {n_bins_raw}"),
+            ));
+        }
+        let n_bins = n_bins_raw as usize;
+        if n_bins > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hist: n_bins too large: {n_bins} (max 1000000)"),
+            ));
+        }
+        let mut counts = vec![Value::Number(0.0); n_bins];
+        if xs.is_empty() {
+            return Ok(Value::List(Arc::new(counts)));
+        }
+        let mut vals: Vec<f64> = Vec::with_capacity(xs.len());
+        for v in xs.iter() {
+            match v {
+                Value::Number(n) => vals.push(*n),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "hist: list elements must all be numbers".to_string(),
+                    ));
+                }
+            }
+        }
+        let mn = vals.iter().cloned().fold(f64::INFINITY, f64::min);
+        let mx = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let range = mx - mn;
+        for &v in &vals {
+            let bin = if range == 0.0 {
+                0
+            } else {
+                let b = ((v - mn) / range * (n_bins as f64)).floor() as usize;
+                b.min(n_bins - 1)
+            };
+            if let Value::Number(ref mut c) = counts[bin] {
+                *c += 1.0;
+            }
+        }
+        Ok(Value::List(Arc::new(counts)))
+    }
+    if builtin == Some(Builtin::Hist) && args.len() == 2 {
+        return hist_run(&args[0], &args[1]);
     }
     if builtin == Some(Builtin::Chunks) && args.len() == 2 {
         let n_raw = match &args[0] {
@@ -6225,6 +6789,165 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         return Ok(run_spawn_structured(cmd.as_str(), &argv));
+    }
+    if builtin == Some(Builtin::Run) && args.len() == 3 {
+        // run cmd:t args:L t stdin:t  >  R (M t t) t
+        //
+        // Arity-3 extension: pipe `stdin` text into the child's stdin.
+        // Identical semantics to the 2-arg form except stdin is piped
+        // instead of /dev/null. Non-zero exit is NOT an error.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        let stdin_text = match &args[2] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run stdin arg must be t (text), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_with_stdin(cmd.as_str(), &argv, &stdin_text));
+    }
+    if builtin == Some(Builtin::Run2) && args.len() == 3 {
+        // run2 cmd:t args:L t stdin:t  >  R RunResult t
+        //
+        // Arity-3 extension of run2: pipe `stdin` text into the child's
+        // stdin. Returns the same typed RunResult record.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run2 argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        let stdin_text = match &args[2] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 stdin arg must be t (text), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_structured_with_stdin(
+            cmd.as_str(),
+            &argv,
+            &stdin_text,
+        ));
+    }
+    if builtin == Some(Builtin::RunBg) && args.len() == 2 {
+        // run-bg cmd:t args:L t  >  R n t
+        //
+        // Fire-and-forget background spawn. Returns Ok(pid:n) immediately
+        // without waiting for the child. Child inherits parent stdout/stderr.
+        // Err only on spawn failure (cmd not found, permission denied, etc.).
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-bg requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run-bg argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run-bg argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return Ok(run_spawn_bg(cmd.as_str(), &argv));
     }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
@@ -7162,6 +7885,74 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 format!("env requires text, got {:?}", other),
             )),
         };
+    }
+
+    // world > World — construct a World token from the current Caps policy.
+    // Zero args; returns Value::World with boolean flags indicating which
+    // capability dimensions are granted. Under Caps::Permissive all four are
+    // true (legacy mode, full backwards compat). Under Caps::Restricted each
+    // flag is true iff the corresponding Policy is not an empty list.
+    if builtin == Some(Builtin::WorldCap) && args.is_empty() {
+        let (net, read, write, run) = match env.caps.as_ref() {
+            crate::caps::Caps::Permissive => (true, true, true, true),
+            crate::caps::Caps::Restricted {
+                net,
+                read,
+                write,
+                run,
+                ..
+            } => {
+                let cap_allowed = |p: &crate::caps::Policy| {
+                    matches!(p, crate::caps::Policy::All)
+                        || matches!(p, crate::caps::Policy::List(v) if !v.is_empty())
+                };
+                (
+                    cap_allowed(net),
+                    cap_allowed(read),
+                    cap_allowed(write),
+                    cap_allowed(run),
+                )
+            }
+        };
+        return Ok(Value::World {
+            net,
+            read,
+            write,
+            run,
+        });
+    }
+
+    // world-no-net > World — construct a World with net=false.
+    // All other caps (read, write, run) are inherited from the active Caps so
+    // that an outer --allow-read / --allow-run policy is preserved.
+    if builtin == Some(Builtin::WorldNoNet) && args.is_empty() {
+        let (_net, read, write, run) = match env.caps.as_ref() {
+            crate::caps::Caps::Permissive => (true, true, true, true),
+            crate::caps::Caps::Restricted {
+                net,
+                read,
+                write,
+                run,
+                ..
+            } => {
+                let cap_allowed = |p: &crate::caps::Policy| {
+                    matches!(p, crate::caps::Policy::All)
+                        || matches!(p, crate::caps::Policy::List(v) if !v.is_empty())
+                };
+                (
+                    cap_allowed(net),
+                    cap_allowed(read),
+                    cap_allowed(write),
+                    cap_allowed(run),
+                )
+            }
+        };
+        return Ok(Value::World {
+            net: false, // statically denied
+            read,
+            write,
+            run,
+        });
     }
 
     // env-all -> R M t t: snapshot the full process environment as a
@@ -8206,6 +8997,41 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return ifft_run(items);
     }
 
+    // Sum type variant constructor: `Circle 5.0` or `red` (no payload)
+    if let Some((type_name, has_payload)) = env.sum_variants.get(name).cloned() {
+        return if has_payload {
+            if args.len() != 1 {
+                return Err(RuntimeError::new(
+                    "ILO-R004",
+                    format!(
+                        "{name}: variant constructor expects 1 argument, got {}",
+                        args.len()
+                    ),
+                ));
+            }
+            Ok(Value::Variant {
+                type_name,
+                tag: name.to_string(),
+                payload: Some(Box::new(args.into_iter().next().unwrap())),
+            })
+        } else {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "ILO-R004",
+                    format!(
+                        "{name}: variant constructor takes no arguments, got {}",
+                        args.len()
+                    ),
+                ));
+            }
+            Ok(Value::Variant {
+                type_name,
+                tag: name.to_string(),
+                payload: None,
+            })
+        };
+    }
+
     // Dynamic dispatch: callee resolved to a FnRef at runtime
     // (e.g. calling a function passed as a parameter: `fn x` where fn:F n n)
     // This is handled by looking up `name` in scope within eval_expr, not here.
@@ -8363,6 +9189,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             "ILO-R002",
             format!("{} failed to parse", name),
         )),
+        Decl::SumType { .. } => Err(RuntimeError::new(
+            "ILO-R002",
+            format!("{} is a sum type, not a callable function", name),
+        )),
     }
 }
 
@@ -8401,7 +9231,28 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::Closure { fn_name, .. } => {
             serde_json::Value::String(format!("<closure:{}>", fn_name))
         }
+        Value::Variant { tag, payload, .. } => {
+            let mut map = serde_json::Map::new();
+            map.insert("tag".to_string(), serde_json::Value::String(tag.clone()));
+            if let Some(p) = payload {
+                map.insert("payload".to_string(), value_to_json(p));
+            }
+            serde_json::Value::Object(map)
+        }
         Value::LazyStdinLines(_) => serde_json::Value::String("<stdin-lines>".to_string()),
+        Value::World {
+            net,
+            read,
+            write,
+            run,
+        } => {
+            let mut map = serde_json::Map::with_capacity(4);
+            map.insert("net".to_string(), serde_json::Value::Bool(*net));
+            map.insert("read".to_string(), serde_json::Value::Bool(*read));
+            map.insert("write".to_string(), serde_json::Value::Bool(*write));
+            map.insert("run".to_string(), serde_json::Value::Bool(*run));
+            serde_json::Value::Object(map)
+        }
     }
 }
 
@@ -8836,6 +9687,26 @@ fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Resul
     }
 }
 
+/// Run and remove all block-scope defers that were pushed since `saved_len`.
+///
+/// Called at every exit point of a block (normal, break, continue, return).
+/// `is_error` mirrors the function-scope defer semantics: `errdefer` fires
+/// only when true.  Defer errors are silently ignored so a failing defer
+/// doesn't mask the original result.
+fn run_block_defers(env: &mut Env, saved_len: usize, is_error: bool) {
+    // Drain the entries added since we entered the block (LIFO order).
+    let block_defers: Vec<_> = env.defer_stack.drain(saved_len..).rev().collect();
+    for (defer_expr, defer_kind) in block_defers {
+        let should_run = match defer_kind {
+            crate::ast::DeferKind::Always => true,
+            crate::ast::DeferKind::OnError => is_error,
+        };
+        if should_run {
+            let _ = eval_expr(env, &defer_expr);
+        }
+    }
+}
+
 fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
@@ -8934,7 +9805,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 // body, both branches are in tail position.
                 let chosen = if should_run { body } else { else_b };
                 env.push_scope();
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, chosen, is_tail);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
@@ -8950,7 +9824,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 // relative to the function — the value it produces becomes
                 // the function's return, so a tail call inside trampolines.
                 env.push_scope();
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, true);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
@@ -8974,7 +9851,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 // tail call is the function's tail call. Safe to pass
                 // through.
                 env.push_scope();
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, is_tail);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
@@ -9003,7 +9883,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                     // Arm body inherits the match's tail position: a tail
                     // call in the taken arm of a tail-position match
                     // trampolines through.
+                    let defer_mark = env.defer_stack.len();
                     let result = eval_body(env, &arm.body, is_tail);
+                    let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                    run_block_defers(env, defer_mark, is_err);
                     env.pop_scope();
                     match result? {
                         BodyResult::Return(v) => return Ok(Some(BodyResult::Return(v))),
@@ -9034,7 +9917,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                         // returns to the loop header after each iteration,
                         // so a "tail call" inside a loop must materialise as
                         // a normal call. Pass `false`.
+                        let defer_mark = env.defer_stack.len();
                         let result = eval_body(env, body, false);
+                        let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                        run_block_defers(env, defer_mark, is_err);
                         env.pop_scope();
                         match result? {
                             BodyResult::Return(v) => {
@@ -9137,7 +10023,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
                 // Range body is not in tail position; see ForEach above.
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, false);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 env.pop_scope();
                 match result? {
                     BodyResult::Return(v) => {
@@ -9168,7 +10057,10 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                     break;
                 }
                 // While body is not in tail position; see ForEach above.
+                let defer_mark = env.defer_stack.len();
                 let result = eval_body(env, body, false);
+                let is_err = matches!(result, Err(_) | Ok(BodyResult::Return(_)));
+                run_block_defers(env, defer_mark, is_err);
                 match result? {
                     BodyResult::Return(v) => {
                         return Ok(Some(BodyResult::Return(v)));
@@ -9266,6 +10158,30 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                         format!("no field '{}' on record", field),
                     )),
                 },
+                // World field access: .net .read .write .run → Bool
+                Value::World {
+                    net,
+                    read,
+                    write,
+                    run,
+                } => {
+                    let v = match field.as_str() {
+                        "net" => Value::Bool(net),
+                        "read" => Value::Bool(read),
+                        "write" => Value::Bool(write),
+                        "run" => Value::Bool(run),
+                        _other if *safe => Value::Nil,
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R005",
+                                format!(
+                                    "no field '{other}' on World (known: net, read, write, run)"
+                                ),
+                            ));
+                        }
+                    };
+                    Ok(v)
+                }
                 // Safe access on a non-record value (list, text, number, ...)
                 // returns nil to match the VM and Cranelift backends. The
                 // strict `.field` path below still errors on type mismatch.
@@ -9666,6 +10582,33 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
             };
             if matches {
                 Some(vec![(binding.clone(), value.clone())])
+            } else {
+                None
+            }
+        }
+        Pattern::Variant { tag, binding } => {
+            // `nil:` in a match arm is emitted as Pattern::Variant { tag: "nil" }
+            // so that it can match both the built-in nil value (Optional/nil) and
+            // a sum-type variant named `nil`.
+            if tag == "nil" && matches!(value, Value::Nil) {
+                return Some(vec![]);
+            }
+            if let Value::Variant {
+                tag: vtag, payload, ..
+            } = value
+            {
+                if vtag == tag {
+                    let mut bindings = vec![];
+                    if let Some(b) = binding {
+                        if b != "_" {
+                            let pval = payload.as_deref().cloned().unwrap_or(Value::Nil);
+                            bindings.push((b.clone(), pval));
+                        }
+                    }
+                    Some(bindings)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -10118,6 +11061,298 @@ pub(crate) fn run_spawn(_cmd: &str, _argv: &[String]) -> Value {
 pub(crate) fn run_spawn_structured(_cmd: &str, _argv: &[String]) -> Value {
     Value::Err(Box::new(Value::Text(Arc::new(
         "run2: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+/// `run cmd argv stdin_text > R (M t t) t` — like `run_spawn` but pipes
+/// `stdin_text` into the child's stdin instead of /dev/null.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_with_stdin(cmd: &str, argv: &[String], stdin_text: &str) -> Value {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    // Write stdin synchronously before draining stdout/stderr to avoid
+    // deadlock on small inputs (the child reads stdin then closes it).
+    // For large stdin blobs a dedicated thread would be safer; the 10 MiB
+    // output cap already bounds child output, and stdin writes > pipe buffer
+    // will block here — acceptable for the 0.13.0 initial shape.
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        if let Err(e) = stdin_pipe.write_all(stdin_text.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: failed to write stdin: {e}"
+            )))));
+        }
+        // Drop closes the pipe, signalling EOF to the child.
+    }
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: wait failed: {e}"
+            )))));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+    let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(sig) = status.signal() {
+                return format!("signal:{sig}");
+            }
+        }
+        "unknown".to_string()
+    });
+
+    let mut m: HashMap<MapKey, Value> = HashMap::with_capacity(3);
+    m.insert(
+        MapKey::Text("stdout".to_string()),
+        Value::Text(Arc::new(stdout)),
+    );
+    m.insert(
+        MapKey::Text("stderr".to_string()),
+        Value::Text(Arc::new(stderr)),
+    );
+    m.insert(
+        MapKey::Text("code".to_string()),
+        Value::Text(Arc::new(code)),
+    );
+    Value::Ok(Box::new(Value::Map(Arc::new(m))))
+}
+
+/// `run2 cmd argv stdin_text > R RunResult t` — like `run_spawn_structured`
+/// but pipes `stdin_text` into the child's stdin.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_structured_with_stdin(
+    cmd: &str,
+    argv: &[String],
+    stdin_text: &str,
+) -> Value {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        if let Err(e) = stdin_pipe.write_all(stdin_text.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: failed to write stdin: {e}"
+            )))));
+        }
+    }
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: wait failed: {e}"
+            )))));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+    let exit_code: f64 = status.code().map(|c| c as f64).unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if status.signal().is_some() {
+                return -1.0;
+            }
+        }
+        -1.0
+    });
+
+    let mut fields = HashMap::with_capacity(3);
+    fields.insert("stdout".to_string(), Value::Text(Arc::new(stdout)));
+    fields.insert("stderr".to_string(), Value::Text(Arc::new(stderr)));
+    fields.insert("exit".to_string(), Value::Number(exit_code));
+    Value::Ok(Box::new(Value::Record {
+        type_name: "RunResult".to_string(),
+        fields,
+    }))
+}
+
+/// `run-bg cmd argv > R n t` — fire-and-forget background spawn.
+///
+/// Spawns the child and immediately returns `Ok(pid:n)` without waiting.
+/// Child inherits the parent's stdout and stderr. stdin is /dev/null.
+/// Err only on spawn failure (cmd not found, permission denied, etc.).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_bg(cmd: &str, argv: &[String]) -> Value {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    match command.spawn() {
+        Ok(child) => {
+            let pid = child.id() as f64;
+            // Detach: drop the Child handle without waiting so the child
+            // runs independently. The OS will reap it as an orphan.
+            Value::Ok(Box::new(Value::Number(pid)))
+        }
+        Err(e) => Value::Err(Box::new(Value::Text(Arc::new(format!(
+            "run-bg: failed to spawn {cmd:?}: {e}"
+        ))))),
+    }
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_with_stdin(_cmd: &str, _argv: &[String], _stdin: &str) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_structured_with_stdin(_cmd: &str, _argv: &[String], _stdin: &str) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run2: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_bg(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run-bg: process spawn not available on wasm".to_string(),
     ))))
 }
 
@@ -11795,6 +13030,7 @@ mod tests {
         Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11805,6 +13041,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11873,6 +13110,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "c".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11885,6 +13123,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "b".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11895,6 +13134,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "a".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -14716,6 +15956,8 @@ mod tests {
                 alias: None,
                 predicate: None,
                 alt_path: None,
+                reexport: false,
+                lazy: false,
                 span: Span { start: 0, end: 0 },
             },
         );
@@ -16251,6 +17493,43 @@ mod tests {
         // Regression: exit must be Number, not Text (run uses Text for code).
         let src = r#"f>b;r=run2!! "true" [];?r.exit{0:true;_:false}"#;
         assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
+    }
+
+    // ── ILO-62: Sum types (discriminated unions) ────────────────────────────
+
+    #[test]
+    fn sum_type_payload_less_variant_returns_variant_value() {
+        let src = r#"type color = red | green | blue
+f>t;c=red;?c{red:"r";green:"g";blue:"b"}"#;
+        assert_eq!(
+            run_str(src, Some("f"), vec![]),
+            Value::Text(Arc::new("r".to_string()))
+        );
+    }
+
+    #[test]
+    fn sum_type_payload_variant_carries_value() {
+        let src = r#"type shape = circle(n) | point
+f>n;s=circle 5;?s{circle(r):r;point:0}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(5.0));
+    }
+
+    #[test]
+    fn sum_type_wildcard_arm_catches_remaining() {
+        let src = r#"type shape = circle(n) | square(n) | point
+f>t;s=point;?s{circle(r):"c";_:"other"}"#;
+        assert_eq!(
+            run_str(src, Some("f"), vec![]),
+            Value::Text(Arc::new("other".to_string()))
+        );
+    }
+
+    #[test]
+    fn sum_type_multiple_payload_variants_inline() {
+        let src = r#"type shape = circle(n) | square(n) | point
+area s:shape>n;?s{circle(r):*3 r;square(side):*side side;point:0}
+f>n;+area(circle 2) area(square 3)"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(6.0 + 9.0));
     }
 
     // ---- todo / panic typed expressions (ILO-410) ----

@@ -1,0 +1,23 @@
+-- `ilo httpd` hello-world example (ILO-46).
+--
+-- Usage:
+--   ilo httpd examples/httpd-hello.ilo          -- serves on :8080
+--   ilo httpd --port 3000 examples/httpd-hello.ilo
+--   curl http://localhost:8080/
+--
+-- Handler signature (set by ilo httpd):
+--   req is a Record with fields: method:t  path:t  headers:M t t  body:t
+--   return a Record with fields: status:n  body:t  (headers optional)
+--
+-- The handler receives the parsed request as a Record and must return a
+-- response Record.  `ilo httpd` converts it to an HTTP/1.1 response.
+--
+-- Type `_` for the request because the verifier doesn't see the fields
+-- defined by the ilo httpd runtime; use `req.field` dot-access directly.
+
+type rsp{status:n;body:t}
+
+handler req:_>rsp
+  p=req.path
+  msg=+"Hello from ilo httpd! You requested: " p
+  rsp status:200 body:msg

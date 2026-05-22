@@ -912,6 +912,377 @@ fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> 
     Ok(vec![])
 }
 
+// ── `ilo httpd` subcommand ────────────────────────────────────────────────────
+//
+// Serves HTTP requests by calling a user-defined ilo handler function.
+//
+// Handler signature (ilo source):
+//   type Request{method:t;path:t;headers:M t t;body:t}
+//   type Response{status:n;headers:M t t;body:t}
+//   handler req:Request>Response; ...
+//
+// One thread is spawned per accepted connection (minimal thread-per-request
+// pool). No async runtime is required — the ilo interpreter is synchronous.
+//
+// TODO(ILO-59): add --allow-net cap check once the cap-flags PR lands.
+
+fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    // ── Load and compile the handler program once ─────────────────────────────
+    let source = match std::fs::read_to_string(handler_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read handler file '{}': {}", handler_file, e);
+            return 1;
+        }
+    };
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            let d = Diagnostic::from(&e).with_source(source.clone());
+            eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
+            return 1;
+        }
+    };
+    let token_spans: Vec<_> = tokens
+        .into_iter()
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
+        .collect();
+
+    let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
+    program.source = Some(source.clone());
+
+    if !parse_errors.is_empty() {
+        for e in &parse_errors {
+            let d = Diagnostic::from(e).with_source(source.clone());
+            eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
+        }
+        return 1;
+    }
+
+    let vr = verify::verify(&program);
+    for w in &vr.warnings {
+        eprint!(
+            "{}",
+            AnsiRenderer { use_color: true }
+                .render(&Diagnostic::from(w).with_source(source.clone()))
+        );
+    }
+    if !vr.errors.is_empty() {
+        for e in &vr.errors {
+            eprint!(
+                "{}",
+                AnsiRenderer { use_color: true }
+                    .render(&Diagnostic::from(e).with_source(source.clone()))
+            );
+        }
+        return 1;
+    }
+
+    let program = Arc::new(program);
+    let func = func_name.to_string();
+
+    // ── Bind the TCP listener ─────────────────────────────────────────────────
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: cannot bind to {}: {}", addr, e);
+            return 1;
+        }
+    };
+    eprintln!("ilo httpd listening on http://0.0.0.0:{}", port);
+
+    // ── Accept loop: one thread per connection ────────────────────────────────
+    for stream in listener.incoming() {
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("accept error: {}", e);
+                continue;
+            }
+        };
+        let program = Arc::clone(&program);
+        let func = func.clone();
+
+        std::thread::spawn(move || {
+            if let Err(e) = handle_http_connection(stream, &program, &func) {
+                eprintln!("connection error: {}", e);
+            }
+        });
+    }
+    0
+}
+
+/// Parse one HTTP/1.1 request from `stream`, call the ilo handler, write the response.
+fn handle_http_connection(
+    stream: std::net::TcpStream,
+    program: &ast::Program,
+    func_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Write};
+
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut writer = stream;
+
+    // ── Parse request line ────────────────────────────────────────────────────
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    let request_line = request_line.trim_end();
+
+    let mut parts = request_line.splitn(3, ' ');
+    let method = parts.next().unwrap_or("GET").to_string();
+    let path = parts.next().unwrap_or("/").to_string();
+    // HTTP version ignored for simplicity.
+
+    // ── Parse headers ─────────────────────────────────────────────────────────
+    let mut raw_headers: Vec<(String, String)> = Vec::new();
+    let mut content_length: usize = 0;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_lowercase();
+            let val = v.trim().to_string();
+            if key == "content-length" {
+                content_length = val.parse().unwrap_or(0);
+            }
+            raw_headers.push((key, val));
+        }
+    }
+
+    // ── Read body ─────────────────────────────────────────────────────────────
+    let body = if content_length > 0 {
+        let mut buf = vec![0u8; content_length];
+        use std::io::Read;
+        reader.read_exact(&mut buf)?;
+        String::from_utf8_lossy(&buf).into_owned()
+    } else {
+        String::new()
+    };
+
+    // ── Build ilo Request record ───────────────────────────────────────────────
+    use interpreter::MapKey;
+    use interpreter::Value;
+
+    let mut hdr_map: HashMap<interpreter::MapKey, Value> = HashMap::new();
+    for (k, v) in &raw_headers {
+        hdr_map.insert(
+            MapKey::Text(k.clone()),
+            Value::Text(std::sync::Arc::new(v.clone())),
+        );
+    }
+
+    let mut req_fields: HashMap<String, Value> = HashMap::new();
+    req_fields.insert(
+        "method".to_string(),
+        Value::Text(std::sync::Arc::new(method.clone())),
+    );
+    req_fields.insert(
+        "path".to_string(),
+        Value::Text(std::sync::Arc::new(path.clone())),
+    );
+    req_fields.insert(
+        "headers".to_string(),
+        Value::Map(std::sync::Arc::new(hdr_map)),
+    );
+    req_fields.insert("body".to_string(), Value::Text(std::sync::Arc::new(body)));
+
+    let req_val = Value::Record {
+        type_name: "Request".to_string(),
+        fields: req_fields,
+    };
+
+    // ── Call handler ──────────────────────────────────────────────────────────
+    let result = interpreter::run(program, Some(func_name), vec![req_val]);
+
+    // ── Extract Response record ───────────────────────────────────────────────
+    let resp = match result {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format!("handler error: {}", e);
+            eprintln!("{}", msg);
+            let body = format!("Internal Server Error: {}\n", e);
+            let resp_bytes = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            writer.write_all(resp_bytes.as_bytes())?;
+            eprintln!("{} {} {} -> 500", peer, method, path);
+            return Ok(());
+        }
+    };
+
+    // Unwrap Result wrappers (handler may return R Response t)
+    let resp = match resp {
+        Value::Ok(inner) => *inner,
+        Value::Err(e) => {
+            let body = format!("Handler returned Err: {}\n", e);
+            let resp_bytes = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            writer.write_all(resp_bytes.as_bytes())?;
+            eprintln!("{} {} {} -> 500 (Err)", peer, method, path);
+            return Ok(());
+        }
+        other => other,
+    };
+
+    // Body shape: either a plain string or a list of chunks for chunked transfer.
+    enum BodyShape {
+        Plain(String),
+        Chunked(Vec<String>),
+    }
+
+    let (status, resp_headers, body_shape) = match &resp {
+        Value::Record { fields, .. } => {
+            let status = match fields.get("status") {
+                Some(Value::Number(n)) => *n as u16,
+                _ => 200,
+            };
+            // body may be:
+            //   Text   → plain body (existing behaviour)
+            //   List   → chunked: each element is a chunk
+            //   FnRef/Closure → call it (no args) expecting a List, then chunk
+            let body_shape = match fields.get("body") {
+                Some(Value::Text(s)) => BodyShape::Plain((**s).clone()),
+                Some(Value::List(items)) => {
+                    let chunks = items.iter().map(|v| v.to_string()).collect();
+                    BodyShape::Chunked(chunks)
+                }
+                Some(Value::FnRef(name)) => {
+                    match interpreter::run(program, Some(name.as_str()), vec![]) {
+                        Ok(Value::List(items)) => {
+                            let chunks = items.iter().map(|v| v.to_string()).collect();
+                            BodyShape::Chunked(chunks)
+                        }
+                        Ok(other) => BodyShape::Plain(other.to_string()),
+                        Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
+                    }
+                }
+                Some(Value::Closure { fn_name, .. }) => {
+                    match interpreter::run(program, Some(fn_name.as_str()), vec![]) {
+                        Ok(Value::List(items)) => {
+                            let chunks = items.iter().map(|v| v.to_string()).collect();
+                            BodyShape::Chunked(chunks)
+                        }
+                        Ok(other) => BodyShape::Plain(other.to_string()),
+                        Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
+                    }
+                }
+                Some(other) => BodyShape::Plain(other.to_string()),
+                None => BodyShape::Plain(String::new()),
+            };
+            let resp_headers: Vec<(String, String)> = match fields.get("headers") {
+                Some(Value::Map(m)) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let ks = match k {
+                            MapKey::Text(s) => s.clone(),
+                            MapKey::Int(n) => n.to_string(),
+                        };
+                        let vs = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => other.to_string(),
+                        };
+                        (ks, vs)
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            (status, resp_headers, body_shape)
+        }
+        // Handler returned bare text — wrap as 200 OK text/plain
+        Value::Text(s) => (200u16, vec![], BodyShape::Plain((**s).clone())),
+        other => (200u16, vec![], BodyShape::Plain(other.to_string())),
+    };
+
+    let status_text = match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+
+    let has_content_type = resp_headers
+        .iter()
+        .any(|(k, _)| k.to_lowercase() == "content-type");
+
+    match body_shape {
+        BodyShape::Plain(resp_body) => {
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str(&format!("Content-Length: {}\r\n", resp_body.len()));
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            writer.write_all(resp_body.as_bytes())?;
+        }
+        BodyShape::Chunked(chunks) => {
+            // RFC 7230 §4.1 chunked transfer encoding.
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str("Transfer-Encoding: chunked\r\n");
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            for chunk in &chunks {
+                let data = chunk.as_bytes();
+                if !data.is_empty() {
+                    writer.write_all(format!("{:x}\r\n", data.len()).as_bytes())?;
+                    writer.write_all(data)?;
+                    writer.write_all(b"\r\n")?;
+                }
+            }
+            // Terminating chunk
+            writer.write_all(b"0\r\n\r\n")?;
+        }
+    }
+
+    eprintln!("{} {} {} -> {}", peer, method, path, status);
+    Ok(())
+}
+
 // ── `ilo serv` subcommand ──────────────────────────────────────────────────
 
 /// Render a `Diagnostic` as a `serde_json::Value` for inclusion in serve responses.
@@ -1070,6 +1441,9 @@ fn type_to_ilo(ty: &ast::Type) -> String {
             format!("F {} {}", ps.join(" "), type_to_ilo(ret))
         }
         ast::Type::Named(name) => name.clone(),
+        ast::Type::U32 => "U32".to_string(),
+        ast::Type::U64 => "U64".to_string(),
+        ast::Type::I64 => "I64".to_string(),
     }
 }
 
@@ -2248,6 +2622,7 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
         ast::Decl::Tool { name, .. } => Some(name),
         ast::Decl::TypeDef { name, .. } => Some(name),
         ast::Decl::Alias { name, .. } => Some(name),
+        ast::Decl::SumType { name, .. } => Some(name),
         ast::Decl::Use { .. } | ast::Decl::Error { .. } => None,
     }
 }
@@ -2280,6 +2655,41 @@ impl BuildTarget {
     }
 }
 
+/// Apply the `only [name1 name2]` filter from a `use` statement.
+/// Pushes `ILO-P019` diagnostics for names not found.
+fn apply_only_filter(
+    decls: Vec<ast::Decl>,
+    only: &Option<Vec<String>>,
+    path: &str,
+    span: ast::Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<ast::Decl> {
+    let Some(names) = only else {
+        return decls;
+    };
+    for name in names {
+        let found = decls.iter().any(|d| decl_name(d) == Some(name.as_str()));
+        if !found {
+            diagnostics.push(
+                Diagnostic::error(format!(
+                    "use \"{}\": name '{}' not found in imported file",
+                    path, name
+                ))
+                .with_code("ILO-P019")
+                .with_span(span, "imported here"),
+            );
+        }
+    }
+    decls
+        .into_iter()
+        .filter(|d| {
+            decl_name(d)
+                .map(|n| names.iter().any(|s| s == n))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Resolve all `Decl::Use` nodes in `decls` recursively, returning a flat
 /// merged list with imported declarations prepended and `Use` nodes stripped.
 ///
@@ -2291,6 +2701,11 @@ impl BuildTarget {
 ///
 /// Privacy rule: declarations whose name starts with `_` are module-private and
 /// are never exported. They are stripped during import regardless of `only` or `alias`.
+///
+/// Lazy imports (`use lazy:"./path"`) are deferred: the module file is only
+/// opened if at least one `<stem>-*` symbol is referenced in the non-lazy
+/// declarations. This lets large optional modules be listed without paying
+/// any parse/IO cost when unused.
 fn resolve_imports(
     decls: Vec<ast::Decl>,
     base_dir: Option<&std::path::Path>,
@@ -2298,7 +2713,81 @@ fn resolve_imports(
     diagnostics: &mut Vec<Diagnostic>,
     build_target: BuildTarget,
 ) -> Vec<ast::Decl> {
+    // Separate lazy Use nodes from everything else for a two-pass approach.
+    let mut eager_decls: Vec<ast::Decl> = Vec::new();
+    let mut lazy_pending: Vec<ast::Decl> = Vec::new();
+    for decl in decls {
+        if matches!(&decl, ast::Decl::Use { lazy: true, .. }) {
+            lazy_pending.push(decl);
+        } else {
+            eager_decls.push(decl);
+        }
+    }
+
+    // Pass 1: resolve all eager (non-lazy) declarations.
+    let mut result = resolve_imports_inner(
+        eager_decls,
+        base_dir,
+        visited,
+        diagnostics,
+        build_target,
+        false,
+    )
+    .0;
+
+    // Pass 2: for each lazy pending import, check if any `<alias>-*` symbol
+    // is referenced in the already-resolved declarations. Only load if so.
+    for decl in lazy_pending {
+        if let ast::Decl::Use { ref alias, .. } = decl {
+            let prefix = format!("{}-", alias.as_deref().unwrap_or(""));
+            if decls_reference_prefix(&result, &prefix) {
+                // Symbol is used — load the module via the eager path.
+                let loaded = resolve_imports_inner(
+                    vec![decl],
+                    base_dir,
+                    visited,
+                    diagnostics,
+                    build_target,
+                    false,
+                )
+                .0;
+                // Prepend so lazy module decls precede the importer's own decls.
+                let mut combined = loaded;
+                combined.extend(result);
+                result = combined;
+            }
+            // else: no reference to this module — skip loading entirely.
+        }
+    }
+
+    result
+}
+
+/// Resolves imports and returns `(all_decls, exported_names)`.
+///
+/// `all_decls` contains every declaration that is in scope for the current module
+/// (own declarations + all transitively-imported declarations). This is what the
+/// module uses internally.
+///
+/// `exported_names` is the *public surface* of this module — the names that
+/// consumers of this module can import. It includes:
+///   - Every own declaration whose name does not start with `_`
+///   - Any declaration brought in via `use re:"path" [names]` (re-exports)
+///
+/// When `for_export` is `false` (entry-point / top-level call), the second return
+/// value is not meaningful and the caller should ignore it.
+fn resolve_imports_inner(
+    decls: Vec<ast::Decl>,
+    base_dir: Option<&std::path::Path>,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    diagnostics: &mut Vec<Diagnostic>,
+    build_target: BuildTarget,
+    for_export: bool,
+) -> (Vec<ast::Decl>, Vec<String>) {
+    let _ = for_export; // used by callers; kept for future use
     let mut result: Vec<ast::Decl> = Vec::new();
+    // Track which names in `result` are part of the public export surface.
+    let mut exported_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for decl in decls {
         if let ast::Decl::Use {
@@ -2307,6 +2796,8 @@ fn resolve_imports(
             alias,
             predicate,
             alt_path,
+            reexport,
+            lazy: _,
             span,
         } = decl
         {
@@ -2323,7 +2814,125 @@ fn resolve_imports(
                 path
             };
 
+            // ── Package registry resolution ───────────────────────────────────
+            // `use "owner/repo"` (first component has no `.`) resolves through
+            // the local package cache at ~/.ilo/pkgs/<owner>/<repo>/index.ilo.
+            if ilo::pkg::is_pkg_path(&path) {
+                let resolved = ilo::pkg::resolve_pkg_path(&path);
+                match resolved {
+                    Err(msg) => {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{path}\": {msg}"))
+                                .with_code("ILO-P017")
+                                .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
+                    Ok(pkg_file) => {
+                        // Synthesise a Use decl for the resolved file path and
+                        // re-use the same local-file resolution path below by
+                        // substituting the resolved path into a local Use node.
+                        let abs = pkg_file.to_string_lossy().into_owned();
+                        let synthetic = ast::Decl::Use {
+                            path: abs,
+                            only: only.clone(),
+                            alias: alias.clone(),
+                            predicate: None,
+                            alt_path: None,
+                            reexport: false,
+                            lazy: false,
+                            span,
+                        };
+                        let mut sub = resolve_imports(
+                            vec![synthetic],
+                            None, // abs path, base_dir not needed
+                            visited,
+                            diagnostics,
+                            build_target,
+                        );
+                        result.append(&mut sub);
+                        continue;
+                    }
+                }
+            }
+
+            // ── Local file resolution ─────────────────────────────────────────
             let Some(dir) = base_dir else {
+                // Package paths are handled above; inline code cannot use local files.
+                // Absolute paths (synthesised by package resolution) are also handled above.
+                if path.starts_with('/') {
+                    // Absolute path synthesised by package resolution — resolve directly.
+                    let canonical = match std::path::PathBuf::from(&path).canonicalize() {
+                        Ok(c) => c,
+                        Err(_) => {
+                            diagnostics.push(
+                                Diagnostic::error(format!("use \"{}\": file not found", path))
+                                    .with_code("ILO-P017")
+                                    .with_span(span, "imported here"),
+                            );
+                            continue;
+                        }
+                    };
+                    // Proceed with the canonical path as if base_dir were its parent.
+                    let imported_dir = canonical.parent().map(|p| p.to_path_buf());
+                    let source = match std::fs::read_to_string(&canonical) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            diagnostics.push(
+                                Diagnostic::error(format!("use \"{}\": {}", path, e))
+                                    .with_code("ILO-P017")
+                                    .with_span(span, "imported here"),
+                            );
+                            continue;
+                        }
+                    };
+                    if visited.contains(&canonical) {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{}\": circular import", path))
+                                .with_code("ILO-P018")
+                                .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
+                    let tokens = match lexer::lex(&source) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            diagnostics.push(Diagnostic::from(&e));
+                            continue;
+                        }
+                    };
+                    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+                        .into_iter()
+                        .map(|(t, r)| {
+                            (
+                                t,
+                                ast::Span {
+                                    start: r.start,
+                                    end: r.end,
+                                },
+                            )
+                        })
+                        .collect();
+                    let (mut imported_prog, parse_errors) = parser::parse(token_spans);
+                    ast::resolve_aliases(&mut imported_prog);
+                    ast::desugar_dot_var_index(&mut imported_prog);
+                    for e in &parse_errors {
+                        diagnostics.push(Diagnostic::from(e));
+                    }
+                    visited.insert(canonical.clone());
+                    let imported_decls = resolve_imports(
+                        imported_prog.declarations,
+                        imported_dir.as_deref(),
+                        visited,
+                        diagnostics,
+                        build_target,
+                    );
+                    visited.remove(&canonical);
+                    let filtered =
+                        apply_only_filter(imported_decls, &only, &path, span, diagnostics);
+                    result.extend(filtered);
+                    continue;
+                }
                 diagnostics.push(
                     Diagnostic::error(
                         "`use` requires a file path context — not supported in inline code",
@@ -2398,31 +3007,36 @@ fn resolve_imports(
 
             visited.insert(canonical.clone());
             let imported_dir = canonical.parent();
-            let imported_decls = resolve_imports(
+            let (imported_decls, imported_exported) = resolve_imports_inner(
                 imported_prog.declarations,
                 imported_dir,
                 visited,
                 diagnostics,
                 build_target,
+                true,
             );
             visited.remove(&canonical);
 
             // Apply import filter based on form:
             //
-            // - Flat (`use "path"`): all declarations come through, including
-            //   `_`-prefixed ones. Private helpers are callable from the
-            //   importing file only by convention (no hard enforcement in flat
-            //   mode — they just land in the shared namespace).
+            // - Flat (`use "path"`): public declarations (those in `imported_exported`) come
+            //   through. Private (`_`-prefixed) names and non-re-exported transitive imports
+            //   are excluded. (Legacy behaviour for pre-re-export files: if no re-export
+            //   annotations exist in the imported file, `imported_exported` equals all own
+            //   non-`_` decls, which is the same as before.)
             //
-            // - Selective (`use "path" [name1 name2]`): only the listed public
-            //   names are imported. `_`-prefixed names are blocked — requesting
-            //   one emits ILO-P019. This is the primary privacy enforcement.
+            // - Selective (`use "path" [name1 name2]`): only the listed names are imported,
+            //   subject to the same export-surface constraint — each requested name must be
+            //   in the imported file's public surface. `_`-prefixed names are always blocked.
             //
-            // - Named-module (`use alias:"path"`): all public (non-`_`) names
-            //   are imported and prefixed with `alias-`. Private (`_`) names are
-            //   silently excluded. This is the secondary privacy enforcement.
+            // - Named-module (`use alias:"path"`): all public (non-`_`) names in the export
+            //   surface are imported and prefixed with `alias-`.
+            //
+            // - Re-export (`use re:"path" [name1 name2]`): same as selective import, but the
+            //   imported names are added to *this* module's export surface so consumers can
+            //   further import them.
             let filtered = if let Some(ref names) = only {
-                // Selective import — block private names explicitly
+                // Selective / re-export form — block private names and enforce export surface
                 for name in names {
                     if name.starts_with('_') {
                         diagnostics.push(
@@ -2436,9 +3050,11 @@ fn resolve_imports(
                         );
                         continue;
                     }
-                    let found = imported_decls
-                        .iter()
-                        .any(|d| decl_name(d) == Some(name.as_str()));
+                    // Check the name is in the imported module's export surface
+                    let found = imported_exported.iter().any(|e| e == name)
+                        || imported_decls
+                            .iter()
+                            .any(|d| decl_name(d) == Some(name.as_str()));
                     if !found {
                         diagnostics.push(
                             Diagnostic::error(format!(
@@ -2450,14 +3066,23 @@ fn resolve_imports(
                         );
                     }
                 }
-                imported_decls
+                let selected = imported_decls
                     .into_iter()
                     .filter(|d| {
                         decl_name(d)
                             .map(|n| !n.starts_with('_') && names.iter().any(|s| s == n))
                             .unwrap_or(false)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                // If this is a re-export, add selected names to this module's export surface
+                if reexport {
+                    for name in names {
+                        if !name.starts_with('_') {
+                            exported_names.insert(name.clone());
+                        }
+                    }
+                }
+                selected
             } else if let Some(ref pfx) = alias {
                 // Named-module form: strip private, then rename public to `alias-name`.
                 let public_decls: Vec<ast::Decl> = imported_decls
@@ -2466,18 +3091,146 @@ fn resolve_imports(
                     .collect();
                 apply_module_alias(public_decls, pfx)
             } else {
-                // Flat import: everything (including private helpers) comes through
+                // Flat import: everything (including private helpers) comes through.
+                // Preserves backward-compatible behaviour — all transitively imported
+                // declarations are visible in the importing file's scope.
                 imported_decls
             };
 
             // Prepend imported declarations (so they appear before the importer's own decls)
             result.extend(filtered);
         } else {
+            // Own declaration: add to result and mark as exported (if public)
+            if let Some(name) = decl_name(&decl) {
+                if !name.starts_with('_') {
+                    exported_names.insert(name.to_string());
+                }
+            }
             result.push(decl);
         }
     }
 
-    result
+    (result, exported_names.into_iter().collect())
+}
+
+/// Return `true` if any `Expr::Call` or `Expr::Ref` in `decls` has a name
+/// that starts with `prefix`. Used by the lazy-import gate to decide whether
+/// a deferred module is actually needed.
+fn decls_reference_prefix(decls: &[ast::Decl], prefix: &str) -> bool {
+    fn expr_refs(expr: &ast::Expr, prefix: &str) -> bool {
+        match expr {
+            ast::Expr::Call { function, args, .. } => {
+                if function.starts_with(prefix) {
+                    return true;
+                }
+                args.iter().any(|a| expr_refs(a, prefix))
+            }
+            ast::Expr::Ref(name) => name.starts_with(prefix),
+            ast::Expr::BinOp { left, right, .. } => {
+                expr_refs(left, prefix) || expr_refs(right, prefix)
+            }
+            ast::Expr::UnaryOp { operand, .. } => expr_refs(operand, prefix),
+            ast::Expr::Ok(inner) | ast::Expr::Err(inner) => expr_refs(inner, prefix),
+            ast::Expr::List(items) => items.iter().any(|e| expr_refs(e, prefix)),
+            ast::Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_refs(e, prefix)),
+            ast::Expr::Field { object, .. } => expr_refs(object, prefix),
+            ast::Expr::Index { object, .. } => expr_refs(object, prefix),
+            ast::Expr::Match { subject, arms } => {
+                subject
+                    .as_deref()
+                    .map(|s| expr_refs(s, prefix))
+                    .unwrap_or(false)
+                    || arms
+                        .iter()
+                        .any(|arm| arm.body.iter().any(|s| stmt_refs(&s.node, prefix)))
+            }
+            ast::Expr::NilCoalesce { value, default } => {
+                expr_refs(value, prefix) || expr_refs(default, prefix)
+            }
+            ast::Expr::With { object, updates } => {
+                expr_refs(object, prefix) || updates.iter().any(|(_, e)| expr_refs(e, prefix))
+            }
+            ast::Expr::Ternary {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                expr_refs(condition, prefix)
+                    || expr_refs(then_expr, prefix)
+                    || expr_refs(else_expr, prefix)
+            }
+            ast::Expr::MakeClosure { captures, .. } => {
+                captures.iter().any(|e| expr_refs(e, prefix))
+            }
+            ast::Expr::AnonRecord { fields, .. } => {
+                fields.iter().any(|(_, e)| expr_refs(e, prefix))
+            }
+            ast::Expr::Literal(_) | ast::Expr::Todo(_) | ast::Expr::Panic(_) => false,
+        }
+    }
+
+    fn stmt_refs(stmt: &ast::Stmt, prefix: &str) -> bool {
+        match stmt {
+            ast::Stmt::Let { value, .. } | ast::Stmt::Destructure { value, .. } => {
+                expr_refs(value, prefix)
+            }
+            ast::Stmt::Expr(e) | ast::Stmt::Return(e) => expr_refs(e, prefix),
+            ast::Stmt::Break(Some(e)) => expr_refs(e, prefix),
+            ast::Stmt::Break(None) | ast::Stmt::Continue => false,
+            ast::Stmt::Guard {
+                condition,
+                body,
+                else_body,
+                ..
+            } => {
+                expr_refs(condition, prefix)
+                    || body.iter().any(|s| stmt_refs(&s.node, prefix))
+                    || else_body
+                        .as_deref()
+                        .map(|b| b.iter().any(|s| stmt_refs(&s.node, prefix)))
+                        .unwrap_or(false)
+            }
+            ast::Stmt::Match { subject, arms } => {
+                subject
+                    .as_ref()
+                    .map(|s| expr_refs(s, prefix))
+                    .unwrap_or(false)
+                    || arms
+                        .iter()
+                        .any(|arm| arm.body.iter().any(|s| stmt_refs(&s.node, prefix)))
+            }
+            ast::Stmt::ForEach {
+                collection, body, ..
+            } => expr_refs(collection, prefix) || body.iter().any(|s| stmt_refs(&s.node, prefix)),
+            ast::Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                expr_refs(start, prefix)
+                    || expr_refs(end, prefix)
+                    || body.iter().any(|s| stmt_refs(&s.node, prefix))
+            }
+            ast::Stmt::While { condition, body } => {
+                expr_refs(condition, prefix) || body.iter().any(|s| stmt_refs(&s.node, prefix))
+            }
+            ast::Stmt::Defer { expr, .. } => expr_refs(expr, prefix),
+        }
+    }
+
+    for decl in decls {
+        let referenced = match decl {
+            ast::Decl::Function { body, .. } => body.iter().any(|s| stmt_refs(&s.node, prefix)),
+            ast::Decl::Tool { .. }
+            | ast::Decl::TypeDef { .. }
+            | ast::Decl::SumType { .. }
+            | ast::Decl::Alias { .. }
+            | ast::Decl::Use { .. }
+            | ast::Decl::Error { .. } => false,
+        };
+        if referenced {
+            return true;
+        }
+    }
+    false
 }
 
 /// Rename all named declarations in `decls` by prepending `alias-` to their name.
@@ -2499,12 +3252,14 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             return_type,
             body,
             span,
+            type_params,
         } => ast::Decl::Function {
             name: format!("{}-{}", alias, name),
             params,
             return_type,
             body,
             span,
+            type_params,
         },
         ast::Decl::Tool {
             name,
@@ -2921,9 +3676,15 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
             }
         }
+        Some(cli::Cmd::Httpd(h)) => {
+            let func = h.func.as_deref().unwrap_or("handler");
+            httpd_cmd(h.port, &h.handler, func)
+        }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
+        Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
+        Some(cli::Cmd::Update(u)) => std::process::exit(ilo::pkg::cmd_update(u.package.as_deref())),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
@@ -6424,6 +7185,7 @@ mod tests {
     #[test]
     fn decl_name_function_returns_name() {
         let d = ast::Decl::Function {
+            type_params: vec![],
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -6441,6 +7203,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -6481,6 +7245,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6518,6 +7284,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6774,6 +7542,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6798,6 +7568,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6820,6 +7592,7 @@ mod tests {
     #[test]
     fn resolve_imports_non_use_decl_passes_through() {
         let func_decl = ast::Decl::Function {
+            type_params: vec![],
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -6922,6 +7695,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6961,6 +7736,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6999,6 +7776,8 @@ mod tests {
             alias: Some("m".into()),
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7038,6 +7817,8 @@ mod tests {
             alias: Some("m".into()),
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7080,6 +7861,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7121,6 +7904,8 @@ mod tests {
             alias: None,
             predicate: Some(ast::UsePredicate::Wasm),
             alt_path: Some("ilo_cond_native_ILO399.ilo".into()),
+            reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7148,6 +7933,62 @@ mod tests {
         std::fs::remove_file(native_path).ok();
     }
 
+    // ── resolve_imports: re-export (`use re:"path" [names]`) ─────────────────
+
+    #[test]
+    fn resolve_imports_reexport_makes_names_available() {
+        // inner.ilo defines foo and bar.
+        // outer.ilo re-exports foo and bar via `use re:`.
+        // When we import outer.ilo selectively asking for foo, it should be found.
+        use std::io::Write;
+        let inner_path = "/tmp/ilo_reexport_inner_A1B2.ilo";
+        let outer_path = "/tmp/ilo_reexport_outer_A1B2.ilo";
+
+        let mut inner = std::fs::File::create(inner_path).unwrap();
+        writeln!(inner, "foo n:n>n;+n 1").unwrap();
+        writeln!(inner, "bar n:n>n;*n 2").unwrap();
+        drop(inner);
+
+        let mut outer = std::fs::File::create(outer_path).unwrap();
+        writeln!(outer, "use re:\"ilo_reexport_inner_A1B2.ilo\" [foo bar]").unwrap();
+        writeln!(outer, "baz n:n>n;+n 10").unwrap();
+        drop(outer);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_reexport_outer_A1B2.ilo".into(),
+            only: Some(vec!["foo".into(), "baz".into()]),
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            lazy: false,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Native,
+        );
+
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"foo"),
+            "foo should be available via re-export: {names:?}"
+        );
+        assert!(
+            names.contains(&"baz"),
+            "baz should be available as outer's own decl: {names:?}"
+        );
+
+        std::fs::remove_file(inner_path).ok();
+        std::fs::remove_file(outer_path).ok();
+    }
+
     #[test]
     fn resolve_imports_conditional_wasm_false_branch() {
         // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Native → loads native.ilo
@@ -7162,6 +8003,8 @@ mod tests {
             alias: None,
             predicate: Some(ast::UsePredicate::Wasm),
             alt_path: Some("ilo_cond2_native_ILO399.ilo".into()),
+            reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7190,6 +8033,57 @@ mod tests {
     }
 
     #[test]
+    fn resolve_imports_reexport_flat_includes_reexported_names() {
+        // Flat import of outer.ilo should include foo and bar (re-exported from inner).
+        use std::io::Write;
+        let inner_path = "/tmp/ilo_reexport_flat_inner_C3D4.ilo";
+        let outer_path = "/tmp/ilo_reexport_flat_outer_C3D4.ilo";
+
+        let mut inner = std::fs::File::create(inner_path).unwrap();
+        writeln!(inner, "foo n:n>n;+n 1").unwrap();
+        drop(inner);
+
+        let mut outer = std::fs::File::create(outer_path).unwrap();
+        writeln!(outer, "use re:\"ilo_reexport_flat_inner_C3D4.ilo\" [foo]").unwrap();
+        writeln!(outer, "baz n:n>n;+n 10").unwrap();
+        drop(outer);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_reexport_flat_outer_C3D4.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            lazy: false,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Native,
+        );
+
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"foo"),
+            "foo should come through flat import: {names:?}"
+        );
+        assert!(
+            names.contains(&"baz"),
+            "baz should come through flat import: {names:?}"
+        );
+
+        std::fs::remove_file(inner_path).ok();
+        std::fs::remove_file(outer_path).ok();
+    }
+
+    #[test]
     fn resolve_imports_conditional_test_predicate() {
         // `use ?test "stub.ilo" : "real.ilo"` with BuildTarget::Test → loads stub
         let stub_path = "/tmp/ilo_cond_stub_ILO399.ilo";
@@ -7203,6 +8097,8 @@ mod tests {
             alias: None,
             predicate: Some(ast::UsePredicate::Test),
             alt_path: Some("ilo_cond_real_ILO399.ilo".into()),
+            reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         };
         let mut diags = Vec::new();
@@ -7224,6 +8120,120 @@ mod tests {
 
         std::fs::remove_file(stub_path).ok();
         std::fs::remove_file(real_path).ok();
+    }
+
+    // ── resolve_imports: lazy loading (ILO-400) ───────────────────────────────
+
+    #[test]
+    fn resolve_imports_lazy_not_loaded_when_unreferenced() {
+        // A `use lazy:"./big-mod.ilo"` where no `big-mod-*` symbol appears in the
+        // program body → the file must never be opened (module skipped).
+        // Use a path that does NOT exist so any file-open attempt causes an error.
+        let lib_path = "/tmp/ilo_lazy_SHOULD_NOT_OPEN_ILO400.ilo";
+        // Remove to ensure it doesn't exist
+        std::fs::remove_file(lib_path).ok();
+
+        // Importer has a function that does NOT reference big-mod-* symbols.
+        let caller = ast::Decl::Function {
+            name: "main".into(),
+            type_params: vec![],
+            params: vec![],
+            return_type: ast::Type::Number,
+            body: vec![ast::Spanned::unknown(ast::Stmt::Return(
+                ast::Expr::Literal(ast::Literal::Number(42.0)),
+            ))],
+            span: ast::Span::UNKNOWN,
+        };
+
+        let lazy_use = ast::Decl::Use {
+            path: "ilo_lazy_SHOULD_NOT_OPEN_ILO400.ilo".into(),
+            only: None,
+            alias: Some("ilo-lazy-SHOULD-NOT-OPEN-ILO400".into()),
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            lazy: true,
+            span: ast::Span::UNKNOWN,
+        };
+
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![lazy_use, caller],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        // No diagnostics: the file was never opened (missing file → no error).
+        assert!(
+            diags.is_empty(),
+            "lazy module must not be opened when unreferenced, got diags: {diags:?}"
+        );
+        // Only `main` should appear.
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert_eq!(names, vec!["main"], "expected only main, got: {names:?}");
+    }
+
+    #[test]
+    fn resolve_imports_lazy_loaded_when_referenced() {
+        // A `use lazy:"./mod.ilo"` where a `mod-*` symbol IS referenced →
+        // the module is loaded and its declarations appear in the result.
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_lazy_load_ILO400.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "mod-helper>n;99").unwrap();
+        drop(f);
+
+        // Caller references `mod-helper` (a `mod-` prefixed symbol).
+        let caller = ast::Decl::Function {
+            name: "main".into(),
+            type_params: vec![],
+            params: vec![],
+            return_type: ast::Type::Number,
+            body: vec![ast::Spanned::unknown(ast::Stmt::Return(ast::Expr::Call {
+                function: "mod-helper".into(),
+                args: vec![],
+                unwrap: ast::UnwrapMode::None,
+            }))],
+            span: ast::Span::UNKNOWN,
+        };
+
+        let lazy_use = ast::Decl::Use {
+            path: "ilo_lazy_load_ILO400.ilo".into(),
+            only: None,
+            alias: Some("mod".into()),
+            predicate: None,
+            alt_path: None,
+            reexport: false,
+            lazy: true,
+            span: ast::Span::UNKNOWN,
+        };
+
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![lazy_use, caller],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        // The loaded module function is prefixed with `mod-`
+        assert!(
+            names.iter().any(|n| n.starts_with("mod-")),
+            "expected mod-* symbol from loaded lazy module, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"main"),
+            "main must also be present: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
     }
 
     #[test]
@@ -8302,6 +9312,8 @@ mod tests {
             alias: None,
             predicate: None,
             alt_path: None,
+            reexport: false,
+            lazy: false,
             span: ast::Span::UNKNOWN,
         }
     }
@@ -8512,6 +9524,7 @@ mod tests {
         use ast::{Decl, Param, Span, Type};
         let decls = vec![
             Decl::Function {
+                type_params: vec![],
                 name: "helper".into(),
                 params: vec![Param {
                     name: "x".into(),
@@ -10874,5 +11887,129 @@ mod tests {
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
+    }
+
+    // ── handle_http_connection: chunked transfer encoding ────────────────────
+
+    /// Spin up a loopback listener, send a minimal HTTP request, capture the
+    /// raw response, and verify Transfer-Encoding: chunked is present along
+    /// with the expected chunk data.
+    #[test]
+    fn httpd_chunked_response_writes_chunked_encoding() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        // Handler: returns a Response with body as a list (chunk mode).
+        // ilo source: handler that returns a record whose body is a list.
+        // We use a zero-arg function reference as the body value.
+        let src = r#"
+body-chunks>L t
+  ["hello" " " "world"]
+
+type rsp{status:n;body:_}
+handler req:_>rsp
+  rsp status:200 body:body-chunks
+"#;
+        let program = Arc::new(make_program(src));
+
+        // Bind a loopback listener on an OS-assigned port.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn the handler thread.
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+
+        // Send a minimal HTTP/1.1 request.
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+
+        jh.join().unwrap();
+
+        // Verify Transfer-Encoding: chunked header is present.
+        assert!(
+            response.contains("Transfer-Encoding: chunked"),
+            "expected chunked header, got:\n{}",
+            response
+        );
+        // Verify the chunked body contains the expected text.
+        assert!(
+            response.contains("hello"),
+            "expected 'hello' in body:\n{}",
+            response
+        );
+        assert!(
+            response.contains("world"),
+            "expected 'world' in body:\n{}",
+            response
+        );
+        // Verify the terminating chunk is present.
+        assert!(
+            response.ends_with("0\r\n\r\n"),
+            "expected terminating chunk:\n{}",
+            response
+        );
+        // Content-Length must NOT be present in chunked responses.
+        assert!(
+            !response.contains("Content-Length"),
+            "Content-Length must be absent in chunked response:\n{}",
+            response
+        );
+    }
+
+    /// Plain body (Text) responses continue to use Content-Length (regression guard).
+    #[test]
+    fn httpd_plain_response_uses_content_length() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        let src = r#"
+type rsp{status:n;body:t}
+handler req:_>rsp
+  rsp status:200 body:"hello plain"
+"#;
+        let program = Arc::new(make_program(src));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        jh.join().unwrap();
+
+        assert!(
+            response.contains("Content-Length: 11"),
+            "expected Content-Length:\n{}",
+            response
+        );
+        assert!(
+            !response.contains("Transfer-Encoding"),
+            "must not have TE:\n{}",
+            response
+        );
+        assert!(
+            response.contains("hello plain"),
+            "expected body:\n{}",
+            response
+        );
     }
 }

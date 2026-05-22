@@ -666,6 +666,39 @@ unambiguous and remain accepted.
 "#,
     },
     ErrorEntry {
+        code: "ILO-P022",
+        phase: Phase::Parse,
+        short: "malformed generic type-parameter block",
+        long: r#"## ILO-P022: malformed generic type-parameter block
+
+The `<…>` generic type-parameter block after a function name is
+malformed.
+
+**Valid forms**
+
+```
+mn<a>              -- unbounded type variable
+mn<a:comparable>   -- bounded type variable
+mn<a:comparable b:numeric>  -- multiple type variables
+```
+
+**Rules**
+
+* Each entry is a single lowercase letter, optionally followed by
+  `:boundname`.
+* Valid bound names: `any`, `comparable`, `numeric`, `text`.
+* Multiple variables are space-separated inside the `<…>`.
+
+**Common mistakes**
+
+```
+mn<A:comparable>   -- uppercase letter, not allowed (lexer rejects capitals)
+mn<ab:comparable>  -- multi-letter name, not allowed
+mn<a:Comparable>   -- capitalised bound name, not allowed (lexer rejects capitals)
+```
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P103",
         phase: Phase::Parse,
         short: "AST nesting depth exceeded",
@@ -1317,38 +1350,33 @@ may be legitimately side-effecting (logging, file I/O).
     ErrorEntry {
         code: "ILO-T044",
         phase: Phase::Verify,
-        short: "'with' cannot add new field to anonymous record",
-        long: r#"## ILO-T044: 'with' cannot add new field to anonymous record
+        short: "net builtin called with a World that has net=false",
+        long: r#"## ILO-T044: net builtin called with a World that has net=false
 
-The `with` expression updates fields of an existing record. When applied
-to an **anonymous record** (an inline `{field:value ...}` literal), every
-field named in the update must already exist in the source record.
+A network builtin (`get`, `pst`, `put`, `pat`, `del`, `hed`, `opt`,
+`getx`, `pstx`, `get-many`, `get-to`, `pst-to`) is called in a scope
+that contains a World value statically known to deny network access
+(constructed via `world-no-net`).
 
-Anonymous records have a fixed shape determined at the point of
-construction. Extending that shape via `with` is not allowed because it
-would silently produce a record with a different type than the original,
-making the shape hard to reason about statically.
+This is a **static capability violation**: the code explicitly declared
+that net access is denied, then attempted a net operation anyway.
 
-**Example (error):**
+**Example:**
 
-    main>_
-      r = {x:1 y:2}
-      r with z:3          -- ILO-T044: 'z' is not a field of r
+    fetch w:W url:t>R t t
+      wn = world-no-net
+      get url              -- ERROR ILO-T044: wn has net=false
 
-**Fix — include the field in the original record:**
+**Fix:** either remove the `world-no-net` binding, or restructure so
+the net call happens in a context where net access is allowed.
 
-    main>_
-      r = {x:1 y:2 z:0}
-      r with z:3
+    fetch url:t>R t t
+      get url              -- ok: no net-denied World in scope
 
-**Fix — construct a new record literal with all fields:**
-
-    main>_
-      r = {x:1 y:2}
-      {x:r.x y:r.y z:3}
-
-Named record types (declared with `type`) also reject unknown fields in
-`with` — that is ILO-T021.
+Note: this check only fires for syntactically known constructions
+(`world-no-net`). Dynamic World values (from the `world` builtin or
+function parameters) are not checked statically — those are enforced
+at runtime via the `--allow-net` flag.
 "#,
     },
     ErrorEntry {
@@ -1817,6 +1845,49 @@ into a record and capture the single record value instead.
 Phase 2 closure capture is otherwise fully supported across every
 in-process engine (tree, VM, Cranelift JIT). This diagnostic only
 fires on the pathological wide-capture case.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-T045",
+        phase: Phase::Verify,
+        short: "generic type variable used inconsistently or bound violated",
+        long: r#"## ILO-T045: generic type variable inconsistency / bound violation
+
+A function with explicit generic type parameters (`<a:comparable>`,
+`<a:numeric>`, etc.) was called with arguments that either:
+
+* used the **same type variable** with **different concrete types**, or
+* violated the **bound** declared for that variable.
+
+### Bounds
+
+| Bound        | Permitted types |
+|--------------|-----------------|
+| `any`        | any type (default when no bound is written) |
+| `comparable` | `n`, `t`, `b`   |
+| `numeric`    | `n`             |
+| `text`       | `t`             |
+
+### Example — inconsistent usage
+
+```
+mn<a:comparable> x:a y:a>a
+  r=x;>(x) y{r=y};r
+
+mn 1 "two"   -- ILO-T045: 'a' bound to n then t
+```
+
+Fix: pass two values of the same type.
+
+### Example — bound violation
+
+```
+add-one<a:numeric> x:a>a;+x 1
+
+add-one "hello"   -- ILO-T045: text does not satisfy numeric
+```
+
+Fix: pass a numeric argument.
 "#,
     },
 ];

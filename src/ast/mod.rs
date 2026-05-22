@@ -69,6 +69,36 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Spanned<T> {
 
 // ---- Core AST types ----
 
+/// Bound on a generic type variable.
+///
+/// A small fixed set — enough for `sort`/`cmp`/`min`/`max` and numeric ops
+/// without shipping a full typeclass system.
+///
+/// | Bound        | Permitted concrete types                  |
+/// |--------------|-------------------------------------------|
+/// | `Any`        | anything (default when no bound given)    |
+/// | `Comparable` | `n`, `t`, `b`                             |
+/// | `Numeric`    | `n`                                       |
+/// | `Text`       | `t`                                       |
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bound {
+    Any,
+    Comparable,
+    Numeric,
+    Text,
+}
+
+impl std::fmt::Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bound::Any => write!(f, "any"),
+            Bound::Comparable => write!(f, "comparable"),
+            Bound::Numeric => write!(f, "numeric"),
+            Bound::Text => write!(f, "text"),
+        }
+    }
+}
+
 /// Types in idea9 — single-char base types, composable
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
@@ -83,6 +113,15 @@ pub enum Type {
     Sum(Vec<String>),             // S a b c  — closed set of named string variants
     Fn(Vec<Type>, Box<Type>),     // F param... return  (last type is return)
     Named(String),                // user-defined type name or type variable
+    /// 32-bit unsigned integer type. Stored as f64 in the tree-walker engine.
+    /// Precision is exact for integers ≤ 2^32 (≤ 4 294 967 295).
+    U32,
+    /// 64-bit unsigned integer type. Stored as f64 in the tree-walker engine.
+    /// PRECISION LIMIT: f64 has 53 mantissa bits, so values > 2^53 lose precision.
+    U64,
+    /// 64-bit signed integer type. Stored as f64 in the tree-walker engine.
+    /// PRECISION LIMIT: f64 has 53 mantissa bits, so values outside ±2^53 lose precision.
+    I64,
 }
 
 /// A parameter: `name:type`
@@ -90,6 +129,15 @@ pub enum Type {
 pub struct Param {
     pub name: String,
     pub ty: Type,
+}
+
+/// A variant in a sum-type declaration.
+/// `Circle(n)` → Variant { name: "circle", payload: Some(Type::Number) }
+/// `red`       → Variant { name: "red",    payload: None }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Variant {
+    pub name: String,
+    pub payload: Option<Type>,
 }
 
 /// Compile-time predicate for conditional `use` — `use ?wasm "a.ilo" : "b.ilo"`.
@@ -119,9 +167,17 @@ impl UsePredicate {
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Decl {
-    /// `name params>return;body`
+    /// `name<a:Comparable b> params>return;body`
+    /// `type_params` holds bounded generic type-variable declarations.
+    /// Syntax: `<letter>` or `<letter:Bound>`, space-separated inside `<...>`.
+    /// When absent the vec is empty and existing `a`/`b`/etc. type-variable
+    /// behaviour (treat as Unknown / accept any type) is preserved.
     Function {
         name: String,
+        /// Generic type-variable declarations: `<a:Comparable b:Numeric c>`.
+        /// Empty means no explicit generic params (legacy behaviour).
+        #[serde(skip)]
+        type_params: Vec<(String, Bound)>,
         params: Vec<Param>,
         return_type: Type,
         body: Vec<Spanned<Stmt>>,
@@ -165,7 +221,13 @@ pub enum Decl {
     /// `use ?wasm "wasm-mod.ilo" : "native-mod.ilo"` — conditional import:
     ///   import `path` when the predicate is true for the current build target,
     ///   otherwise import `alt_path`. Resolved before verification.
+    /// `use re:"path/to/file.ilo" [name1 name2]` — import AND re-export the named
+    ///   declarations: they become part of this module's public surface.
     /// Resolved before verification; replaced by the imported declarations in
+    /// `use lazy:"./big-module"` — lazy (on-demand) import: the module is only
+    ///   loaded if at least one `<stem>-*` symbol from it is referenced in the
+    ///   program. Symbols are prefixed with the path stem (e.g. `big-module-fn`).
+    ///   Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
         path: String,
@@ -180,6 +242,29 @@ pub enum Decl {
         predicate: Option<UsePredicate>,
         /// The false-branch path for conditional imports. `None` for unconditional.
         alt_path: Option<String>,
+        /// Re-export flag: `use re:"path" [names]` makes the listed names part
+        /// of this module's public surface (visible to consumers of this module).
+        /// Without this flag, imported names are internal to this module only.
+        reexport: bool,
+        /// Lazy (on-demand) import: `use lazy:"./path"`.
+        /// When `true`, the module is only loaded if a `<stem>-*` symbol is
+        /// referenced elsewhere in the program. The alias is derived from the
+        /// path stem (last component without extension).
+        #[serde(default)]
+        lazy: bool,
+        #[serde(skip)]
+        span: Span,
+    },
+
+    /// `type Name = Circle(n) | Square(n) | red` — named discriminated union
+    /// `type Result<a,b> = ok(a) | err(b)` — generic discriminated union
+    SumType {
+        name: String,
+        /// Generic type-variable declarations: `<a b>` or `<a,b>`.
+        /// Empty means non-generic (legacy behaviour).
+        #[serde(skip)]
+        type_params: Vec<(String, Bound)>,
+        variants: Vec<Variant>,
         #[serde(skip)]
         span: Span,
     },
@@ -293,6 +378,11 @@ pub enum Pattern {
     Wildcard,
     /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
     TypeIs { ty: Type, binding: String },
+    /// `Circle(r):` — match a named-sum variant, optionally bind payload
+    Variant {
+        tag: String,
+        binding: Option<String>,
+    },
     /// `pat1|pat2|...:` — matches if any alternative matches (OR pattern)
     Or(Vec<Pattern>),
 }
@@ -1161,7 +1251,9 @@ impl Type {
         {
             match ty {
                 // Inline primitives.
-                Type::Number | Type::Bool | Type::Sum(_) => false,
+                Type::Number | Type::Bool | Type::Sum(_) | Type::U32 | Type::U64 | Type::I64 => {
+                    false
+                }
                 // Immutable shared bytes; no embedded references.
                 Type::Text => false,
                 // No information at the type level.
@@ -1282,6 +1374,7 @@ mod tests {
     #[test]
     fn decl_span_not_serialized() {
         let decl = Decl::Function {
+            type_params: vec![],
             name: "f".to_string(),
             params: vec![],
             return_type: Type::Number,
@@ -1313,6 +1406,7 @@ mod tests {
         // L440-442: While variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1359,6 +1453,7 @@ mod tests {
         // L444: Return variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1387,6 +1482,7 @@ mod tests {
         // L445: Destructure variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1422,6 +1518,7 @@ mod tests {
         // L446: Break(Some(expr)) variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1450,6 +1547,7 @@ mod tests {
         // L447: Break(None) | Continue — no-op, just ensure no panic
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1471,6 +1569,7 @@ mod tests {
         // L465-467: NilCoalesce variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1513,6 +1612,7 @@ mod tests {
         // L472-473: Record variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1550,6 +1650,7 @@ mod tests {
         // L475-478: Match variant (as expression) in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1598,6 +1699,7 @@ mod tests {
         // L481-483: With variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1643,6 +1745,7 @@ mod tests {
         // Ensure existing JSON AST shape is preserved
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),
@@ -1668,6 +1771,7 @@ mod tests {
     fn resolve_aliases_stmt_match_no_subject() {
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1705,6 +1809,7 @@ mod tests {
     fn resolve_aliases_expr_match_no_subject() {
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
