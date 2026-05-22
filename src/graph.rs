@@ -218,6 +218,7 @@ fn collect_stmts(
             Stmt::Expr(expr) => collect_calls(expr, calls, types),
             Stmt::Destructure { value, .. } => collect_calls(value, calls, types),
             Stmt::Break(None) | Stmt::Continue => {}
+            Stmt::Defer { expr, .. } => collect_calls(expr, calls, types),
         }
     }
 }

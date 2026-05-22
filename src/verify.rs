@@ -4806,6 +4806,12 @@ impl VerifyContext {
                 }
                 Ty::Nil
             }
+            Stmt::Defer { expr, .. } => {
+                // Type-check the deferred expression for consistency, but the
+                // statement itself contributes nothing to the body type.
+                self.infer_expr(func, scope, expr, span);
+                Ty::Nil
+            }
             Stmt::Expr(expr) => self.infer_expr(func, scope, expr, span),
         }
     }

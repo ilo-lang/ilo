@@ -179,6 +179,10 @@ fn role_of(stmt: &Stmt, is_last: bool) -> String {
         Stmt::Break(None) => "break".into(),
         Stmt::Continue => "continue".into(),
         Stmt::Destructure { bindings, .. } => format!("destructure → {}", bindings.join(", ")),
+        Stmt::Defer { kind, .. } => match kind {
+            crate::ast::DeferKind::Always => "defer".into(),
+            crate::ast::DeferKind::OnError => "errdefer".into(),
+        },
         Stmt::Expr(_) => {
             if is_last {
                 "return".into()
