@@ -1,0 +1,9 @@
+-- T01: basic pipe chain - double then increment then square
+-- Tests basic left-to-right -> pipe desugaring
+dbl x:n>n;*x 2
+inc x:n>n;+x 1
+sq x:n>n;*x x
+main x:n>n;x->dbl->inc->sq
+
+-- run: main 3
+-- out: 49

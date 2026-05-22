@@ -1,0 +1,6 @@
+-- T03: pipe with string transformations
+-- str -> upr -> len pipeline
+word-len s:t>n;s->upr->len
+
+-- run: word-len hello
+-- out: 5
