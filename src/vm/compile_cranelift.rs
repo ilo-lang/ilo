@@ -12,6 +12,7 @@ use super::*;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::types::{F64, I32, I64};
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags};
+use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
@@ -606,6 +607,10 @@ pub fn compile_to_binary(
     flag_builder
         .set("is_pic", "true")
         .map_err(|e| e.to_string())?;
+    // CallConv::Tail requires frame pointers to be preserved.
+    flag_builder
+        .set("preserve_frame_pointers", "true")
+        .map_err(|e| e.to_string())?;
     let isa_builder = cranelift_native::builder().map_err(|e| e.to_string())?;
     let isa = isa_builder
         .finish(settings::Flags::new(flag_builder))
@@ -623,11 +628,14 @@ pub fn compile_to_binary(
     // Declare all runtime helpers as imports (resolved at link time from libilo.a)
     let helpers = declare_all_helpers(&mut module);
 
-    // First pass: declare all functions to get FuncIds
+    // First pass: declare all functions to get FuncIds.
+    // All ilo functions use CallConv::Tail so that OP_TAILCALL can emit
+    // `return_call` for true stack-growth-free tail-call elimination.
     let mut func_ids: Vec<FuncId> = Vec::with_capacity(program.chunks.len());
     for (i, chunk) in program.chunks.iter().enumerate() {
         let name = format!("ilo_{}", program.func_names[i]);
         let mut sig = module.make_signature();
+        sig.call_conv = CallConv::Tail;
         for _ in 0..chunk.param_count {
             sig.params.push(AbiParam::new(I64));
         }
@@ -658,8 +666,51 @@ pub fn compile_to_binary(
         )?;
     }
 
-    let entry_func_id = func_ids[entry_idx];
+    // Emit a thin SystemV trampoline for the entry ilo function.
+    // All ilo functions use CallConv::Tail, but `main` (and the C runtime) calls
+    // them using the SystemV ABI.  The trampoline converts SystemV arguments to the
+    // Tail calling convention by forwarding them with a regular `call`.
     let entry_chunk = &program.chunks[entry_idx];
+    let entry_param_count = entry_chunk.param_count as usize;
+    let entry_func_id = {
+        let tramp_name = format!("ilo_{}_entry", program.func_names[entry_idx]);
+        let mut sig = module.make_signature();
+        // Default call_conv is SystemV — matches `extern "C"` / OS calling convention
+        for _ in 0..entry_param_count {
+            sig.params.push(AbiParam::new(I64));
+        }
+        sig.returns.push(AbiParam::new(I64));
+        let tramp_id = module
+            .declare_function(&tramp_name, Linkage::Local, &sig)
+            .map_err(|e| e.to_string())?;
+
+        let mut ctx = Context::new();
+        ctx.func.signature = sig;
+        let mut fn_builder_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let args: Vec<_> = (0..entry_param_count)
+            .map(|i| builder.block_params(entry_block)[i])
+            .collect();
+
+        let target_fref = module.declare_func_in_func(func_ids[entry_idx], builder.func);
+        let call_inst = builder.ins().call(target_fref, &args);
+        let result = builder.inst_results(call_inst)[0];
+        builder.ins().return_(&[result]);
+
+        builder.seal_all_blocks();
+        builder.finalize();
+
+        module
+            .define_function(tramp_id, &mut ctx)
+            .map_err(|e| e.to_string())?;
+        tramp_id
+    };
 
     // Serialize the type registry for embedding in the binary
     let registry_bytes = serialize_type_registry(&program.type_registry);
@@ -1048,6 +1099,7 @@ fn compile_function_body(
     program: Option<&CompiledProgram>,
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
+    sig.call_conv = CallConv::Tail;
     for _ in 0..chunk.param_count {
         sig.params.push(AbiParam::new(I64));
     }
@@ -3822,13 +3874,10 @@ fn compile_function_body(
                 // fast path in the OP_MSET handler.
                 //
                 // OP_TAILCALL: emitted by the VM compiler when a call sits
-                // in tail position. The bytecode VM reuses the current call
-                // frame (no stack growth); the Cranelift backend lowers it
-                // as a regular call here — semantically equivalent (same
-                // return value flows back through the next OP_RET) but the
-                // host stack grows by one frame per tail call. PR3 of the
-                // TCO series will switch this to Cranelift's `return_call`
-                // for true tail-call elimination under the JIT/AOT path.
+                // in tail position. The Cranelift backend lowers it as
+                // `return_call` — a terminator that reuses the current stack
+                // frame for true TCO. Both caller and callee use CallConv::Tail,
+                // satisfying the ABI requirement for `return_call`.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;
@@ -3912,16 +3961,23 @@ fn compile_function_body(
                             builder.def_var(result_var, result);
                         }
                     } else {
-                        // Direct call: the target function is compiled in this module
+                        // Direct call: the target function is compiled in this module.
+                        // For OP_TAILCALL emit `return_call` (a Cranelift terminator)
+                        // so the callee reuses this frame — true TCO with no stack growth.
                         let target_fid = fids[func_idx];
                         let target_fref = get_func_ref(&mut builder, module, target_fid);
                         let mut call_args = Vec::with_capacity(n_args);
                         for i in 0..n_args {
                             call_args.push(builder.use_var(vars[a_idx_call + 1 + i]));
                         }
-                        let call_inst = builder.ins().call(target_fref, &call_args);
-                        let result = builder.inst_results(call_inst)[0];
-                        builder.def_var(vars[a_idx_call], result);
+                        if op == OP_TAILCALL {
+                            builder.ins().return_call(target_fref, &call_args);
+                            block_terminated = true;
+                        } else {
+                            let call_inst = builder.ins().call(target_fref, &call_args);
+                            let result = builder.inst_results(call_inst)[0];
+                            builder.def_var(vars[a_idx_call], result);
+                        }
                     }
                 } else {
                     // Fallback: use jit_call helper (should not happen if all_func_ids is provided)
@@ -3961,8 +4017,9 @@ fn compile_function_body(
                     }
                 }
                 // Update F64 shadow so arithmetic ops can skip bitcast when using this
-                // register as input.
-                if a_idx_call < reg_count && reg_always_num[a_idx_call] {
+                // register as input.  Skip when the block was terminated by a
+                // `return_call` (OP_TAILCALL path) — no further IR is allowed.
+                if !block_terminated && a_idx_call < reg_count && reg_always_num[a_idx_call] {
                     let rv = builder.use_var(vars[a_idx_call]);
                     let rf = builder.ins().bitcast(F64, mf, rv);
                     builder.def_var(f64_vars[a_idx_call], rf);
@@ -4827,6 +4884,10 @@ pub fn compile_to_bench_binary(
     flag_builder
         .set("is_pic", "true")
         .map_err(|e| e.to_string())?;
+    // CallConv::Tail requires frame pointers to be preserved.
+    flag_builder
+        .set("preserve_frame_pointers", "true")
+        .map_err(|e| e.to_string())?;
     let isa_builder = cranelift_native::builder().map_err(|e| e.to_string())?;
     let isa = isa_builder
         .finish(settings::Flags::new(flag_builder))
@@ -4838,22 +4899,21 @@ pub fn compile_to_bench_binary(
 
     let helpers = declare_all_helpers(&mut module);
 
-    // First pass: declare all functions to get FuncIds
+    // First pass: declare all functions to get FuncIds.
+    // All ilo functions use CallConv::Tail for `return_call` TCO support.
+    // Use `ilo_{name}_inner` to avoid a name clash with the SystemV trampoline
+    // that will be exported as `ilo_{name}` in the third pass below.
     let mut func_ids: Vec<FuncId> = Vec::with_capacity(program.chunks.len());
     for (i, chunk) in program.chunks.iter().enumerate() {
-        let name = format!("ilo_{}", program.func_names[i]);
-        let linkage = if i == entry_idx {
-            Linkage::Export
-        } else {
-            Linkage::Local
-        };
+        let name = format!("ilo_{}_inner", program.func_names[i]);
         let mut sig = module.make_signature();
+        sig.call_conv = CallConv::Tail;
         for _ in 0..chunk.param_count {
             sig.params.push(AbiParam::new(I64));
         }
         sig.returns.push(AbiParam::new(I64));
         let fid = module
-            .declare_function(&name, linkage, &sig)
+            .declare_function(&name, Linkage::Local, &sig)
             .map_err(|e| e.to_string())?;
         func_ids.push(fid);
     }
@@ -4865,7 +4925,7 @@ pub fn compile_to_bench_binary(
         .zip(program.nan_constants.iter())
         .enumerate()
     {
-        let name = format!("ilo_{}", program.func_names[i]);
+        let name = format!("ilo_{}_inner", program.func_names[i]);
         compile_function_body(
             &mut module,
             chunk,
@@ -4878,17 +4938,55 @@ pub fn compile_to_bench_binary(
         )?;
     }
 
+    // Third pass: emit a SystemV trampoline exported under `ilo_{name}` so the
+    // C bench harness can call it with the standard C ABI.
+    let entry_chunk = &program.chunks[entry_idx];
+    let param_count = entry_chunk.param_count as usize;
+    let func_name = format!("ilo_{}", entry_func);
+    {
+        let mut sig = module.make_signature();
+        // Default call_conv is SystemV
+        for _ in 0..param_count {
+            sig.params.push(AbiParam::new(I64));
+        }
+        sig.returns.push(AbiParam::new(I64));
+        let tramp_id = module
+            .declare_function(&func_name, Linkage::Export, &sig)
+            .map_err(|e| e.to_string())?;
+
+        let mut ctx = Context::new();
+        ctx.func.signature = sig;
+        let mut fn_builder_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let args: Vec<_> = (0..param_count)
+            .map(|i| builder.block_params(entry_block)[i])
+            .collect();
+
+        let target_fref = module.declare_func_in_func(func_ids[entry_idx], builder.func);
+        let call_inst = builder.ins().call(target_fref, &args);
+        let result = builder.inst_results(call_inst)[0];
+        builder.ins().return_(&[result]);
+
+        builder.seal_all_blocks();
+        builder.finalize();
+
+        module
+            .define_function(tramp_id, &mut ctx)
+            .map_err(|e| e.to_string())?;
+    }
+
     // Emit object file
     let obj_product = module.finish();
     let obj_bytes = obj_product.emit().map_err(|e| e.to_string())?;
     let obj_path = format!("{}.o", output_path);
     std::fs::write(&obj_path, &obj_bytes)
         .map_err(|e| format!("failed to write object file: {}", e))?;
-
-    // Generate C bench harness
-    let entry_chunk = &program.chunks[entry_idx];
-    let param_count = entry_chunk.param_count as usize;
-    let func_name = format!("ilo_{}", entry_func);
     let bench_c_path = format!("{}_bench.c", output_path);
     // Serialize registry for embedding in C harness
     let registry_bytes = serialize_type_registry(&program.type_registry);
@@ -5227,6 +5325,8 @@ mod tests {
         let mut flag_builder = settings::builder();
         flag_builder.set("opt_level", "speed").unwrap();
         flag_builder.set("is_pic", "true").unwrap();
+        // CallConv::Tail requires frame pointers to be preserved.
+        flag_builder.set("preserve_frame_pointers", "true").unwrap();
         let isa_builder = cranelift_native::builder().unwrap();
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
@@ -5243,11 +5343,12 @@ mod tests {
         let mut module = make_module();
         let helpers = declare_all_helpers(&mut module);
 
-        // First pass: declare all functions
+        // First pass: declare all functions (with CallConv::Tail to match compile_function_body)
         let mut func_ids: Vec<FuncId> = Vec::with_capacity(compiled.chunks.len());
         for (i, chunk) in compiled.chunks.iter().enumerate() {
             let name = format!("ilo_{}", compiled.func_names[i]);
             let mut sig = module.make_signature();
+            sig.call_conv = CallConv::Tail;
             for _ in 0..chunk.param_count {
                 sig.params.push(cranelift_codegen::ir::AbiParam::new(
                     cranelift_codegen::ir::types::I64,
@@ -6348,6 +6449,7 @@ f a:t b:t>t;join a b"#,
             for (i, chunk) in compiled.chunks.iter().enumerate() {
                 let name = format!("ilo_{}", compiled.func_names[i]);
                 let mut sig = module.make_signature();
+                sig.call_conv = CallConv::Tail;
                 for _ in 0..chunk.param_count {
                     sig.params.push(cranelift_codegen::ir::AbiParam::new(
                         cranelift_codegen::ir::types::I64,
@@ -7006,12 +7108,13 @@ f a:t b:t>t;join a b"#,
         let mut module = make_module();
         let helpers = declare_all_helpers(&mut module);
 
-        // Declare the helper function so OP_CALL can reference it
+        // Declare the helper function so OP_CALL can reference it (CallConv::Tail to match body)
         let mut all_func_ids = Vec::new();
         for (i, c) in compiled.chunks.iter().enumerate() {
             let name = format!("ilo_{}", compiled.func_names[i]);
             let linkage = cranelift_module::Linkage::Local;
             let mut sig = module.make_signature();
+            sig.call_conv = CallConv::Tail;
             for _ in 0..c.param_count {
                 sig.params.push(cranelift_codegen::ir::AbiParam::new(
                     cranelift_codegen::ir::types::I64,
@@ -7057,8 +7160,9 @@ f a:t b:t>t;join a b"#,
         let mut module = make_module();
         let helpers = declare_all_helpers(&mut module);
 
-        // Declare only f's func_id (need to declare it to get a FuncId)
+        // Declare only f's func_id (need to declare it to get a FuncId, CallConv::Tail)
         let mut sig = module.make_signature();
+        sig.call_conv = CallConv::Tail;
         for _ in 0..chunk.param_count {
             sig.params.push(cranelift_codegen::ir::AbiParam::new(
                 cranelift_codegen::ir::types::I64,
@@ -7074,6 +7178,7 @@ f a:t b:t>t;join a b"#,
             .position(|n| n == "helper")
             .unwrap();
         let mut helper_sig = module.make_signature();
+        helper_sig.call_conv = CallConv::Tail;
         for _ in 0..compiled.chunks[helper_idx].param_count {
             helper_sig.params.push(cranelift_codegen::ir::AbiParam::new(
                 cranelift_codegen::ir::types::I64,
@@ -7122,6 +7227,7 @@ f a:t b:t>t;join a b"#,
         let helpers = declare_all_helpers(&mut module);
 
         let mut sig = module.make_signature();
+        sig.call_conv = CallConv::Tail;
         sig.returns.push(cranelift_codegen::ir::AbiParam::new(
             cranelift_codegen::ir::types::I64,
         ));
