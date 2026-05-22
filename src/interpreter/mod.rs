@@ -2496,6 +2496,46 @@ fn ct_eq_impl(a_arg: &Value, b_arg: &Value) -> Result<Value> {
     Ok(Value::Bool(eq))
 }
 
+#[inline(never)]
+fn hex_rev_impl(arg: &Value) -> Result<Value> {
+    // hex-rev s > t — reverse byte order of a hex-encoded string.
+    // Input is a hex string (any case); length must be even (2 chars per
+    // byte). Odd-length input errors ILO-T013 with a padding hint. Case
+    // is preserved: `abCD` reversed is `CDab`. Total for even-length hex.
+    // Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid).
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hex-rev requires text, got {:?}", other),
+            ));
+        }
+    };
+    if s.len() % 2 != 0 {
+        return Err(RuntimeError::new(
+            "ILO-T013",
+            format!(
+                "hex-rev: input length {} is odd — hex strings must encode whole bytes (2 chars \
+                 per byte); hint: pad to even length first (e.g. prepend \"0\")",
+                s.len()
+            ),
+        ));
+    }
+    // Reverse byte pairs in-place. No heap allocation beyond the output String.
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = s.len();
+    while i >= 2 {
+        i -= 2;
+        // SAFETY: `s` is a valid &str; slicing at even byte boundaries keeps
+        // UTF-8 validity since ASCII hex chars are all single-byte code points.
+        out.push(bytes[i] as char);
+        out.push(bytes[i + 1] as char);
+    }
+    Ok(Value::Text(Arc::new(out)))
+}
+
 // ── Calendar arithmetic cluster ─────────────────────────────────────────────
 //
 // Each builtin lives in its own #[inline(never)] helper so the call_function
@@ -5058,6 +5098,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Sha256d) && args.len() == 1 {
         return sha256d_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::HexRev) && args.len() == 1 {
+        return hex_rev_impl(&args[0]);
     }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
