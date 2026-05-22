@@ -234,6 +234,7 @@ type StdinLinesInner =
 ///
 /// On WASM the variant is never constructed (the builtin returns Err early).
 /// The `Debug` impl shows `<stdin-lines>` to keep output readable.
+#[allow(clippy::type_complexity)]
 pub struct StdinLinesHandle {
     inner: StdinLinesInner,
 }
@@ -268,6 +269,7 @@ impl Default for StdinLinesHandle {
 impl StdinLinesHandle {
     /// Create a new handle owning a locked stdin lines iterator.
     #[cfg(not(target_family = "wasm"))]
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         use std::io::{BufRead, BufReader};
         // Wrap stdin in a BufReader (which is Send) rather than holding a

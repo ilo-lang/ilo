@@ -865,6 +865,20 @@ fn with_field_type_mismatch() {
 }
 
 #[test]
+fn with_anon_record_new_field_rejected() {
+    // ILO-368: `with` on an anonymous record must not add new fields
+    let src = "main>_;r={x:1 y:2};r with z:3";
+    assert_err(src, "ILO-T044", "main");
+}
+
+#[test]
+fn with_anon_record_existing_field_ok() {
+    // ILO-368: `with` on an anonymous record updating an existing field is fine
+    let src = "main>_;r={x:1 y:2};r with x:9";
+    assert_ok(src, "main");
+}
+
+#[test]
 fn index_on_nonlist() {
     assert_err("main>n;x=5;x.0", "ILO-T023", "main");
 }
