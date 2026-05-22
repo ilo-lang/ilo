@@ -4,6 +4,7 @@ use crate::caps::Caps;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+pub mod http_wasm;
 pub mod json;
 
 // ── Trace hook ────────────────────────────────────────────────────────────────
@@ -3775,6 +3776,7 @@ fn uniqby_run(
 
 /// `#[inline(never)]` — post url body [headers] > R t t
 #[inline(never)]
+#[allow(dead_code)]
 fn post_run(env: &mut Env, args: Vec<Value>) -> Result<Value> {
     let (url, body) = match (&args[0], &args[1]) {
         (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
@@ -5810,31 +5812,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             vec![]
         };
         return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = minreq::get(url.as_str());
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(body) => {
-                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
-                        }
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
+            // On WASM, always route through the fetch host import regardless of
+            // the `http` feature flag (minreq does not compile for wasm32).
+            // On native builds, use minreq when `http` is enabled.
+            let backend = http_wasm::default_backend();
+            let result = backend.get(url.as_str(), &headers);
+            Ok(http_wasm::result_to_value(result))
         };
     }
     if builtin == Some(Builtin::GetMany) && args.len() == 1 {
@@ -5874,7 +5857,47 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(get_many_fetch(&urls))));
     }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
-        return post_run(env, args);
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pst requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 3 {
+            match &args[2] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("pst headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            // Same backend selection as `get`: WASM → WasmFetchBackend,
+            // native + `http` feature → NativeHttpBackend, otherwise stub.
+            let backend = http_wasm::default_backend();
+            let result = backend.post(url.as_str(), body.as_str(), &headers);
+            Ok(http_wasm::result_to_value(result))
+        };
     }
     // HTTP verb cluster (#5z). Delegated to #[inline(never)] helpers so the
     // call_function frame stays small. Each verb gets an explicit `if builtin ==`

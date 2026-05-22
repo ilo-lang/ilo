@@ -27,6 +27,8 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 Verb cluster is limited to the seven safe methods (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE and CONNECT are deliberately out of scope.
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
+**WASM targets**: `get` and `pst` work in WASM builds (`wasm32-wasi`, `wasm32-unknown-unknown`) via a `fetch` host import (module `"ilo_http"`). The host must export the `ilo_http` import set — see `src/interpreter/http_wasm.rs` for the full contract. `put`, `pat`, `del`, `hed`, `opt`, `get-to`, `pst-to`, `getx`, `pstx`, and `get-many` are native-only (return `Err` on WASM). HTTP streaming is out of scope (ILO-46). Cap flags (`--allow-net`) are enforced on WASM the same as native.
+
 `getx url` / `pstx url body` (rich response, `R (M t _) t`): Ok-map with `status` (n), `headers` (M t t), `body` (t). Non-2xx is still Ok with status surfaced on the map; only transport failure is Err. Optional trailing request-headers map (M t t), same as `get`/`pst`. Use these when you need conditional requests (304), status-code branching (429), response-header reads (ETag, Link, X-RateLimit-*), or redirect following. Body-only `get`/`pst` stay cheaper for fire-and-forget; `getx`/`pstx` are the heavier variant. Response header names are lowercased on the Ok-map.
 
 `!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`, `getx!`, `pstx!`, `put!`, `pat!`, `del!`, `hed!`, `opt!`): Ok→body (or Ok-map for getx/pstx), Err propagates. `!!` panics on Err. Prefer `pst!`/`put!`/`del!` over `?r{~v:v;^e:^e}` boilerplate in `R`-returning callers (~30 tokens/site).
