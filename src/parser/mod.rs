@@ -6174,6 +6174,8 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("partition", 2, &[0]),
         ("flatmap", 2, &[0]),
         ("mapr", 2, &[0]),
+        // pairwise f xs — apply binary f to adjacent pairs; fn-ref at slot 0.
+        ("pairwise", 2, &[0]),
         // I/O
         ("prnt", 1, &[]),
         ("wr", 2, &[]),
@@ -6315,6 +6317,7 @@ fn builtin_param_names_table() -> HashMap<String, Vec<String>> {
         ("uniqby", &["fn", "list"]),
         ("partition", &["fn", "list"]),
         ("flatmap", &["fn", "list"]),
+        ("pairwise", &["fn", "list"]),
         // Higher-order (3-arg)
         ("fld", &["fn", "list", "init"]),
         // Text

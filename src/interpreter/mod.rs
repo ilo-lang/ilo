@@ -4407,6 +4407,336 @@ fn setops_run(builtin: Option<Builtin>, xs_arg: &Value, ys_arg: &Value) -> Resul
     Ok(Value::List(Arc::new(out)))
 }
 
+// ── Signal/math cluster helpers (0.13.0) ────────────────────────────────────
+
+/// `convolve xs ys > L n` — discrete linear convolution of two real-valued
+/// sequences. Output length = `len xs + len ys - 1`. O(n*m) direct-sum
+/// implementation; suitable for short-to-medium kernels (signal filtering,
+/// polynomial multiplication). Mirrors NumPy `np.convolve(a, b, mode="full")`.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-large
+/// dispatch frame and matches the established per-builtin helper pattern.
+#[inline(never)]
+fn run_convolve(xs_val: &Value, ys_val: &Value) -> Result<Value> {
+    let xs = match xs_val {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("convolve: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let ys = match ys_val {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("convolve: second arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    if xs.is_empty() || ys.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "convolve: both input lists must be non-empty".to_string(),
+        ));
+    }
+    let mut a = Vec::with_capacity(xs.len());
+    for item in xs.iter() {
+        match item {
+            Value::Number(n) => a.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "convolve: first list elements must be numbers, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    let mut b = Vec::with_capacity(ys.len());
+    for item in ys.iter() {
+        match item {
+            Value::Number(n) => b.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "convolve: second list elements must be numbers, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    convolve_compute(&a, &b)
+        .map(|v| Value::List(Arc::new(v.into_iter().map(Value::Number).collect())))
+}
+
+/// Direct-sum discrete linear convolution. Output length = n + m - 1.
+/// `#[inline(never)]` per the established per-builtin helper pattern.
+#[inline(never)]
+fn convolve_compute(a: &[f64], b: &[f64]) -> Result<Vec<f64>> {
+    let n = a.len() + b.len() - 1;
+    let mut out = vec![0.0_f64; n];
+    for (i, &ai) in a.iter().enumerate() {
+        for (j, &bj) in b.iter().enumerate() {
+            out[i + j] += ai * bj;
+        }
+    }
+    Ok(out)
+}
+
+/// `searchsorted xs targets > L n` — batch sorted-list insertion points.
+/// Applies `bisect_left` semantics to each target, equivalent to
+/// `map (t:n>n; bisect xs t) targets` but avoids the lambda overhead per
+/// target. Callers are responsible for the sortedness precondition (same
+/// contract as `bisect`).
+///
+/// `#[inline(never)]` per the established per-builtin helper pattern.
+#[inline(never)]
+fn run_searchsorted(xs_val: &Value, targets_val: &Value) -> Result<Value> {
+    let xs = match xs_val {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("searchsorted: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let targets = match targets_val {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "searchsorted: second arg must be a list of targets, got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    // Validate element types in xs up-front (same contract as bisect).
+    let mut nums: Vec<f64> = Vec::with_capacity(xs.len());
+    for item in xs.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "searchsorted: sorted-list elements must be numbers, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(targets.len());
+    for t_val in targets.iter() {
+        let t = match t_val {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "searchsorted: target elements must be numbers, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        if t.is_nan() {
+            out.push(Value::Number(f64::NAN));
+            continue;
+        }
+        let mut lo = 0usize;
+        let mut hi = nums.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if nums[mid] < t {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        out.push(Value::Number(lo as f64));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `cabs pair > n` — complex magnitude sqrt(re² + im²).
+/// Accepts a 2-element `[re, im]` list (the same shape produced by `fft`).
+///
+/// `#[inline(never)]` per the established per-builtin helper pattern.
+#[inline(never)]
+fn run_cabs(pair_val: &Value) -> Result<Value> {
+    let pair = match pair_val {
+        Value::List(l) if l.len() == 2 => l,
+        Value::List(l) => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "cabs: expected [re, im] pair (length 2), got length {}",
+                    l.len()
+                ),
+            ));
+        }
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("cabs: arg must be a [re, im] list, got {:?}", other),
+            ));
+        }
+    };
+    let re = match &pair[0] {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("cabs: re must be a number, got {:?}", other),
+            ));
+        }
+    };
+    let im = match &pair[1] {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("cabs: im must be a number, got {:?}", other),
+            ));
+        }
+    };
+    Ok(Value::Number((re * re + im * im).sqrt()))
+}
+
+/// `cmul a b > L n` — complex multiply of two `[re, im]` pairs.
+/// Returns a new `[re, im]` 2-element list. Implements
+/// `(re_a*re_b - im_a*im_b, re_a*im_b + im_a*re_b)`.
+///
+/// `#[inline(never)]` per the established per-builtin helper pattern.
+#[inline(never)]
+fn run_cmul(a_val: &Value, b_val: &Value) -> Result<Value> {
+    fn extract_pair(v: &Value, label: &str) -> Result<(f64, f64)> {
+        let pair = match v {
+            Value::List(l) if l.len() == 2 => l,
+            Value::List(l) => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "cmul: {label} must be a [re, im] pair (length 2), got length {}",
+                        l.len()
+                    ),
+                ));
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("cmul: {label} must be a [re, im] list, got {:?}", other),
+                ));
+            }
+        };
+        let re = match &pair[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("cmul: {label} re must be a number, got {:?}", other),
+                ));
+            }
+        };
+        let im = match &pair[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("cmul: {label} im must be a number, got {:?}", other),
+                ));
+            }
+        };
+        Ok((re, im))
+    }
+    let (re_a, im_a) = extract_pair(a_val, "a")?;
+    let (re_b, im_b) = extract_pair(b_val, "b")?;
+    let re_out = re_a * re_b - im_a * im_b;
+    let im_out = re_a * im_b + im_a * re_b;
+    Ok(Value::List(Arc::new(vec![
+        Value::Number(re_out),
+        Value::Number(im_out),
+    ])))
+}
+
+/// `pdist2 xs ys > L n` — element-wise squared Euclidean distance.
+/// Equivalent to `map (i:n>n; pow (- (at xs i) (at ys i)) 2) (range 0 (len xs))`.
+/// Lists must have the same length; mismatch raises ILO-R009.
+///
+/// `#[inline(never)]` per the established per-builtin helper pattern.
+#[inline(never)]
+fn run_pdist2(xs_val: &Value, ys_val: &Value) -> Result<Value> {
+    let xs = match xs_val {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("pdist2: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let ys = match ys_val {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("pdist2: second arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    if xs.len() != ys.len() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "pdist2: lists must have the same length, got {} and {}",
+                xs.len(),
+                ys.len()
+            ),
+        ));
+    }
+    let mut out = Vec::with_capacity(xs.len());
+    for (x_val, y_val) in xs.iter().zip(ys.iter()) {
+        let x = match x_val {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "pdist2: first list elements must be numbers, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let y = match y_val {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "pdist2: second list elements must be numbers, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let d = x - y;
+        out.push(Value::Number(d * d));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -9007,6 +9337,57 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 payload: None,
             })
         };
+    }
+
+    // ── Signal/math cluster (0.13.0) ────────────────────────────────────────
+    if builtin == Some(Builtin::Convolve) && args.len() == 2 {
+        return run_convolve(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Searchsorted) && args.len() == 2 {
+        return run_searchsorted(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Cabs) && args.len() == 1 {
+        return run_cabs(&args[0]);
+    }
+    if builtin == Some(Builtin::Cmul) && args.len() == 2 {
+        return run_cmul(&args[0], &args[1]);
+    }
+    // `pairwise f xs > L b` — apply binary f to each adjacent pair.
+    // Has a FnRef arg so dispatches inline like map/flt rather than through a
+    // top-level helper. Output length = len xs - 1; empty/singleton → [].
+    if builtin == Some(Builtin::Pairwise) && args.len() == 2 {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "pairwise: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pairwise: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.len() < 2 {
+            return Ok(Value::List(Arc::new(vec![])));
+        }
+        let mut result = Vec::with_capacity(items.len() - 1);
+        for i in 0..items.len() - 1 {
+            let mut call_args = vec![items[i].clone(), items[i + 1].clone()];
+            call_args.extend(captures.iter().cloned());
+            result.push(call_function(env, &fn_name, call_args)?);
+        }
+        return Ok(Value::List(Arc::new(result)));
+    }
+    if builtin == Some(Builtin::Pdist2) && args.len() == 2 {
+        return run_pdist2(&args[0], &args[1]);
     }
 
     // Dynamic dispatch: callee resolved to a FnRef at runtime
