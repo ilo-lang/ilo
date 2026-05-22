@@ -1718,28 +1718,46 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 Split programs across files with `use`:
 
 ```
-use "path/to/file.ilo"         -- import all declarations
-use "path/to/file.ilo" [name1 name2]  -- import only named declarations
+use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
+use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
 ```
 
-All imported declarations merge into a flat shared namespace - no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+**Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
+
+**Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
+
+**Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
 
 ```
--- math.ilo
+-- math-lib.ilo
+_internal-helper n:n>n; +n 0   -- private — excluded from alias imports
 dbl n:n>n; *n 2
 half n:n>n; /n 2
 
 -- main.ilo
-use "math.ilo"
-run n:n>n; dbl! half n
+use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
+use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
+run n:n>n; m-dbl! half n
 ```
+
+### Module privacy
+
+Declarations whose name starts with `_` (underscore, immediately adjacent, e.g. `_helper`) are module-private:
+
+- **Excluded** from named-module imports (`use alias:"path"`) — not prefixed and not available to the importer.
+- **Blocked** in selective imports (`use "path" [_name]`) — requesting a private name is ILO-P019.
+- **Visible** in flat imports (`use "path"`) — they merge into the shared namespace as a convention; the importer can call them, but they are not considered part of the public API.
+
+Declaring a private function: `_helper-name params:type > return-type; body`
 
 ### Rules
 
 - Path is relative to the importing file's directory
 - Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
 - Circular imports are an error (`ILO-P018`)
-- Scoped import with unknown name: `ILO-P019`
+- Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
 ### Error codes

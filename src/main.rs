@@ -2257,6 +2257,9 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
 ///   `None` means inline code — `use` is not supported without a file context.
 /// - `visited`: canonical paths already in the import chain; circular imports are errors.
 /// - `diagnostics`: errors are pushed here (file-not-found, circular, parse failures).
+///
+/// Privacy rule: declarations whose name starts with `_` are module-private and
+/// are never exported. They are stripped during import regardless of `only` or `alias`.
 fn resolve_imports(
     decls: Vec<ast::Decl>,
     base_dir: Option<&std::path::Path>,
@@ -2266,7 +2269,13 @@ fn resolve_imports(
     let mut result: Vec<ast::Decl> = Vec::new();
 
     for decl in decls {
-        if let ast::Decl::Use { path, only, span } = decl {
+        if let ast::Decl::Use {
+            path,
+            only,
+            alias,
+            span,
+        } = decl
+        {
             let Some(dir) = base_dir else {
                 diagnostics.push(
                     Diagnostic::error(
@@ -2350,10 +2359,35 @@ fn resolve_imports(
             );
             visited.remove(&canonical);
 
-            // Apply `only [...]` filter if specified
+            // Apply import filter based on form:
+            //
+            // - Flat (`use "path"`): all declarations come through, including
+            //   `_`-prefixed ones. Private helpers are callable from the
+            //   importing file only by convention (no hard enforcement in flat
+            //   mode — they just land in the shared namespace).
+            //
+            // - Selective (`use "path" [name1 name2]`): only the listed public
+            //   names are imported. `_`-prefixed names are blocked — requesting
+            //   one emits ILO-P019. This is the primary privacy enforcement.
+            //
+            // - Named-module (`use alias:"path"`): all public (non-`_`) names
+            //   are imported and prefixed with `alias-`. Private (`_`) names are
+            //   silently excluded. This is the secondary privacy enforcement.
             let filtered = if let Some(ref names) = only {
-                // Warn about any requested names that weren't found
+                // Selective import — block private names explicitly
                 for name in names {
+                    if name.starts_with('_') {
+                        diagnostics.push(
+                            Diagnostic::error(format!(
+                                "use \"{}\": '{}' is module-private (names starting with `_` \
+                                 are not exported)",
+                                path, name
+                            ))
+                            .with_code("ILO-P019")
+                            .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
                     let found = imported_decls
                         .iter()
                         .any(|d| decl_name(d) == Some(name.as_str()));
@@ -2372,11 +2406,19 @@ fn resolve_imports(
                     .into_iter()
                     .filter(|d| {
                         decl_name(d)
-                            .map(|n| names.iter().any(|s| s == n))
+                            .map(|n| !n.starts_with('_') && names.iter().any(|s| s == n))
                             .unwrap_or(false)
                     })
                     .collect::<Vec<_>>()
+            } else if let Some(ref pfx) = alias {
+                // Named-module form: strip private, then rename public to `alias-name`.
+                let public_decls: Vec<ast::Decl> = imported_decls
+                    .into_iter()
+                    .filter(|d| decl_name(d).map(|n| !n.starts_with('_')).unwrap_or(true))
+                    .collect();
+                apply_module_alias(public_decls, pfx)
             } else {
+                // Flat import: everything (including private helpers) comes through
                 imported_decls
             };
 
@@ -2388,6 +2430,64 @@ fn resolve_imports(
     }
 
     result
+}
+
+/// Rename all named declarations in `decls` by prepending `alias-` to their name.
+/// Used by the `use alias:"path"` named-module import form.
+fn apply_module_alias(decls: Vec<ast::Decl>, alias: &str) -> Vec<ast::Decl> {
+    decls
+        .into_iter()
+        .map(|d| rename_decl_with_alias(d, alias))
+        .collect()
+}
+
+/// Return a copy of `decl` with its name prefixed by `alias-`.
+/// Declarations without a name (errors, `Use` nodes) pass through unchanged.
+fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
+    match decl {
+        ast::Decl::Function {
+            name,
+            params,
+            return_type,
+            body,
+            span,
+        } => ast::Decl::Function {
+            name: format!("{}-{}", alias, name),
+            params,
+            return_type,
+            body,
+            span,
+        },
+        ast::Decl::Tool {
+            name,
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        } => ast::Decl::Tool {
+            name: format!("{}-{}", alias, name),
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        },
+        ast::Decl::TypeDef { name, fields, span } => ast::Decl::TypeDef {
+            name: format!("{}-{}", alias, name),
+            fields,
+            span,
+        },
+        ast::Decl::Alias { name, target, span } => ast::Decl::Alias {
+            name: format!("{}-{}", alias, name),
+            target,
+            span,
+        },
+        // Use and Error nodes have no name — pass through unchanged
+        other => other,
+    }
 }
 
 fn report_diagnostic(d: &Diagnostic, mode: OutputMode) {
@@ -6252,6 +6352,7 @@ mod tests {
         let d = ast::Decl::Use {
             path: "lib.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -6289,6 +6390,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "ilo_test_resolve_only_F2G7.ilo".into(),
             only: Some(vec!["dbl".into()]),
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6322,6 +6424,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "ilo_test_resolve_missing_H4K9.ilo".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6574,6 +6677,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "something.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6589,6 +6693,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "nonexistent_xyz_99999.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6703,6 +6808,7 @@ mod tests {
         let decls = vec![ast::Decl::Use {
             path: "ilo_unit_bad_parse_imports.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6738,6 +6844,7 @@ mod tests {
         let decls = vec![ast::Decl::Use {
             path: "ilo_unit_trans_a_Q3R8.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6756,6 +6863,120 @@ mod tests {
 
         std::fs::remove_file(file_b).ok();
         std::fs::remove_file(file_a).ok();
+    }
+
+    // ── resolve_imports: named-module alias form ───────────────────────────────
+
+    #[test]
+    fn resolve_imports_alias_renames_public_decls() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_alias_rename_X9Y2.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "dbl n:n>n;*n 2").unwrap();
+        writeln!(f, "triple n:n>n;*n 3").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_alias_rename_X9Y2.ilo".into(),
+            only: None,
+            alias: Some("m".into()),
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"m-dbl"), "expected m-dbl: {names:?}");
+        assert!(names.contains(&"m-triple"), "expected m-triple: {names:?}");
+        assert!(
+            !names.contains(&"dbl"),
+            "plain dbl should not be in result: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_alias_excludes_private_decls() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_alias_priv_W7Z4.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "_private n:n>n;+n 0").unwrap();
+        writeln!(f, "pub-fn n:n>n;+n 1").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_alias_priv_W7Z4.ilo".into(),
+            only: None,
+            alias: Some("m".into()),
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"m-pub-fn"), "expected m-pub-fn: {names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.starts_with("m-_") || *n == "_private"),
+            "private decl should not appear: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_selective_blocks_private_name() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_sel_priv_V3K8.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "_priv n:n>n;+n 0").unwrap();
+        writeln!(f, "pub-fn n:n>n;+n 1").unwrap();
+        drop(f);
+
+        // Note: `_` is not a valid ident in `only`, so we test by injecting
+        // the name directly via the AST.
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_sel_priv_V3K8.ilo".into(),
+            only: Some(vec!["_priv".into()]),
+            alias: None,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(result.is_empty(), "private name should produce no result");
+        assert!(
+            diags.iter().any(|d| d.code == Some("ILO-P019")),
+            "expected ILO-P019: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("module-private")),
+            "expected 'module-private' in error: {diags:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
     }
 
     // ── report_diagnostic: all three output modes ─────────────────────────────
@@ -7818,6 +8039,7 @@ mod tests {
         ast::Decl::Use {
             path: path.to_string(),
             only: None,
+            alias: None,
             span: ast::Span::UNKNOWN,
         }
     }

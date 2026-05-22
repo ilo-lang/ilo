@@ -380,6 +380,32 @@ impl Parser {
         }
     }
 
+    /// Like `expect_ident` but also accepts `_ ident` (underscore immediately
+    /// followed by an identifier) as a single `"_name"` declaration name.
+    /// Used for function/type/tool names to support the module-private `_foo`
+    /// naming convention. Regular identifiers are accepted unchanged.
+    fn expect_decl_name(&mut self) -> Result<String> {
+        if self.peek() == Some(&Token::Underscore) {
+            // Peek ahead: `_` immediately adjacent to an Ident = module-private name.
+            if let Some(Token::Ident(name)) = self.token_at(self.pos + 1).cloned() {
+                let us_end = self.tokens[self.pos].1.end;
+                let id_start = self.tokens[self.pos + 1].1.start;
+                if us_end == id_start {
+                    self.advance(); // consume `_`
+                    self.advance(); // consume ident
+                    return Ok(format!("_{}", name));
+                }
+            }
+            return Err(self.error(
+                "ILO-P016",
+                "expected identifier after `_` in declaration name; \
+                 `_name` (no space) marks a module-private declaration"
+                    .into(),
+            ));
+        }
+        self.expect_ident()
+    }
+
     fn error(&self, code: &'static str, message: String) -> ParseError {
         ParseError {
             code,
@@ -706,6 +732,14 @@ impl Parser {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
             Some(Token::Use) => self.parse_use_decl(),
+            // `_ident` (adjacent, no whitespace) — module-private declaration name
+            Some(Token::Underscore)
+                if matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+                    && self.pos + 1 < self.tokens.len()
+                    && self.tokens[self.pos].1.end == self.tokens[self.pos + 1].1.start =>
+            {
+                self.parse_fn_decl()
+            }
             Some(Token::Ident(_)) => {
                 // Check for keywords from other languages before attempting fn parse
                 let ident_str = match self.peek() {
@@ -813,10 +847,60 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_use_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Use)?;
-        let path = match self.peek().cloned() {
+
+        // Detect named-module form: `use alias:"path"` — ident immediately
+        // followed by `:` then a string literal.
+        // Distinguished from the plain form `use "path"` by the leading ident.
+        let (alias, path) = match self.peek().cloned() {
             Some(Token::Text(p)) => {
+                // Plain form: `use "path"`
                 self.advance();
-                p
+                (None, p)
+            }
+            Some(Token::Ident(a)) => {
+                // Peek ahead: must be followed by Colon then Text.
+                self.advance(); // consume ident
+                match self.peek().cloned() {
+                    Some(Token::Colon) => {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Text(p)) => {
+                                self.advance();
+                                (Some(a), p)
+                            }
+                            Some(tok) => {
+                                return Err(self.error(
+                                    "ILO-P016",
+                                    format!(
+                                        "expected a string path after `use alias:`, got {}",
+                                        tok.user_facing_name()
+                                    ),
+                                ));
+                            }
+                            None => {
+                                return Err(self.error(
+                                    "ILO-P016",
+                                    "expected a string path after `use alias:`, got EOF".into(),
+                                ));
+                            }
+                        }
+                    }
+                    Some(tok) => {
+                        return Err(self.error(
+                            "ILO-P016",
+                            format!(
+                                "expected `:` after module alias in `use`, got {}",
+                                tok.user_facing_name()
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Err(self.error(
+                            "ILO-P016",
+                            "expected `:` after module alias in `use`, got EOF".into(),
+                        ));
+                    }
+                }
             }
             Some(tok) => {
                 return Err(self.error(
@@ -835,8 +919,16 @@ statement boundary; bind the chain to a local first. For example, split \
             }
         };
 
-        // Optional `[name1 name2 ...]` scoped import list
+        // Optional `[name1 name2 ...]` scoped import list (incompatible with alias form)
         let only = if self.peek() == Some(&Token::LBracket) {
+            if alias.is_some() {
+                return Err(self.error(
+                    "ILO-P016",
+                    "named-module import (`use alias:\"path\"`) cannot be combined with `[...]` \
+                     selective import — omit the alias or the bracket list"
+                        .into(),
+                ));
+            }
             self.advance(); // consume `[`
             let mut names = Vec::new();
             while self.peek() != Some(&Token::RBracket) {
@@ -863,6 +955,7 @@ statement boundary; bind the chain to a local first. For example, split \
         Ok(Decl::Use {
             path,
             only,
+            alias,
             span: start.merge(end),
         })
     }
@@ -871,7 +964,7 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_type_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Type)?;
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -950,7 +1043,7 @@ statement boundary; bind the chain to a local first. For example, split \
         let start = self.peek_span();
         // consume the `alias` identifier
         self.advance();
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         let target = self.parse_type()?;
         let end = self.prev_span();
         Ok(Decl::Alias {
@@ -963,7 +1056,7 @@ statement boundary; bind the chain to a local first. For example, split \
     /// `name params>return;body`
     fn parse_fn_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
-        let name = self.expect_ident()?;
+        let name = self.expect_decl_name()?;
         // Reject user functions whose name collides with a builtin. Without this
         // the verifier's call-dispatch (which checks `is_builtin` before user
         // `self.functions`) would silently shadow the user function and report
@@ -4438,6 +4531,20 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 Ok(Expr::Literal(Literal::Nil))
             }
             Some(Token::Underscore) => {
+                // `_ident` (no whitespace between `_` and the following ident) →
+                // reference to a module-private declaration. Only fuse when the
+                // underscore is immediately adjacent to the next token (sharing a
+                // boundary), matching how declaration names are parsed.
+                // Otherwise, bare `_` remains the unit/nil-discard reference.
+                if let Some(Token::Ident(name)) = self.token_at(self.pos + 1).cloned() {
+                    let us_end = self.tokens[self.pos].1.end;
+                    let id_start = self.tokens[self.pos + 1].1.start;
+                    if us_end == id_start {
+                        self.advance(); // consume `_`
+                        self.advance(); // consume ident
+                        return Ok(Expr::Ref(format!("_{}", name)));
+                    }
+                }
                 self.advance();
                 Ok(Expr::Ref("_".to_string()))
             }
@@ -8628,6 +8735,76 @@ mod tests {
             "got: {:?}",
             errors
         );
+    }
+
+    #[test]
+    fn parse_use_named_module_alias() {
+        let prog = parse_str(r#"use m:"lib.ilo""#);
+        let Decl::Use {
+            path, only, alias, ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "lib.ilo");
+        assert!(only.is_none());
+        assert_eq!(alias.as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn parse_use_named_module_alias_longer() {
+        let prog = parse_str(r#"use math:"math-lib.ilo""#);
+        let Decl::Use { path, alias, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(path, "math-lib.ilo");
+        assert_eq!(alias.as_deref(), Some("math"));
+    }
+
+    #[test]
+    fn parse_use_named_module_rejects_bracket_combo() {
+        let (_, errors) = parse_str_errors(r#"use m:"lib.ilo" [foo]"#);
+        assert!(
+            !errors.is_empty(),
+            "expected error combining alias and bracket"
+        );
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P016"),
+            "expected ILO-P016: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_private_fn_decl() {
+        let prog = parse_str("_helper n:n>n;+n 1");
+        let Decl::Function { name, .. } = &prog.declarations[0] else {
+            panic!("expected Function, got {:?}", prog.declarations)
+        };
+        assert_eq!(name, "_helper");
+    }
+
+    #[test]
+    fn parse_private_fn_decl_hyphenated() {
+        let prog = parse_str("_do-thing n:n>n;+n 0");
+        let Decl::Function { name, .. } = &prog.declarations[0] else {
+            panic!("expected Function")
+        };
+        assert_eq!(name, "_do-thing");
+    }
+
+    #[test]
+    fn parse_private_fn_call_in_body() {
+        // `_helper` as a call in a body should parse as Expr::Call("_helper", ...)
+        let prog = parse_str("main n:n>n;_helper n");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected Function")
+        };
+        let last = body.last().expect("body not empty");
+        if let Stmt::Expr(Expr::Call { function, .. }) = &last.node {
+            assert_eq!(function, "_helper");
+        } else {
+            panic!("expected call to _helper, got {last:?}");
+        }
     }
 
     // --- alias declaration ---
