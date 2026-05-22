@@ -2,14 +2,21 @@
 //!
 //! Each line has the schema:
 //! ```json
-//! {"schemaVersion":1,"line":7,"stmt":"a = +x y","bindings":{"x":3,"y":4,"a":7},"result":7}
+//! {"schemaVersion":1,"kind":"stmt","line":7,"stmt":"a = +x y","bindings":{"x":3,"y":4,"a":7},"result":7}
 //! ```
 //!
-//! Touch points: ILO-72.
+//! With `--depth expr`, additional sub-expression events are emitted:
+//! ```json
+//! {"schemaVersion":1,"kind":"expr","line":7,"expr":"+x y","refs":["x","y"],"result":7}
+//! ```
+//!
+//! With `--watch <name>`, only events whose bindings/refs include `<name>` are emitted.
+//!
+//! Touch points: ILO-72, ILO-344.
 
-use super::args::TraceArgs;
+use super::args::{TraceArgs, TraceDepth};
 use crate::ast;
-use crate::interpreter::{TraceEvent, Value, run_with_trace};
+use crate::interpreter::{ExprTraceEvent, TraceEvent, Value, run_with_trace, run_with_trace_opts};
 use crate::lexer;
 use crate::parser;
 
@@ -83,8 +90,20 @@ fn trace_run(t: TraceArgs) -> i32 {
         })
         .collect();
 
+    let watch = t.watch.clone();
+    let depth = t.depth;
+
+    // Build stmt callback (always active).
+    let watch_stmt = watch.clone();
+    let on_stmt = move |ev: TraceEvent| emit_stmt_event(ev, &watch_stmt);
+
     // Run with trace hook — each event is serialised to one stdout JSON line.
-    let result = run_with_trace(&program, func_name, call_args, emit_event);
+    let result = if depth == TraceDepth::Expr {
+        let on_expr = move |ev: ExprTraceEvent| emit_expr_event(ev, &watch);
+        run_with_trace_opts(&program, func_name, call_args, on_stmt, Some(on_expr))
+    } else {
+        run_with_trace(&program, func_name, call_args, on_stmt)
+    };
 
     match result {
         Ok(_) => 0,
@@ -95,12 +114,11 @@ fn trace_run(t: TraceArgs) -> i32 {
     }
 }
 
-/// Serialise a single `TraceEvent` as a JSON line to stdout.
-fn emit_event(ev: TraceEvent) {
-    // Build the bindings object.
+/// Serialise a single statement `TraceEvent` as a JSON line to stdout.
+/// If `watch` is non-empty, only emit if any watched name appears in bindings.
+fn emit_stmt_event(ev: TraceEvent, watch: &[String]) {
+    // Build the bindings object (deduplicated: innermost wins).
     let mut bindings = serde_json::Map::new();
-    // Deduplicate: if a name appears multiple times (shadowed), take the last
-    // (innermost) binding, which is what the interpreter sees.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (name, val) in ev.bindings.iter().rev() {
         if seen.contains(name) {
@@ -111,13 +129,43 @@ fn emit_event(ev: TraceEvent) {
         bindings.insert(name.clone(), json_val);
     }
 
+    // Watch filter: skip if none of the watched names appear in bindings.
+    if !watch.is_empty() && !watch.iter().any(|w| bindings.contains_key(w.as_str())) {
+        return;
+    }
+
     let result_json = ev.result.to_json().unwrap_or(serde_json::Value::Null);
 
     let event = serde_json::json!({
         "schemaVersion": 1,
+        "kind": "stmt",
         "line": ev.line,
         "stmt": ev.stmt,
         "bindings": serde_json::Value::Object(bindings),
+        "result": result_json,
+    });
+
+    println!("{event}");
+}
+
+/// Serialise a single expression `ExprTraceEvent` as a JSON line to stdout.
+/// If `watch` is non-empty, only emit if any watched name appears in refs.
+fn emit_expr_event(ev: ExprTraceEvent, watch: &[String]) {
+    // Watch filter: skip if none of the watched names appear in refs.
+    if !watch.is_empty() && !watch.iter().any(|w| ev.refs.iter().any(|r| r == w)) {
+        return;
+    }
+
+    let result_json = ev.result.to_json().unwrap_or(serde_json::Value::Null);
+    let refs_json: Vec<serde_json::Value> =
+        ev.refs.iter().map(|r| serde_json::Value::String(r.clone())).collect();
+
+    let event = serde_json::json!({
+        "schemaVersion": 1,
+        "kind": "expr",
+        "line": ev.line,
+        "expr": ev.expr,
+        "refs": refs_json,
         "result": result_json,
     });
 
