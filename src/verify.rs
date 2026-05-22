@@ -559,8 +559,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("run", &["t", "L t"], "R (M t t) t"),
     // run2: structured spawn — typed Record instead of loose Map.
     ("run2", &["t", "L t"], "R RunResult t"),
-    ("rd", &["t"], "R ? t"),
+    ("rd", &["t"], "R t t"),
     ("rd", &["t", "t"], "R ? t"),
+    ("rd-json", &["t"], "R ? t"),
     ("lsd", &["t"], "R (L t) t"),
     ("walk", &["t"], "R (L t) t"),
     ("glob", &["t", "t"], "R (L t) t"),
@@ -2279,7 +2280,7 @@ fn builtin_check_args(
             )
         }
         "rd" | "rdb" => {
-            // rd path         — 1-arg: auto-detect format from extension → R ? t
+            // rd path         — 1-arg: raw text read → R t t
             // rd path fmt     — 2-arg: explicit format override → R ? t
             // rdb s fmt       — 2-arg: parse string/buffer in given format → R ? t
             if let Some(arg) = arg_types.first()
@@ -2304,6 +2305,26 @@ fn builtin_check_args(
                     message: format!(
                         "'{name}' format arg expects t (\"csv\", \"json\", \"raw\"…), got {fmt}"
                     ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let ok_ty = if name == "rd" && arg_types.len() == 1 {
+                Ty::Text
+            } else {
+                Ty::Unknown
+            };
+            (Ty::Result(Box::new(ok_ty), Box::new(Ty::Text)), errors)
+        }
+        "rd-json" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rd-json' expects t (path), got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -5181,6 +5202,27 @@ impl VerifyContext {
                             Some("e.g. wr path data \"json\"".to_string()),
                             Some(span),
                         );
+                    }
+                    // ILO-374: `rd` on a literal .json path without an explicit
+                    // format arg used to auto-parse the JSON. It now returns raw
+                    // text. Warn so agents can migrate to `rd-json` or `+ jpar`.
+                    if callee == "rd"
+                        && args.len() == 1
+                        && let Expr::Literal(Literal::Text(p)) = &args[0]
+                        && p.ends_with(".json")
+                    {
+                        self.errors.push(VerifyError {
+                            code: "ILO-W001",
+                            function: func.to_string(),
+                            message: "'rd' on a .json path returns raw text, not a parsed value"
+                                .to_string(),
+                            hint: Some(
+                                "use 'rd-json path' to read and parse JSON, or 'rd path + jpar' for an explicit two-step"
+                                    .to_string(),
+                            ),
+                            span: Some(span),
+                            is_warning: true,
+                        });
                     }
                     let (ret_ty, errors) = builtin_check_args(callee, &arg_types, func, Some(span));
                     self.errors.extend(errors);
@@ -9926,8 +9968,10 @@ mod tests {
 
     #[test]
     fn bang_on_result_callee_with_result_enclosing() {
-        // rd returns R t t, f returns R t t → unwrap is valid → line 1663 closing } is hit
-        assert!(parse_and_verify(r#"f>R t t;rd! "/tmp/x""#).is_ok());
+        // rd (1-arg) returns R t t; rd! unwraps to t. The enclosing function must return
+        // Result (so ! can propagate Err). ILO-374: rd now returns R t t (was R ? t).
+        // The body uses rd! then wraps back with rd to return a Result.
+        assert!(parse_and_verify(r#"f>R t t;rd "/tmp/x""#).is_ok());
     }
 
     // ── srt with non-list/text arg (lines 598) ───────────────────────────────

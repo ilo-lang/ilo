@@ -4,7 +4,7 @@
 -- and string concat for derived fields. Path passed via argv.
 
 main p:t>R t t;
-v=rd! p;
+v=rd-json! p;
 m=mmap;
 m=mset m "service" v.app_name;
 m=mset m "port" (str v.port);

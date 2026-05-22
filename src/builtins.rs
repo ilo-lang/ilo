@@ -118,6 +118,7 @@ pub enum Builtin {
 
     // I/O
     Rd,
+    RdJson,
     Rdl,
     Rdb,
     // `rdin > R t t` — read all of stdin to a text string.
@@ -496,6 +497,7 @@ impl Builtin {
             "sleep" => Some(Builtin::Sleep),
             "tz-offset" => Some(Builtin::TzOffset),
             "rd" => Some(Builtin::Rd),
+            "rd-json" => Some(Builtin::RdJson),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
             "rdin" => Some(Builtin::Rdin),
@@ -700,6 +702,7 @@ impl Builtin {
             Builtin::Sleep => "sleep",
             Builtin::TzOffset => "tz-offset",
             Builtin::Rd => "rd",
+            Builtin::RdJson => "rd-json",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
             Builtin::Rdin => "rdin",
@@ -896,6 +899,7 @@ impl Builtin {
         Builtin::Dtparse,
         Builtin::DtparseRel,
         Builtin::Rd,
+        Builtin::RdJson,
         Builtin::Rdl,
         Builtin::Rdb,
         Builtin::Wr,
@@ -1446,6 +1450,7 @@ mod tests {
             "now",
             "now-ms",
             "rd",
+            "rd-json",
             "rdl",
             "rdb",
             "wr",
@@ -1729,6 +1734,7 @@ mod tests {
             "dtparse",
             "dtparse-rel",
             "rd",
+            "rd-json",
             "rdl",
             "rdb",
             "wr",
