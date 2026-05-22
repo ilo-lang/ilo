@@ -97,6 +97,7 @@ fn i64_negative_result() {
 }
 
 // --- U64 in F (function) type position ---
+#[allow(dead_code)]
 const FN_U64_SRC: &str = "apply-fn f:F U64 U64 x:U64>U64;f x";
 
 #[test]

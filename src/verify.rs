@@ -19,6 +19,19 @@ pub enum Ty {
     /// Function type: params then return. `F n n` = Fn(vec![Number], Number).
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
+    AnonRecord(Vec<(String, Ty)>),
+    /// The `World` capability token type (ILO-68).
+    /// Functions that perform I/O accept a `w:World` parameter as explicit
+    /// proof of capability. The verifier treats `World` as a distinct named
+    /// type; it is never compatible with any other type.
+    ///
+    /// `net_known` carries a statically-determined net capability value:
+    /// - `None`        — dynamic (constructed via `world`, value is runtime-determined)
+    /// - `Some(false)` — statically known to deny net (constructed via `world-no-net`)
+    /// - `Some(true)`  — statically known to allow net (future use)
+    World {
+        net_known: Option<bool>,
+    },
     Unknown,
     /// 32-bit unsigned integer — stored as f64 in tree-walker; exact up to 2^32.
     U32,
@@ -54,6 +67,11 @@ impl std::fmt::Display for Ty {
                 write!(f, " {ret}")
             }
             Ty::Named(name) => write!(f, "{name}"),
+            Ty::World { .. } => write!(f, "World"),
+            Ty::AnonRecord(fields) => {
+                let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+                write!(f, "{{{}}}", parts.join(" "))
+            }
             Ty::Unknown => write!(f, "_"),
             Ty::U32 => write!(f, "U32"),
             Ty::U64 => write!(f, "U64"),
@@ -85,6 +103,18 @@ impl std::fmt::Display for VerifyError {
 struct FuncSig {
     params: Vec<(String, Ty)>,
     return_type: Ty,
+    /// Original AST param types, kept alongside the converted `Ty` so the
+    /// call-site checker can identify which params carry type variables and
+    /// enforce cross-call-site consistency + bound checks.
+    original_params: Vec<crate::ast::Type>,
+    /// Original AST return type, kept so the call-site checker can substitute
+    /// concrete types for type variables in the return type (ILO-385).
+    original_return: crate::ast::Type,
+    /// Bounds for each generic type variable, populated from
+    /// `Decl::Function::type_params`. Empty for functions with no generic
+    /// type param block (legacy behaviour: type vars remain `Ty::Unknown`,
+    /// compatible with anything).
+    type_bounds: std::collections::HashMap<String, crate::ast::Bound>,
 }
 
 #[derive(Clone)]
@@ -95,6 +125,11 @@ struct TypeDef {
 struct VerifyContext {
     functions: HashMap<String, FuncSig>,
     types: HashMap<String, TypeDef>,
+    /// Named discriminated-union types declared with `type Foo = A(n) | B | C(t)`.
+    sum_types: HashMap<String, Vec<crate::ast::Variant>>,
+    /// Variant constructor names (both payload and payload-less) registered from sum type decls.
+    /// Used to suppress ILO-T039 for 0-arg variant constructors used as values.
+    variant_constructors: std::collections::HashSet<String>,
     aliases: HashMap<String, Ty>,
     errors: Vec<VerifyError>,
     in_loop: bool,
@@ -158,8 +193,14 @@ fn collect_named_refs_inner(ty: &Type, refs: &mut Vec<String>) {
             }
             collect_named_refs_inner(ret, refs);
         }
-        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any
-        | Type::U32 | Type::U64 | Type::I64 => {}
+        Type::Sum(_)
+        | Type::Number
+        | Type::Text
+        | Type::Bool
+        | Type::Any
+        | Type::U32
+        | Type::U64
+        | Type::I64 => {}
     }
 }
 
@@ -198,6 +239,9 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
         Type::Named(name) => {
             if let Some(resolved) = aliases.get(name) {
                 resolved.clone()
+            } else if name == "World" {
+                // `World` is the builtin capability token type (ILO-68).
+                Ty::World { net_known: None }
             } else if name.len() == 1
                 && name.chars().next().is_some_and(|c| c.is_lowercase())
                 && !matches!(name.as_str(), "n" | "t" | "b")
@@ -208,6 +252,103 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
                 Ty::Named(name.clone())
             }
         }
+    }
+}
+
+/// Returns true when a type carries no concrete shape information.
+///
+/// `_` (Unknown) is the canonical "no info" type produced by `jpar!` unwrap.
+/// `O _` arises when `mget` is called on an Unknown-typed value (e.g. the
+/// result of `jpar!`): the Optional wrapper was inferred but the inner type is
+/// still unknown, so downstream operations that accept Unknown should also
+/// accept `O _`.  Without this, valid chains like
+/// `r=jpar! body; v=mget r "key"; len v` produce spurious T013 errors.
+fn is_opaque(ty: &Ty) -> bool {
+    match ty {
+        Ty::Unknown => true,
+        Ty::Optional(inner) => matches!(inner.as_ref(), Ty::Unknown),
+        _ => false,
+    }
+}
+
+/// Walk an AST param type alongside its concrete argument `Ty` and collect
+/// bindings of generic type-variable letters to concrete types. Only considers
+/// single lowercase letters (not `n`/`t`/`b`) as type variables.
+/// Used for return-type substitution (ILO-385) and also for deeper compound
+/// param shapes like `L a` or `M t a`.
+fn collect_type_var_bindings(
+    ast_ty: &crate::ast::Type,
+    arg_ty: &Ty,
+    out: &mut std::collections::HashMap<String, Ty>,
+) {
+    match (ast_ty, arg_ty) {
+        (crate::ast::Type::Named(name), concrete)
+            if name.len() == 1
+                && name.chars().next().is_some_and(|c| c.is_lowercase())
+                && !matches!(name.as_str(), "n" | "t" | "b") =>
+        {
+            out.entry(name.clone()).or_insert_with(|| concrete.clone());
+        }
+        (crate::ast::Type::List(inner), Ty::List(elem)) => {
+            collect_type_var_bindings(inner, elem, out);
+        }
+        (crate::ast::Type::Optional(inner), Ty::Optional(elem)) => {
+            collect_type_var_bindings(inner, elem, out);
+        }
+        (crate::ast::Type::Map(k, v), Ty::Map(ck, cv)) => {
+            collect_type_var_bindings(k, ck, out);
+            collect_type_var_bindings(v, cv, out);
+        }
+        (crate::ast::Type::Result(ok, err), Ty::Result(cok, cerr)) => {
+            collect_type_var_bindings(ok, cok, out);
+            collect_type_var_bindings(err, cerr, out);
+        }
+        _ => {}
+    }
+}
+
+/// Substitute generic type variables in an AST return type with concrete `Ty`
+/// bindings collected at the call site. Falls back to `convert_type_with_aliases`
+/// for any variable that has no binding (e.g. the return type is unrelated to
+/// the params, or the call has an arity error).
+fn subst_return_ty(
+    ast_ty: &crate::ast::Type,
+    bindings: &std::collections::HashMap<String, Ty>,
+    aliases: &HashMap<String, Ty>,
+) -> Ty {
+    match ast_ty {
+        crate::ast::Type::Named(name)
+            if name.len() == 1
+                && name.chars().next().is_some_and(|c| c.is_lowercase())
+                && !matches!(name.as_str(), "n" | "t" | "b") =>
+        {
+            bindings
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| convert_type_with_aliases(ast_ty, aliases))
+        }
+        crate::ast::Type::Optional(inner) => {
+            Ty::Optional(Box::new(subst_return_ty(inner, bindings, aliases)))
+        }
+        crate::ast::Type::List(inner) => {
+            Ty::List(Box::new(subst_return_ty(inner, bindings, aliases)))
+        }
+        crate::ast::Type::Map(k, v) => Ty::Map(
+            Box::new(subst_return_ty(k, bindings, aliases)),
+            Box::new(subst_return_ty(v, bindings, aliases)),
+        ),
+        crate::ast::Type::Result(ok, err) => Ty::Result(
+            Box::new(subst_return_ty(ok, bindings, aliases)),
+            Box::new(subst_return_ty(err, bindings, aliases)),
+        ),
+        crate::ast::Type::Fn(params, ret) => Ty::Fn(
+            params
+                .iter()
+                .map(|p| subst_return_ty(p, bindings, aliases))
+                .collect(),
+            Box::new(subst_return_ty(ret, bindings, aliases)),
+        ),
+        _ => convert_type_with_aliases(ast_ty, aliases),
     }
 }
 
@@ -238,12 +379,50 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
         (Ty::Named(a), Ty::Named(b)) => a == b,
         // Integer width types are compatible with each other and with Number
         // (tree-walker stores all of them as f64).
-        (Ty::U32, Ty::U32)
-        | (Ty::U64, Ty::U64)
-        | (Ty::I64, Ty::I64) => true,
-        (Ty::U32 | Ty::U64 | Ty::I64, Ty::Number)
-        | (Ty::Number, Ty::U32 | Ty::U64 | Ty::I64) => true,
+        (Ty::U32, Ty::U32) | (Ty::U64, Ty::U64) | (Ty::I64, Ty::I64) => true,
+        (Ty::U32 | Ty::U64 | Ty::I64, Ty::Number) | (Ty::Number, Ty::U32 | Ty::U64 | Ty::I64) => {
+            true
+        }
+        // World is only compatible with itself; net_known is erased for compatibility
+        // (a World{net_known:Some(false)} can be passed where World is expected —
+        // the static check catches the mismatch at the net-builtin call site).
+        (Ty::World { .. }, Ty::World { .. }) => true,
+        // Named("World") and Ty::World unify — user writes `w:World` in
+        // function signatures which parses as Type::Named("World") → Ty::Named("World").
+        (Ty::Named(n), Ty::World { .. }) | (Ty::World { .. }, Ty::Named(n)) if n == "World" => true,
         _ => false,
+    }
+}
+
+/// Check whether an anonymous-record type structurally satisfies a named
+/// record type: every field declared on the named type must be present in
+/// the anon record with a compatible type.  Extra fields on the anon record
+/// are permitted (structural / width subtyping).
+fn anon_satisfies_named(
+    anon_fields: &[(String, Ty)],
+    type_name: &str,
+    types: &HashMap<String, TypeDef>,
+) -> bool {
+    let Some(type_def) = types.get(type_name) else {
+        return false;
+    };
+    let anon_map: HashMap<&str, &Ty> = anon_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    type_def.fields.iter().all(|(name, expected_ty)| {
+        anon_map
+            .get(name.as_str())
+            .is_some_and(|actual_ty| compatible(actual_ty, expected_ty))
+    })
+}
+
+/// Like `compatible`, but additionally allows an `AnonRecord` to satisfy a
+/// `Named` record type via structural subtyping (see `anon_satisfies_named`).
+fn compatible_ext(a: &Ty, b: &Ty, types: &HashMap<String, TypeDef>) -> bool {
+    match (a, b) {
+        // anon record supplied where a named record type is expected
+        (Ty::AnonRecord(fields), Ty::Named(name)) | (Ty::Named(name), Ty::AnonRecord(fields)) => {
+            anon_satisfies_named(fields, name, types)
+        }
+        _ => compatible(a, b),
     }
 }
 
@@ -453,7 +632,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // (name, param_types, return_type_desc)
     // We use special strings to describe signatures
     ("len", &["list_or_text"], "n"),
-    ("str", &["n"], "t"),
+    ("str", &["t_or_n"], "t"),
     ("num", &["t_or_n"], "R n t"),
     ("abs", &["n"], "n"),
     ("flr", &["n"], "n"),
@@ -511,8 +690,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("run", &["t", "L t"], "R (M t t) t"),
     // run2: structured spawn — typed Record instead of loose Map.
     ("run2", &["t", "L t"], "R RunResult t"),
-    ("rd", &["t"], "R ? t"),
+    ("rd", &["t"], "R t t"),
     ("rd", &["t", "t"], "R ? t"),
+    ("rd-json", &["t"], "R ? t"),
     ("lsd", &["t"], "R (L t) t"),
     ("walk", &["t"], "R (L t) t"),
     ("glob", &["t", "t"], "R (L t) t"),
@@ -536,8 +716,14 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // Both return Err on I/O failure or on WASM targets.
     ("rdin", &[], "R t t"),
     ("rdinl", &[], "R (L t) t"),
+    // for-line stdin > LazyStdinLines (ILO-70). Lazy line iterator: one arg
+    // ("stdin"), returns a handle iterable by @binding foreach. On WASM returns
+    // Err. The return type is opaque (not a List), so we use "_" as the type
+    // signature here; the verifier treats it as Unknown for type inference.
+    ("for-line", &["t"], "_"),
     ("wr", &["t", "t"], "R t t"),
     ("wra", &["t", "t"], "R t t"),
+    ("wro", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
     ("upr", &["t"], "t"),
@@ -596,6 +782,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
+    ("world", &[], "World"),
+    ("world-no-net", &[], "World"),
     ("jpth", &["t", "t"], "R ? t"),
     ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
@@ -705,7 +893,18 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64", &["t"], "t"),
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
+    ("hex-rev", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
+    // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
+    // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or
+    // non-hex input.
+    ("sha256-hex", &["t"], "t"),
+    ("sha256d", &["t"], "t"),
+    // tokcount s > n — approximate cl100k_base token count (bytes/3.4 stub).
+    // Pure text-in / number-out, no Result wrapper, tree-bridge eligible.
+    // Added in 0.12.2 (experimental); see ILO-47 for the planned upgrade to
+    // a real BPE tokeniser.
+    ("tokcount", &["t"], "n"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.
@@ -814,8 +1013,8 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         "chr" => Ty::Fn(vec![n.clone()], Box::new(t.clone())),
         // 1-arg t -> L t (split into single-char strings, one per Unicode scalar)
         "chars" => Ty::Fn(vec![t.clone()], Box::new(Ty::List(Box::new(t.clone())))),
-        // 1-arg n->t and t->R n t
-        "str" => Ty::Fn(vec![n], Box::new(t)),
+        // 1-arg (n|t)->t  — identity for text, number→text conversion for numbers
+        "str" => Ty::Fn(vec![Ty::Unknown], Box::new(t)),
         "num" => Ty::Fn(
             vec![t.clone()],
             Box::new(Ty::Result(Box::new(Ty::Number), Box::new(t))),
@@ -840,6 +1039,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Map(_, _) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -855,11 +1055,12 @@ fn builtin_check_args(
         "str" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Number)
+                && !compatible(arg, &Ty::Text)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'str' expects n, got {arg}"),
+                    message: format!("'str' expects n or t, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -1102,6 +1303,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1185,6 +1387,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (*inner.clone(), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1216,6 +1419,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (*inner.clone(), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1248,6 +1452,7 @@ fn builtin_check_args(
             let elem_ty = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1312,6 +1517,7 @@ fn builtin_check_args(
                     return (Ty::List(inner.clone()), errors);
                 }
                 Some(Ty::Unknown) => return (Ty::Unknown, errors),
+                Some(other) if is_opaque(other) => return (Ty::Unknown, errors),
                 Some(other) => errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
@@ -1331,6 +1537,7 @@ fn builtin_check_args(
             let elem_a = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1346,6 +1553,7 @@ fn builtin_check_args(
             let elem_b = match arg_types.get(1) {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1373,6 +1581,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1403,6 +1612,7 @@ fn builtin_check_args(
             let inner = match arg_types.get(1) {
                 Some(Ty::List(inner)) => (**inner).clone(),
                 Some(Ty::Unknown) | None => Ty::Unknown,
+                Some(other) if is_opaque(other) => Ty::Unknown,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1422,6 +1632,7 @@ fn builtin_check_args(
             let elem_a = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1437,6 +1648,7 @@ fn builtin_check_args(
             let elem_b = match arg_types.get(1) {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1464,6 +1676,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1480,6 +1693,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1602,6 +1816,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1727,6 +1942,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1814,6 +2030,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1830,6 +2047,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1847,6 +2065,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1959,6 +2178,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -2215,7 +2435,7 @@ fn builtin_check_args(
             )
         }
         "rd" | "rdb" => {
-            // rd path         — 1-arg: auto-detect format from extension → R ? t
+            // rd path         — 1-arg: raw text read → R t t
             // rd path fmt     — 2-arg: explicit format override → R ? t
             // rdb s fmt       — 2-arg: parse string/buffer in given format → R ? t
             if let Some(arg) = arg_types.first()
@@ -2245,6 +2465,26 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
+            let ok_ty = if name == "rd" && arg_types.len() == 1 {
+                Ty::Text
+            } else {
+                Ty::Unknown
+            };
+            (Ty::Result(Box::new(ok_ty), Box::new(Ty::Text)), errors)
+        }
+        "rd-json" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rd-json' expects t (path), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             (
                 Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
                 errors,
@@ -2268,7 +2508,7 @@ fn builtin_check_args(
                 errors,
             )
         }
-        "wr" | "wra" | "wrl" => {
+        "wr" | "wra" | "wro" | "wrl" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -2309,6 +2549,19 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'wra' arg 2 expects t (content), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wro"
+                && let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wro' arg 2 expects t (content), got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -3202,6 +3455,7 @@ fn builtin_check_args(
             // hard-code "must be text" — see PR #257 for the MapKey rollout.
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3238,6 +3492,7 @@ fn builtin_check_args(
             // return shape is `v`, never `O v`.
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3335,6 +3590,7 @@ fn builtin_check_args(
             // inferred from the third arg if not previously known).
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3380,6 +3636,7 @@ fn builtin_check_args(
             };
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3409,6 +3666,7 @@ fn builtin_check_args(
         "mkeys" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3429,6 +3687,7 @@ fn builtin_check_args(
         "mvals" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3448,6 +3707,7 @@ fn builtin_check_args(
         "mpairs" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3466,6 +3726,7 @@ fn builtin_check_args(
         "mdel" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3708,6 +3969,26 @@ fn builtin_check_args(
                 errors,
             )
         }
+        "world" => {
+            // world > World — return the current capability World token.
+            // Zero args (enforced by BUILTINS arity table).
+            // The World value encodes the four CLI cap flags (net/read/write/run)
+            // as booleans; functions that perform I/O accept it as an explicit
+            // proof-of-authority parameter. net_known=None because the actual
+            // net cap value is determined at runtime from CLI --allow-net flags.
+            (Ty::World { net_known: None }, errors)
+        }
+        "world-no-net" => {
+            // world-no-net > World — construct a World with net=false.
+            // Statically known to deny network access; the verifier emits
+            // ILO-T044 if this value flows into a scope that calls a net builtin.
+            (
+                Ty::World {
+                    net_known: Some(false),
+                },
+                errors,
+            )
+        }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t
             // argv-list process spawn. Result Err only on spawn failure
@@ -3860,6 +4141,8 @@ impl VerifyContext {
         Self {
             functions: HashMap::new(),
             types: HashMap::new(),
+            sum_types: HashMap::new(),
+            variant_constructors: std::collections::HashSet::new(),
             aliases: HashMap::new(),
             errors: Vec::new(),
             in_loop: false,
@@ -3971,11 +4254,63 @@ impl VerifyContext {
             }
         }
 
+        // Collect sum type declarations and register variant constructors as functions.
+        for decl in &program.declarations {
+            if let Decl::SumType { name, variants, .. } = decl {
+                if self.sum_types.contains_key(name)
+                    || self.types.contains_key(name)
+                    || self.aliases.contains_key(name)
+                {
+                    self.err(
+                        "ILO-T001",
+                        "<global>",
+                        format!("duplicate type definition '{name}'"),
+                        None,
+                        None,
+                    );
+                    continue;
+                }
+                self.sum_types.insert(name.clone(), variants.clone());
+                // Register each variant constructor as a callable function.
+                // Payload-less variant: 0 params, returns Named(type_name).
+                // Payload variant:      1 param of the payload type, returns Named(type_name).
+                for v in variants {
+                    let vfn_params = match &v.payload {
+                        Some(ty) => vec![(
+                            "payload".to_string(),
+                            convert_type_with_aliases(ty, &self.aliases),
+                        )],
+                        None => vec![],
+                    };
+                    let vfn_ret = Ty::Named(name.clone());
+                    // Variant constructors shadow nothing important and are not user fns.
+                    self.variant_constructors.insert(v.name.clone());
+                    let original_params: Vec<crate::ast::Type> = v
+                        .payload
+                        .as_ref()
+                        .map(|t| vec![t.clone()])
+                        .unwrap_or_default();
+                    let original_return = crate::ast::Type::Named(name.clone());
+                    self.functions.insert(
+                        v.name.clone(),
+                        FuncSig {
+                            params: vfn_params,
+                            return_type: vfn_ret,
+                            original_params,
+                            original_return,
+                            type_bounds: std::collections::HashMap::new(),
+                        },
+                    );
+                }
+            }
+        }
+
         // Second pass: collect functions and tools, validate Named types in signatures
         for decl in &program.declarations {
             match decl {
                 Decl::Function {
                     name,
+                    type_params,
                     params,
                     return_type,
                     ..
@@ -3990,7 +4325,9 @@ impl VerifyContext {
                         );
                         continue;
                     }
-                    let params: Vec<(String, Ty)> = params
+                    let original_params: Vec<crate::ast::Type> =
+                        params.iter().map(|p| p.ty.clone()).collect();
+                    let converted_params: Vec<(String, Ty)> = params
                         .iter()
                         .map(|p| {
                             (
@@ -4000,12 +4337,17 @@ impl VerifyContext {
                         })
                         .collect();
                     let ret = convert_type_with_aliases(return_type, &self.aliases);
-                    self.validate_named_types_in_sig(name, &params, &ret);
+                    self.validate_named_types_in_sig(name, &converted_params, &ret);
+                    let type_bounds: std::collections::HashMap<String, crate::ast::Bound> =
+                        type_params.iter().cloned().collect();
                     self.functions.insert(
                         name.clone(),
                         FuncSig {
-                            params,
+                            params: converted_params,
                             return_type: ret,
+                            original_params,
+                            original_return: return_type.clone(),
+                            type_bounds,
                         },
                     );
                 }
@@ -4025,7 +4367,9 @@ impl VerifyContext {
                         );
                         continue;
                     }
-                    let params: Vec<(String, Ty)> = params
+                    let original_params: Vec<crate::ast::Type> =
+                        params.iter().map(|p| p.ty.clone()).collect();
+                    let converted_params: Vec<(String, Ty)> = params
                         .iter()
                         .map(|p| {
                             (
@@ -4035,16 +4379,20 @@ impl VerifyContext {
                         })
                         .collect();
                     let ret = convert_type_with_aliases(return_type, &self.aliases);
-                    self.validate_named_types_in_sig(name, &params, &ret);
+                    self.validate_named_types_in_sig(name, &converted_params, &ret);
                     self.functions.insert(
                         name.clone(),
                         FuncSig {
-                            params,
+                            params: converted_params,
                             return_type: ret,
+                            original_params,
+                            original_return: return_type.clone(),
+                            type_bounds: std::collections::HashMap::new(), // tools have no generics
                         },
                     );
                 }
                 Decl::TypeDef { .. } => {} // already handled
+                Decl::SumType { .. } => {} // already handled above
                 Decl::Alias { .. } => {}   // already handled
                 Decl::Use { .. } => {}     // resolved before verify — skip
                 Decl::Error { .. } => {}   // poison node — skip silently
@@ -4165,7 +4513,9 @@ impl VerifyContext {
 
     fn validate_named_type_recursive(&mut self, ty: &Ty, ctx: &str) {
         match ty {
-            Ty::Named(name) if !self.types.contains_key(name) => {
+            Ty::Named(name)
+                if !self.types.contains_key(name) && !self.sum_types.contains_key(name) =>
+            {
                 let hint =
                     closest_match(name, self.types.keys()).map(|s| format!("did you mean '{s}'?"));
                 self.err(
@@ -4177,6 +4527,7 @@ impl VerifyContext {
                 );
             }
             Ty::Named(_) => {}
+            Ty::World { .. } => {} // builtin capability token — always valid
             Ty::List(inner) => self.validate_named_type_recursive(inner, ctx),
             Ty::Result(ok, err) => {
                 self.validate_named_type_recursive(ok, ctx);
@@ -4218,7 +4569,7 @@ impl VerifyContext {
 
                 let body_ty = self.verify_body(name, &mut scope, body);
                 let expected = convert_type_with_aliases(return_type, &self.aliases);
-                if !compatible(&body_ty, &expected) {
+                if !compatible_ext(&body_ty, &expected, &self.types) {
                     let hint = match (&body_ty, &expected) {
                         (Ty::Number, Ty::Text) => {
                             Some("use 'str' to convert: str <expr>".to_string())
@@ -4417,12 +4768,38 @@ impl VerifyContext {
         match stmt {
             Stmt::Let { name, value } => {
                 let ty = self.infer_expr(func, scope, value, span);
-                scope_insert(scope, name.clone(), ty);
+                // `_=expr` explicit discard: evaluate type for diagnostics on
+                // the RHS (e.g. catches T005 undefined calls inside), but do
+                // not insert `_` into scope — it's a sigil, not a binding.
+                if name != "_" {
+                    scope_insert(scope, name.clone(), ty);
+                }
                 Ty::Nil
             }
             Stmt::Destructure { bindings, value } => {
                 let record_ty = self.infer_expr(func, scope, value, span);
                 match &record_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        let fields_ty = fields_ty.clone();
+                        for binding in bindings {
+                            if let Some((_, fty)) = fields_ty.iter().find(|(n, _)| n == binding) {
+                                scope_insert(scope, binding.clone(), fty.clone());
+                            } else {
+                                let field_names: Vec<String> =
+                                    fields_ty.iter().map(|(n, _)| n.clone()).collect();
+                                let hint = closest_match(binding, field_names.iter())
+                                    .map(|s| format!("did you mean '{s}'?"));
+                                self.err(
+                                    "ILO-T019",
+                                    func,
+                                    format!("no field '{binding}' on anonymous record"),
+                                    hint,
+                                    Some(span),
+                                );
+                                scope_insert(scope, binding.clone(), Ty::Unknown);
+                            }
+                        }
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name).cloned() {
                             for binding in bindings {
@@ -4602,6 +4979,7 @@ impl VerifyContext {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 let start_ty = self.infer_expr(func, scope, start, span);
@@ -4623,6 +5001,30 @@ impl VerifyContext {
                         None,
                         Some(span),
                     );
+                }
+                if let Some(step_expr) = step {
+                    let step_ty = self.infer_expr(func, scope, step_expr, span);
+                    if !compatible(&step_ty, &Ty::Number) {
+                        self.err(
+                            "ILO-T014",
+                            func,
+                            format!("range step must be n, got {step_ty}"),
+                            None,
+                            Some(span),
+                        );
+                    }
+                    // Reject literal zero or negative steps
+                    if let Expr::Literal(Literal::Number(n)) = step_expr {
+                        if *n <= 0.0 {
+                            self.err(
+                                "ILO-V001",
+                                func,
+                                format!("range step must be positive, got {n} — use a positive integer step (e.g. `by 2`)"),
+                                None,
+                                Some(span),
+                            );
+                        }
+                    }
                 }
                 scope.push(HashMap::new());
                 scope_insert(scope, binding.clone(), Ty::Number);
@@ -4670,6 +5072,12 @@ impl VerifyContext {
                 }
                 Ty::Nil
             }
+            Stmt::Defer { expr, .. } => {
+                // Type-check the deferred expression for consistency, but the
+                // statement itself contributes nothing to the body type.
+                self.infer_expr(func, scope, expr, span);
+                Ty::Nil
+            }
             Stmt::Expr(expr) => self.infer_expr(func, scope, expr, span),
         }
     }
@@ -4714,6 +5122,29 @@ impl VerifyContext {
                 };
                 scope_insert(scope, binding.clone(), bound_ty);
             }
+            Pattern::Variant { tag, binding } => {
+                // Look up the variant's payload type in the sum_types map.
+                // Bind the payload to `binding` (if present) with the declared payload type.
+                let payload_ty = self
+                    .sum_types
+                    .values()
+                    .flat_map(|vs| vs.iter())
+                    .find(|v| &v.name == tag)
+                    .and_then(|v| v.payload.as_ref())
+                    .map(|ty| convert_type_with_aliases(ty, &self.aliases))
+                    .unwrap_or(Ty::Unknown);
+                if let Some(b) = binding {
+                    if b != "_" {
+                        scope_insert(scope, b.clone(), payload_ty);
+                    }
+                }
+            }
+            Pattern::Or(alts) => {
+                // Bind from the first alternative only (or patterns share one body)
+                if let Some(first) = alts.first() {
+                    self.bind_pattern("", scope, first, subject_ty);
+                }
+            }
         }
     }
 
@@ -4743,6 +5174,11 @@ impl VerifyContext {
                     // never intentional — the result is a function value, not a
                     // `ret`. Emit a hint so the agent gets the correction inline.
                     if params.is_empty() {
+                        if self.variant_constructors.contains(name) {
+                            // 0-arg variant constructor used as a value — resolve directly to the
+                            // variant's return type (the sum type), not a Fn reference.
+                            return ret;
+                        }
                         self.err(
                             "ILO-T039",
                             func,
@@ -4782,6 +5218,13 @@ impl VerifyContext {
                         );
                     }
                     Ty::Unknown
+                } else if name == "nil" {
+                    // `nil` as a bare expression: the parser emits Expr::Ref("nil")
+                    // for Token::Nil so that sum-type variants named `nil` resolve
+                    // correctly (see the variant_constructors branch above).  When
+                    // no `nil` variant is in scope, treat it as the built-in nil
+                    // value (Ty::Nil) for backward compatibility with Optional usage.
+                    Ty::Nil
                 } else {
                     let mut candidates: Vec<String> = scope
                         .iter()
@@ -5034,12 +5477,88 @@ impl VerifyContext {
                             Some(span),
                         );
                     }
+                    // ILO-374: `rd` on a literal .json path without an explicit
+                    // format arg used to auto-parse the JSON. It now returns raw
+                    // text. Warn so agents can migrate to `rd-json` or `+ jpar`.
+                    if callee == "rd"
+                        && args.len() == 1
+                        && let Expr::Literal(Literal::Text(p)) = &args[0]
+                        && p.ends_with(".json")
+                    {
+                        self.errors.push(VerifyError {
+                            code: "ILO-W001",
+                            function: func.to_string(),
+                            message: "'rd' on a .json path returns raw text, not a parsed value"
+                                .to_string(),
+                            hint: Some(
+                                "use 'rd-json path' to read and parse JSON, or 'rd path + jpar' for an explicit two-step"
+                                    .to_string(),
+                            ),
+                            span: Some(span),
+                            is_warning: true,
+                        });
+                    }
+                    // ILO-T044: static World capability enforcement (ILO-391).
+                    // When a net builtin is called and any variable in the current
+                    // scope is a World value that is statically known to deny net
+                    // access (net_known=Some(false)), reject at verify time.
+                    // We only fire for syntactically known constructions (world-no-net);
+                    // dynamic worlds (world builtin, function parameters) are skipped.
+                    if matches!(
+                        callee.as_str(),
+                        "get"
+                            | "pst"
+                            | "put"
+                            | "pat"
+                            | "del"
+                            | "hed"
+                            | "opt"
+                            | "getx"
+                            | "pstx"
+                            | "get-many"
+                            | "get-to"
+                            | "pst-to"
+                    ) {
+                        let net_denied_var = scope.iter().rev().find_map(|frame| {
+                            frame.iter().find_map(|(name, ty)| {
+                                if matches!(
+                                    ty,
+                                    Ty::World {
+                                        net_known: Some(false)
+                                    }
+                                ) {
+                                    Some(name.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        if let Some(var) = net_denied_var {
+                            self.err(
+                                "ILO-T044",
+                                func,
+                                format!(
+                                    "net builtin '{callee}' called but '{}' is a World with net=false",
+                                    var
+                                ),
+                                Some(
+                                    "a World constructed with `world-no-net` denies network access; \
+                                     remove the net call or use a World with net=true"
+                                        .to_string(),
+                                ),
+                                Some(span),
+                            );
+                        }
+                    }
                     let (ret_ty, errors) = builtin_check_args(callee, &arg_types, func, Some(span));
                     self.errors.extend(errors);
                     ret_ty
                 } else if let Some(sig) = self.functions.get(callee) {
                     let sig_params = sig.params.clone();
                     let sig_ret = sig.return_type.clone();
+                    let orig_param_tys = sig.original_params.clone();
+                    let orig_return_ty = sig.original_return.clone();
+                    let type_bounds = sig.type_bounds.clone();
 
                     if args.len() != sig_params.len() {
                         let hint = {
@@ -5064,10 +5583,103 @@ impl VerifyContext {
                         return sig_ret;
                     }
 
+                    // ── Generic type-variable unification ────────────────────
+                    // For each type variable letter that appears in the param
+                    // list, collect all concrete argument types bound to it.
+                    // When the function carries explicit `type_params` (non-empty
+                    // `type_bounds`), enforce:
+                    //   (a) all args for the same variable unify (same concrete type)
+                    //   (b) the concrete type satisfies the declared bound
+                    // When `type_bounds` is empty the function uses the legacy
+                    // Unknown / "compatible with anything" behaviour; we still
+                    // perform a soft consistency check but don't emit ILO-T045
+                    // for backward compatibility.
+                    // `var_bindings` is populated in all cases so that the
+                    // return type can be substituted for both explicit-bound and
+                    // legacy generic functions (ILO-385).
+                    let has_explicit_bounds = !type_bounds.is_empty();
+                    // Map from type-var letter → first concrete arg type seen
+                    let mut var_bindings: std::collections::HashMap<String, Ty> =
+                        std::collections::HashMap::new();
+                    if has_explicit_bounds {
+                        for (orig_ty, arg_ty) in orig_param_tys.iter().zip(arg_types.iter()) {
+                            // Collect bindings from compound types (e.g. L a, M t a) for
+                            // return-type substitution (ILO-385). The existing flat-Named
+                            // path below still drives bound/consistency checking.
+                            collect_type_var_bindings(orig_ty, arg_ty, &mut var_bindings);
+                            // (The flat-Named path below re-inserts the same binding, which
+                            //  is a no-op since the map already has it, but it also does the
+                            //  error-reporting so we keep it.)
+                            if let crate::ast::Type::Named(letter) = orig_ty {
+                                if letter.len() == 1
+                                    && letter.chars().next().is_some_and(|c| c.is_lowercase())
+                                    && !matches!(letter.as_str(), "n" | "t" | "b")
+                                {
+                                    // Check bound satisfaction first
+                                    if let Some(bound) = type_bounds.get(letter) {
+                                        let satisfies = match bound {
+                                            crate::ast::Bound::Any => true,
+                                            crate::ast::Bound::Comparable => matches!(
+                                                arg_ty,
+                                                Ty::Number | Ty::Text | Ty::Bool | Ty::Unknown
+                                            ),
+                                            crate::ast::Bound::Numeric => {
+                                                matches!(arg_ty, Ty::Number | Ty::Unknown)
+                                            }
+                                            crate::ast::Bound::Text => {
+                                                matches!(arg_ty, Ty::Text | Ty::Unknown)
+                                            }
+                                        };
+                                        if !satisfies {
+                                            self.err(
+                                                "ILO-T045",
+                                                func,
+                                                format!(
+                                                    "type argument for generic '{letter}' in '{}' must satisfy bound {bound}, got {arg_ty}",
+                                                    callee
+                                                ),
+                                                Some(format!(
+                                                    "bound {bound} allows: {}",
+                                                    match bound {
+                                                        crate::ast::Bound::Comparable => "n, t, b",
+                                                        crate::ast::Bound::Numeric => "n",
+                                                        crate::ast::Bound::Text => "t",
+                                                        crate::ast::Bound::Any => "any type",
+                                                    }
+                                                )),
+                                                Some(span),
+                                            );
+                                        }
+                                    }
+                                    // Check cross-call-site consistency
+                                    if let Some(first_ty) = var_bindings.get(letter) {
+                                        if !compatible(first_ty, arg_ty) {
+                                            self.err(
+                                                "ILO-T045",
+                                                func,
+                                                format!(
+                                                    "type variable '{letter}' in '{}' used inconsistently: first bound to {first_ty}, now {arg_ty}",
+                                                    callee
+                                                ),
+                                                Some(format!(
+                                                    "all arguments for type variable '{letter}' must have the same type"
+                                                )),
+                                                Some(span),
+                                            );
+                                        }
+                                    } else {
+                                        var_bindings.insert(letter.clone(), arg_ty.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // ── End generic checking ──────────────────────────────────
+
                     for (i, ((param_name, param_ty), arg_ty)) in
                         sig_params.iter().zip(arg_types.iter()).enumerate()
                     {
-                        if !compatible(param_ty, arg_ty) {
+                        if !compatible_ext(param_ty, arg_ty, &self.types) {
                             let hint = match (param_ty, arg_ty) {
                                 (Ty::Text, Ty::Number) => {
                                     Some("use 'str' to convert number to text".to_string())
@@ -5091,7 +5703,15 @@ impl VerifyContext {
                         let _ = i;
                     }
 
-                    sig_ret
+                    // ── Return-type substitution (ILO-385) ────────────────────
+                    // If the function has a generic return type (a type variable
+                    // letter), substitute the concrete type bound from the args.
+                    // Falls back to `sig_ret` (Unknown) when no binding exists.
+                    if var_bindings.is_empty() {
+                        sig_ret
+                    } else {
+                        subst_return_ty(&orig_return_ty, &var_bindings, &self.aliases)
+                    }
                 } else if let Some(Ty::Fn(param_types, ret_type)) =
                     scope_lookup(scope, callee).cloned()
                 {
@@ -5108,7 +5728,7 @@ impl VerifyContext {
                         for (i, (param_ty, arg_ty)) in
                             param_types.iter().zip(arg_types.iter()).enumerate()
                         {
-                            if !compatible(param_ty, arg_ty) {
+                            if !compatible_ext(param_ty, arg_ty, &self.types) {
                                 self.err(
                                     "ILO-T007",
                                     func,
@@ -5362,6 +5982,16 @@ impl VerifyContext {
                 }
             }
 
+            Expr::AnonRecord { fields } => {
+                // Infer each field's type and return a structural AnonRecord type.
+                // No declaration required; shape is derived entirely from the literal.
+                let inferred: Vec<(String, Ty)> = fields
+                    .iter()
+                    .map(|(n, e)| (n.clone(), self.infer_expr(func, scope, e, span)))
+                    .collect();
+                Ty::AnonRecord(inferred)
+            }
+
             Expr::Record { type_name, fields } => {
                 if let Some(type_def) = self.types.get(type_name) {
                     let def_fields = type_def.fields.clone();
@@ -5441,6 +6071,24 @@ impl VerifyContext {
                     return Ty::Nil;
                 }
                 match &obj_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        if let Some((_, fty)) = fields_ty.iter().find(|(n, _)| n == field) {
+                            fty.clone()
+                        } else {
+                            let field_names: Vec<String> =
+                                fields_ty.iter().map(|(n, _)| n.clone()).collect();
+                            let hint = closest_match(field, field_names.iter())
+                                .map(|s| format!("did you mean '{s}'?"));
+                            self.err(
+                                "ILO-T019",
+                                func,
+                                format!("no field '{field}' on anonymous record"),
+                                hint,
+                                Some(span),
+                            );
+                            Ty::Unknown
+                        }
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name) {
                             if let Some((_, fty)) = type_def.fields.iter().find(|(n, _)| n == field)
@@ -5462,6 +6110,28 @@ impl VerifyContext {
                             }
                         } else {
                             Ty::Unknown
+                        }
+                    }
+                    Ty::World { .. } => {
+                        // World.{net,read,write,run} → Bool
+                        match field.as_str() {
+                            "net" | "read" | "write" | "run" => Ty::Bool,
+                            other => {
+                                let known: Vec<String> = ["net", "read", "write", "run"]
+                                    .iter()
+                                    .map(|s| s.to_string())
+                                    .collect();
+                                let hint = closest_match(other, known.iter())
+                                    .map(|s| format!("did you mean '{s}'?"));
+                                self.err(
+                                    "ILO-T019",
+                                    func,
+                                    format!("no field '{other}' on type 'World' (known: net, read, write, run)"),
+                                    hint,
+                                    Some(span),
+                                );
+                                Ty::Unknown
+                            }
                         }
                     }
                     Ty::Unknown => Ty::Unknown,
@@ -5653,6 +6323,37 @@ ilo has no tuple type."
             Expr::With { object, updates } => {
                 let obj_ty = self.infer_expr(func, scope, object, span);
                 match &obj_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        // Build updated fields: carry through unchanged fields, replace updated ones.
+                        let def_fields = fields_ty.clone();
+                        let mut new_fields = def_fields.clone();
+                        for (fname, expr) in updates {
+                            if let Some(pos) = new_fields.iter().position(|(n, _)| n == fname) {
+                                let actual = self.infer_expr(func, scope, expr, span);
+                                new_fields[pos] = (fname.clone(), actual);
+                            } else {
+                                // ILO-T044: `with` on an anonymous record must not add new fields.
+                                let def_field_strings: Vec<String> =
+                                    def_fields.iter().map(|(n, _)| n.clone()).collect();
+                                let hint = closest_match(fname, def_field_strings.iter())
+                                    .map(|s| format!("did you mean '{s}'?"))
+                                    .or_else(|| {
+                                        Some(format!(
+                                            "existing fields: {}",
+                                            def_field_strings.join(", ")
+                                        ))
+                                    });
+                                self.err(
+                                    "ILO-T044",
+                                    func,
+                                    format!("'with' cannot add new field '{fname}' to an anonymous record"),
+                                    hint,
+                                    Some(span),
+                                );
+                            }
+                        }
+                        Ty::AnonRecord(new_fields)
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name) {
                             let def_fields = type_def.fields.clone();
@@ -5712,6 +6413,12 @@ ilo has no tuple type."
                     self.infer_expr(func, scope, cap, span);
                 }
                 let _ = fn_name;
+                Ty::Unknown
+            }
+            // `todo "reason"` and `panic "reason"` are divergent expressions:
+            // they abort at runtime and satisfy any return type.
+            Expr::Todo(reason) | Expr::Panic(reason) => {
+                self.infer_expr(func, scope, reason, span);
                 Ty::Unknown
             }
         }
@@ -5971,14 +6678,62 @@ ilo has no tuple type."
                         "ILO-T024",
                         func,
                         format!(
-                            "non-exhaustive match on sum type: missing {}",
+                            "non-exhaustive match on sum type: missing variant(s) {}",
                             names.join(", ")
                         ),
                         Some(format!(
-                            "add: {}",
+                            "add variant arms: {}",
                             names
                                 .iter()
                                 .map(|n| format!("\"{n}\": <expr>"))
+                                .collect::<Vec<_>>()
+                                .join(" or ")
+                        )),
+                        Some(span),
+                    );
+                }
+            }
+            // Named sum types (from `type Foo = A | B(n)`): exhaustive if all
+            // variant tags are covered by Variant patterns.
+            Ty::Named(type_name) if self.sum_types.contains_key(type_name.as_str()) => {
+                let variants = self.sum_types[type_name.as_str()].clone();
+                let covered: Vec<&str> = arms
+                    .iter()
+                    .filter_map(|a| match &a.pattern {
+                        Pattern::Variant { tag, .. } => Some(tag.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let missing: Vec<&str> = variants
+                    .iter()
+                    .filter(|v| !covered.contains(&v.name.as_str()))
+                    .map(|v| v.name.as_str())
+                    .collect();
+                if !missing.is_empty() {
+                    self.err(
+                        "ILO-T024",
+                        func,
+                        format!(
+                            "non-exhaustive match on sum type '{type_name}': missing variant(s) {}",
+                            missing.join(", ")
+                        ),
+                        Some(format!(
+                            "add variant arms: {}",
+                            missing
+                                .iter()
+                                .map(|n| {
+                                    // Find whether this variant has a payload
+                                    let has_payload = variants
+                                        .iter()
+                                        .find(|v| v.name == *n)
+                                        .and_then(|v| v.payload.as_ref())
+                                        .is_some();
+                                    if has_payload {
+                                        format!("{n}(v): <expr>")
+                                    } else {
+                                        format!("{n}: <expr>")
+                                    }
+                                })
                                 .collect::<Vec<_>>()
                                 .join(" or ")
                         )),
@@ -6569,14 +7324,24 @@ mod tests {
     // ---- builtin_check_args type errors ----
 
     #[test]
-    fn builtin_str_wrong_type() {
+    fn builtin_str_text_passthrough() {
+        // str is now polymorphic — text input is accepted without error
         let result = parse_and_verify("f x:t>t;str x");
+        assert!(result.is_ok(), "expected no errors, got: {:?}", result);
+    }
+
+    #[test]
+    fn builtin_str_wrong_type() {
+        // bool is still rejected by str
+        let result = parse_and_verify("f x:b>t;str x");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("'str' expects n, got t"))
+                .any(|e| e.message.contains("'str' expects n or t, got b")),
+            "unexpected errors: {:?}",
+            errors
         );
     }
 
@@ -6733,6 +7498,51 @@ mod tests {
                 .iter()
                 .any(|e| e.message.contains("undefined type 'ghost'"))
         );
+    }
+
+    // ---- Anon record → named record structural subtyping ----
+
+    #[test]
+    fn anon_record_satisfies_named_param() {
+        // greet p:person; passing {name:"jane" age:30} should be accepted
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30}",
+        );
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn anon_record_satisfies_named_param_with_extra_fields() {
+        // anon record has extra field 'note' — still acceptable (width subtyping)
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30 note:\"hi\"}",
+        );
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn anon_record_missing_required_field_rejected() {
+        // anon record is missing 'age' — should produce a type error
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\"}",
+        );
+        assert!(result.is_err(), "expected type error for missing field");
+    }
+
+    #[test]
+    fn anon_record_wrong_field_type_rejected() {
+        // anon record has 'age' as text instead of number — should fail
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:\"old\"}",
+        );
+        assert!(result.is_err(), "expected type error for wrong field type");
+    }
+
+    #[test]
+    fn anon_record_as_return_type_of_named() {
+        // function declared to return 'person' but returns anon record — should be accepted
+        let result = parse_and_verify("type person{name:t;age:n} mk>person;{name:\"bob\" age:25}");
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
     }
 
     // ---- Field access errors ----
@@ -7340,6 +8150,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7352,6 +8163,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7392,6 +8204,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7402,6 +8215,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7435,6 +8249,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7447,6 +8262,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -8241,6 +9057,47 @@ mod tests {
         assert_eq!(t033.len(), 3);
     }
 
+    // ---- _=expr explicit discard bind (ILO-36) ----
+
+    #[test]
+    fn discard_bind_no_t033() {
+        // `_=mset m k v` — explicit discard, T033 must NOT fire.
+        let result = parse_and_verify_full(r#"f>n;m=mmap;_=mset m "k" 1;3"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(
+            t033.len(),
+            0,
+            "_=mset should not warn T033, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn discard_bind_no_scope_pollution() {
+        // `_=expr` must not introduce `_` as a bound variable.
+        // The function returns `_` (the nil/wildcard ref), not the mset result.
+        // Verifier should not surface T005 ("undefined '_'") nor bind it.
+        let result = parse_and_verify_full(r#"f>n;_=prnt "hi";3"#);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn discard_bind_rhs_errors_still_surface() {
+        // Errors inside the RHS of `_=` are still checked.
+        // `_=no_such 1` should emit T005 for the undefined call.
+        let errs = parse_and_verify(r#"f>n;_=no-such 1;3"#).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T005"),
+            "expected T005 for undefined call in _=expr, got {:?}",
+            errs
+        );
+    }
+
     // ---- rnd builtin ----
 
     #[test]
@@ -8927,6 +9784,150 @@ mod tests {
         let _ = errs;
     }
 
+    // ── Bounded generics (ILO-61) ─────────────────────────────────────────────
+
+    #[test]
+    fn bounded_generic_consistent_call_passes() {
+        // gmn<a:comparable> x:a y:a>a — calling with two n is fine
+        let src =
+            "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r\n\nmain>n\n  gmn 3 7\n  0\n";
+        assert!(parse_and_verify(src).is_ok(), "consistent call should pass");
+    }
+
+    #[test]
+    fn bounded_generic_inconsistent_call_emits_t044() {
+        // gmn<a:comparable> x:a y:a>a — calling with n then t is a violation
+        let src = "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r\n\nmain>n\n  gmn 1 \"two\"\n  0\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T045"),
+            "expected ILO-T045 for inconsistent type variable usage, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn bounded_generic_numeric_bound_rejects_text() {
+        // gadd<a:numeric> x:a y:a>a — passing t violates numeric bound
+        let src = "gadd<a:numeric> x:a y:a>a;+x y\n\nmain>n\n  gadd \"hello\" \"world\"\n  0\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T045"),
+            "expected ILO-T045 for numeric bound violation, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn bounded_generic_text_bound_rejects_number() {
+        // grpt<a:text> s:a n:n>t — passing n for s violates text bound
+        let src = "grpt<a:text> s:a n:n>t\n  r=\"\"\n  @i 0..n{r=+r s}\n  r\n\nmain>n\n  grpt 42 3\n  0\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T045"),
+            "expected ILO-T045 for text bound violation with numeric arg, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn bounded_generic_comparable_allows_bool() {
+        // comparable allows b as well as n and t
+        let src = "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r\n\nmain>n\n  gmn true false\n  0\n";
+        // This should type-check without ILO-T045. The body may not make sense
+        // for bool, but the verifier only checks bounds, not semantics.
+        let result = parse_and_verify(src);
+        if let Err(ref errs) = result {
+            assert!(
+                !errs.iter().any(|e| e.code == "ILO-T045"),
+                "comparable bound should allow b, got ILO-T045: {:?}",
+                errs
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_generic_any_bound_allows_any_type() {
+        // gid<a> — unbounded, same variable can be called with n or t at different sites
+        let src = "gid<a> x:a>a;x\n\nmain>n\n  gid 42\n  gid \"hello\"\n  0\n";
+        // Different call sites with different types for <a> should both be fine
+        // (each call site gets its own fresh binding).
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "unbounded type variable should allow any concrete type"
+        );
+    }
+
+    #[test]
+    fn legacy_type_variable_no_bound_still_works() {
+        // Existing code without explicit type_params — type vars remain Ty::Unknown
+        let src = "identity x:a>a;x\n\nmain>n\n  identity 1\n  identity \"two\"\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "legacy type variable (no explicit bound) should still pass"
+        );
+    }
+
+    #[test]
+    fn bounded_generic_text_allows_text_arg() {
+        // grpt<a:text> accepts t just fine
+        let src = "grpt<a:text> s:a n:n>t\n  r=\"\"\n  @i 0..n{r=+r s}\n  r\n\nmain>n\n  grpt \"ab\" 3\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "text-bound generic should accept t"
+        );
+    }
+
+    // ── Return-type substitution at call sites (ILO-385) ─────────────────────
+
+    #[test]
+    fn generic_return_number_identity_passes_typed_context() {
+        // gid<a> x:a>a — calling with n should resolve return as n.
+        // Passing the result to a helper expecting n should NOT error.
+        let src = "gid<a> x:a>a;x\nhelper y:n>n;y\nmain>n\n  helper (gid 5)\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "gid<a> called with n should return n (not Unknown); helper n should accept it"
+        );
+    }
+
+    #[test]
+    fn generic_return_text_identity_passes_typed_context() {
+        // gid<a> x:a>a — calling with t should resolve return as t.
+        let src = "gid<a> x:a>a;x\nhelper y:t>t;y\nmain>t\n  helper (gid \"hi\")\n  \"\"\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "gid<a> called with t should return t; helper t should accept it"
+        );
+    }
+
+    #[test]
+    fn generic_return_wrong_type_causes_mismatch() {
+        // gid<a> x:a>a — calling with n should return n.
+        // Passing to a helper expecting t must emit ILO-T007.
+        let src = "gid<a> x:a>a;x\nhelper y:t>t;y\nmain>t\n  helper (gid 5)\n  \"\"\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T007"),
+            "gid<a> called with n returns n; passing to helper:t must produce ILO-T007, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn generic_return_list_element_substituted() {
+        // first<a> xs:L a>a — calling with L n should return n.
+        // Passing result to helper:n should pass.
+        let src =
+            "first<a> xs:L a>a;hd xs\nhelper y:n>n;y\nmain>n\n  helper (first [1 2 3])\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "first<a> called with L n should return n; helper n should accept it"
+        );
+    }
+
+    // ── End bounded generics ──────────────────────────────────────────────────
+
     // ── Coverage: builtin type errors — cat arg2, hd/tl text, rev wrong type ──
 
     #[test]
@@ -9303,6 +10304,10 @@ mod tests {
         program.declarations.push(Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
             span: Span::UNKNOWN,
         });
         let result = verify(&program);
@@ -9525,6 +10530,7 @@ mod tests {
         };
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![crate::ast::Param {
                     name: "x".to_string(),
@@ -9622,8 +10628,10 @@ mod tests {
 
     #[test]
     fn bang_on_result_callee_with_result_enclosing() {
-        // rd returns R t t, f returns R t t → unwrap is valid → line 1663 closing } is hit
-        assert!(parse_and_verify(r#"f>R t t;rd! "/tmp/x""#).is_ok());
+        // rd (1-arg) returns R t t; rd! unwraps to t. The enclosing function must return
+        // Result (so ! can propagate Err). ILO-374: rd now returns R t t (was R ? t).
+        // The body uses rd! then wraps back with rd to return a Result.
+        assert!(parse_and_verify(r#"f>R t t;rd "/tmp/x""#).is_ok());
     }
 
     // ── srt with non-list/text arg (lines 598) ───────────────────────────────
@@ -9755,6 +10763,7 @@ mod tests {
         };
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),
@@ -9799,6 +10808,7 @@ mod tests {
         use crate::ast::{Decl, Expr, Literal, Program, Span, Spanned, Stmt, Type};
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Any,
@@ -9825,6 +10835,7 @@ mod tests {
         use crate::ast::{BinOp, Decl, Expr, Literal, Param, Program, Span, Spanned, Stmt, Type};
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),
@@ -10378,5 +11389,37 @@ mod tests {
     fn verify_fmt2_valid_returns_text() {
         // Sanity: valid call typechecks.
         assert!(parse_and_verify("f>t;fmt2 3.14 2").is_ok());
+    }
+
+    // ---- todo / panic typed expressions (ILO-410) ----
+
+    #[test]
+    fn verify_todo_satisfies_number_return() {
+        // `todo` in a number-returning function should not cause a type error.
+        assert!(parse_and_verify("f>n;todo \"not yet\"").is_ok());
+    }
+
+    #[test]
+    fn verify_panic_satisfies_number_return() {
+        assert!(parse_and_verify("f>n;panic \"unreachable\"").is_ok());
+    }
+
+    #[test]
+    fn verify_todo_satisfies_text_return() {
+        assert!(parse_and_verify("f>t;todo \"stub\"").is_ok());
+    }
+
+    #[test]
+    fn verify_panic_satisfies_text_return() {
+        assert!(parse_and_verify("f>t;panic \"stub\"").is_ok());
+    }
+
+    #[test]
+    fn verify_todo_in_branch() {
+        // `todo` as one branch of a ternary should not cause type errors.
+        assert!(
+            parse_and_verify("f x:n>n;?=x 0(todo \"zero case\")(+x 1)").is_ok(),
+            "todo in ternary branch should typecheck"
+        );
     }
 }

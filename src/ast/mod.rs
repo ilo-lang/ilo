@@ -69,6 +69,36 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Spanned<T> {
 
 // ---- Core AST types ----
 
+/// Bound on a generic type variable.
+///
+/// A small fixed set — enough for `sort`/`cmp`/`min`/`max` and numeric ops
+/// without shipping a full typeclass system.
+///
+/// | Bound        | Permitted concrete types                  |
+/// |--------------|-------------------------------------------|
+/// | `Any`        | anything (default when no bound given)    |
+/// | `Comparable` | `n`, `t`, `b`                             |
+/// | `Numeric`    | `n`                                       |
+/// | `Text`       | `t`                                       |
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bound {
+    Any,
+    Comparable,
+    Numeric,
+    Text,
+}
+
+impl std::fmt::Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bound::Any => write!(f, "any"),
+            Bound::Comparable => write!(f, "comparable"),
+            Bound::Numeric => write!(f, "numeric"),
+            Bound::Text => write!(f, "text"),
+        }
+    }
+}
+
 /// Types in idea9 — single-char base types, composable
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
@@ -101,12 +131,53 @@ pub struct Param {
     pub ty: Type,
 }
 
+/// A variant in a sum-type declaration.
+/// `Circle(n)` → Variant { name: "circle", payload: Some(Type::Number) }
+/// `red`       → Variant { name: "red",    payload: None }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Variant {
+    pub name: String,
+    pub payload: Option<Type>,
+}
+
+/// Compile-time predicate for conditional `use` — `use ?wasm "a.ilo" : "b.ilo"`.
+///
+/// `wasm`   — true when building for wasm32 (`--target wasm`).
+/// `native` — true when building for a native host (`--target native`, default).
+/// `test`   — true when running under `ilo test` (`--target test`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsePredicate {
+    Wasm,
+    Native,
+    Test,
+}
+
+impl UsePredicate {
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "wasm" => Some(Self::Wasm),
+            "native" => Some(Self::Native),
+            "test" => Some(Self::Test),
+            _ => None,
+        }
+    }
+}
+
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Decl {
-    /// `name params>return;body`
+    /// `name<a:Comparable b> params>return;body`
+    /// `type_params` holds bounded generic type-variable declarations.
+    /// Syntax: `<letter>` or `<letter:Bound>`, space-separated inside `<...>`.
+    /// When absent the vec is empty and existing `a`/`b`/etc. type-variable
+    /// behaviour (treat as Unknown / accept any type) is preserved.
     Function {
         name: String,
+        /// Generic type-variable declarations: `<a:Comparable b:Numeric c>`.
+        /// Empty means no explicit generic params (legacy behaviour).
+        #[serde(skip)]
+        type_params: Vec<(String, Bound)>,
         params: Vec<Param>,
         return_type: Type,
         body: Vec<Spanned<Stmt>>,
@@ -144,12 +215,41 @@ pub enum Decl {
 
     /// `use "path/to/file.ilo"` — import all declarations from another file.
     /// `use "path/to/file.ilo" [name1 name2]` — import only named declarations.
+    /// `use alias:"path/to/file.ilo"` — import all public declarations, prefixed
+    ///   with `alias-` (e.g. `math-dbl`, `math-half`). Private (`_`-prefixed)
+    ///   symbols are always excluded from named-module imports.
+    /// `use ?wasm "wasm-mod.ilo" : "native-mod.ilo"` — conditional import:
+    ///   import `path` when the predicate is true for the current build target,
+    ///   otherwise import `alt_path`. Resolved before verification.
+    /// `use re:"path/to/file.ilo" [name1 name2]` — import AND re-export the named
+    ///   declarations: they become part of this module's public surface.
     /// Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
         path: String,
         /// `None` = import all; `Some(names)` = import only those names.
         only: Option<Vec<String>>,
+        /// Named module alias: `use alias:"path"` sets this to `Some("alias")`.
+        /// When set, imported public symbols are renamed `alias-<name>`.
+        alias: Option<String>,
+        /// Conditional form: `use ?<pred> "true-path" : "false-path"`.
+        /// When `Some`, `path` is the true-branch and `alt_path` is the
+        /// false-branch. `only` and `alias` are disallowed in this form.
+        predicate: Option<UsePredicate>,
+        /// The false-branch path for conditional imports. `None` for unconditional.
+        alt_path: Option<String>,
+        /// Re-export flag: `use re:"path" [names]` makes the listed names part
+        /// of this module's public surface (visible to consumers of this module).
+        /// Without this flag, imported names are internal to this module only.
+        reexport: bool,
+        #[serde(skip)]
+        span: Span,
+    },
+
+    /// `type Name = Circle(n) | Square(n) | red` — named discriminated union
+    SumType {
+        name: String,
+        variants: Vec<Variant>,
         #[serde(skip)]
         span: Span,
     },
@@ -161,6 +261,16 @@ pub enum Decl {
         #[serde(skip)]
         span: Span,
     },
+}
+
+/// Whether a `defer` fires on all exits or only on error exits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeferKind {
+    /// `defer expr` — runs on any function exit (normal or error).
+    Always,
+    /// `errdefer expr` — runs only when the function exits via an error
+    /// (Result `Err` propagation, panic-unwrap, or runtime error).
+    OnError,
 }
 
 /// Statements
@@ -196,11 +306,13 @@ pub enum Stmt {
         body: Vec<Spanned<Stmt>>,
     },
 
-    /// `@binding start..end{body}` — range iteration
+    /// `@binding start..end{body}` or `@binding start..end by step{body}` — range iteration
     ForRange {
         binding: String,
         start: Expr,
         end: Expr,
+        /// Optional step size (`by <expr>`). `None` means step of 1.
+        step: Option<Expr>,
         body: Vec<Spanned<Stmt>>,
     },
 
@@ -221,6 +333,13 @@ pub enum Stmt {
 
     /// `{a;b;c}=expr` — destructure record fields into local bindings
     Destructure { bindings: Vec<String>, value: Expr },
+
+    /// `defer expr` / `errdefer expr` — register a cleanup expression to run
+    /// at function-scope exit.  `Always` fires on both normal and error exit;
+    /// `OnError` fires only when the function exits via an error path.
+    /// Multiple defers in one function body execute in LIFO order.
+    /// v1 scope: function-level only (not block-level).
+    Defer { expr: Expr, kind: DeferKind },
 
     /// Expression as statement (last expr is return value)
     Expr(Expr),
@@ -244,6 +363,13 @@ pub enum Pattern {
     Wildcard,
     /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
     TypeIs { ty: Type, binding: String },
+    /// `Circle(r):` — match a named-sum variant, optionally bind payload
+    Variant {
+        tag: String,
+        binding: Option<String>,
+    },
+    /// `pat1|pat2|...:` — matches if any alternative matches (OR pattern)
+    Or(Vec<Pattern>),
 }
 
 /// Auto-unwrap mode on `Expr::Call`. See `Expr::Call` for full semantics.
@@ -348,6 +474,13 @@ pub enum Expr {
         fields: Vec<(String, Expr)>,
     },
 
+    /// Anonymous record literal: `{field:val field:val}` — no typename required.
+    /// Type checker synthesises a structural type; runtime uses `"__anon"` as the
+    /// Value::Record type_name since engines only care about field names.
+    AnonRecord {
+        fields: Vec<(String, Expr)>,
+    },
+
     /// Match expression: `?expr{arms}` or `?{arms}` used as value
     Match {
         subject: Option<Box<Expr>>,
@@ -389,6 +522,14 @@ pub enum Expr {
         fn_name: String,
         captures: Vec<Expr>,
     },
+
+    /// Gleam-style `todo "reason"` — satisfies any return type; panics at runtime
+    /// with the given reason message. Use when a branch is not yet implemented.
+    Todo(Box<Expr>),
+
+    /// Gleam-style `panic "reason"` — satisfies any return type; panics at runtime
+    /// with the given reason message. Use to mark branches that should never execute.
+    Panic(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -535,6 +676,18 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("readbuf", "rdb"),
     ("write", "wr"),
     ("writelines", "wrl"),
+    // Map ops — long-form hyphen aliases for the canonical short names.
+    // ilo identifiers use hyphens, not underscores, so only hyphen forms
+    // are valid surface syntax.
+    ("map-get", "mget"),
+    ("map-set", "mset"),
+    ("map-has", "mhas"),
+    ("map-del", "mdel"),
+    // Alias-of-alias: map-keys / map-values resolve to the canonical
+    // short forms `mkeys` / `mvals` directly (no two-hop needed since
+    // resolve_alias is a single table lookup).
+    ("map-keys", "mkeys"),
+    ("map-values", "mvals"),
 ];
 
 /// If `name` is a long-form alias, return the canonical short form.
@@ -602,10 +755,17 @@ fn resolve_aliases_stmt(stmt: &mut Stmt) {
             }
         }
         Stmt::ForRange {
-            start, end, body, ..
+            start,
+            end,
+            step,
+            body,
+            ..
         } => {
             resolve_aliases_expr(start);
             resolve_aliases_expr(end);
+            if let Some(s) = step {
+                resolve_aliases_expr(s);
+            }
             for s in body {
                 resolve_aliases_stmt(&mut s.node);
             }
@@ -620,6 +780,7 @@ fn resolve_aliases_stmt(stmt: &mut Stmt) {
         Stmt::Destructure { value, .. } => resolve_aliases_expr(value),
         Stmt::Break(Some(expr)) => resolve_aliases_expr(expr),
         Stmt::Break(None) | Stmt::Continue => {}
+        Stmt::Defer { expr, .. } => resolve_aliases_expr(expr),
     }
 }
 
@@ -659,7 +820,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(item);
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
             for (_, val) in fields {
                 resolve_aliases_expr(val);
             }
@@ -694,6 +855,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(cap);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => resolve_aliases_expr(inner),
         Expr::Literal(_) | Expr::Field { .. } | Expr::Index { .. } => {}
     }
 }
@@ -722,6 +884,12 @@ pub fn desugar_dot_var_index(program: &mut Program) {
             for p in fields {
                 record_fields.insert(p.name.clone());
             }
+        }
+        // Also collect field names from anonymous record literals so that
+        // `r.name` where `name` happens to be a local variable is NOT
+        // rewritten to `at r name` — anonymous records are still records.
+        if let Decl::Function { body, .. } = decl {
+            collect_anon_record_fields_stmts(body, &mut record_fields);
         }
     }
 
@@ -803,10 +971,14 @@ fn desugar_stmt(stmt: &mut Stmt, scope: &mut Vec<String>, rf: &std::collections:
             binding,
             start,
             end,
+            step,
             body,
         } => {
             desugar_expr(start, scope, rf);
             desugar_expr(end, scope, rf);
+            if let Some(st) = step {
+                desugar_expr(st, scope, rf);
+            }
             let depth = scope.len();
             scope.push(binding.clone());
             for s in body {
@@ -828,6 +1000,7 @@ fn desugar_stmt(stmt: &mut Stmt, scope: &mut Vec<String>, rf: &std::collections:
                 scope.push(b.clone());
             }
         }
+        Stmt::Defer { expr, .. } => desugar_expr(expr, scope, rf),
     }
 }
 
@@ -857,7 +1030,7 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 desugar_expr(it, scope, rf);
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
             for (_, v) in fields {
                 desugar_expr(v, scope, rf);
             }
@@ -899,6 +1072,7 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 desugar_expr(c, scope, rf);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => desugar_expr(inner, scope, rf),
         Expr::Literal(_) | Expr::Ref(_) => {}
     }
 
@@ -919,6 +1093,102 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 unwrap: UnwrapMode::None,
             };
         }
+    }
+}
+
+/// Collect field names from all AnonRecord literals in a statement list.
+fn collect_anon_record_fields_stmts(
+    stmts: &[Spanned<Stmt>],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for stmt in stmts {
+        collect_anon_record_fields_stmt(&stmt.node, out);
+    }
+}
+
+fn collect_anon_record_fields_stmt(stmt: &Stmt, out: &mut std::collections::HashSet<String>) {
+    match stmt {
+        Stmt::Let { value, .. } => collect_anon_record_fields_expr(value, out),
+        Stmt::Expr(e) | Stmt::Return(e) => collect_anon_record_fields_expr(e, out),
+        Stmt::Break(Some(e)) => collect_anon_record_fields_expr(e, out),
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_stmts(body, out);
+            if let Some(eb) = else_body {
+                collect_anon_record_fields_stmts(eb, out);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_stmts(body, out);
+        }
+        Stmt::ForEach {
+            collection, body, ..
+        } => {
+            collect_anon_record_fields_expr(collection, out);
+            collect_anon_record_fields_stmts(body, out);
+        }
+        Stmt::Destructure { value, .. } => collect_anon_record_fields_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_anon_record_fields_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+    match expr {
+        Expr::AnonRecord { fields } => {
+            for (name, val) in fields {
+                out.insert(name.clone());
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::Record { fields, .. } => {
+            for (_, val) in fields {
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                collect_anon_record_fields_expr(arg, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_anon_record_fields_expr(left, out);
+            collect_anon_record_fields_expr(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_anon_record_fields_expr(operand, out),
+        Expr::Field { object, .. } => collect_anon_record_fields_expr(object, out),
+        Expr::Index { object, .. } => collect_anon_record_fields_expr(object, out),
+        Expr::With { object, updates } => {
+            collect_anon_record_fields_expr(object, out);
+            for (_, val) in updates {
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::List(items) => {
+            for item in items {
+                collect_anon_record_fields_expr(item, out);
+            }
+        }
+        Expr::Ok(e) | Expr::Err(e) => collect_anon_record_fields_expr(e, out),
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_expr(then_expr, out);
+            collect_anon_record_fields_expr(else_expr, out);
+        }
+        Expr::NilCoalesce { value, default } => {
+            collect_anon_record_fields_expr(value, out);
+            collect_anon_record_fields_expr(default, out);
+        }
+        _ => {}
     }
 }
 
@@ -966,8 +1236,9 @@ impl Type {
         {
             match ty {
                 // Inline primitives.
-                Type::Number | Type::Bool | Type::Sum(_)
-                | Type::U32 | Type::U64 | Type::I64 => false,
+                Type::Number | Type::Bool | Type::Sum(_) | Type::U32 | Type::U64 | Type::I64 => {
+                    false
+                }
                 // Immutable shared bytes; no embedded references.
                 Type::Text => false,
                 // No information at the type level.
@@ -1088,6 +1359,7 @@ mod tests {
     #[test]
     fn decl_span_not_serialized() {
         let decl = Decl::Function {
+            type_params: vec![],
             name: "f".to_string(),
             params: vec![],
             return_type: Type::Number,
@@ -1119,6 +1391,7 @@ mod tests {
         // L440-442: While variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1165,6 +1438,7 @@ mod tests {
         // L444: Return variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1193,6 +1467,7 @@ mod tests {
         // L445: Destructure variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1228,6 +1503,7 @@ mod tests {
         // L446: Break(Some(expr)) variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1256,6 +1532,7 @@ mod tests {
         // L447: Break(None) | Continue — no-op, just ensure no panic
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1277,6 +1554,7 @@ mod tests {
         // L465-467: NilCoalesce variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1319,6 +1597,7 @@ mod tests {
         // L472-473: Record variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1356,6 +1635,7 @@ mod tests {
         // L475-478: Match variant (as expression) in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1404,6 +1684,7 @@ mod tests {
         // L481-483: With variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1449,6 +1730,7 @@ mod tests {
         // Ensure existing JSON AST shape is preserved
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),
@@ -1474,6 +1756,7 @@ mod tests {
     fn resolve_aliases_stmt_match_no_subject() {
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1511,6 +1794,7 @@ mod tests {
     fn resolve_aliases_expr_match_no_subject() {
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,

@@ -78,7 +78,9 @@ fn abs_wrong_type() {
 
 #[test]
 fn str_wrong_type() {
-    let s = err_stderr("main>t;str \"hi\"", "main", &[]);
+    // str now accepts text (passthrough) and number; use a bool to trigger error.
+    // Bypass the verifier with `_` param type so the runtime sees the bool.
+    let s = err_stderr("main x:_ >t;str x", "main", &["true"]);
     assert!(
         s.contains("ILO-R009")
             || s.contains("ILO-R004")
@@ -87,6 +89,13 @@ fn str_wrong_type() {
             || s.contains("str"),
         "stderr={s}"
     );
+}
+
+#[test]
+fn str_text_passthrough() {
+    // str of text is now identity — should succeed
+    let s = ok_out("main>t;str \"hello\"", "main", &[]);
+    assert_eq!(s.trim(), "hello");
 }
 
 #[test]

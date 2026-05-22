@@ -253,7 +253,7 @@ fn body_is_thin_bootstrap() {
     // a healthy bootstrap is well under 5 KB. Trip if it bloats past 20 KB.
     assert!(
         body.len() < 20_000,
-        "SKILL.md body is {} bytes; bootstrap shape should stay well under 8 KB",
+        "SKILL.md body is {} bytes; bootstrap shape should stay well under 16 KB",
         body.len()
     );
 }

@@ -1,0 +1,21 @@
+-- sha256d Bitcoin Merkle root example (ILO-383).
+--
+-- Bitcoin's Merkle tree uses double-SHA256 over raw binary (32-byte pairs).
+-- `sha256d hex:t > t` hashes hex-decoded bytes twice: sha256(sha256(x)).
+-- This example computes a 2-leaf Merkle root from two txids (hex-encoded,
+-- already in internal byte order) to show the full protocol shape in pure ilo.
+--
+-- No `run "python3"` needed — everything stays in ilo.
+
+-- Two txids from Bitcoin block #170 (Satoshi → Hal Finney transfer block).
+-- In real Merkle computation these would be reversed to wire byte order first;
+-- here we skip the reversal to keep the example self-contained and focused
+-- on the double-SHA256 shape. See ILO-372 (hex-rev) for the endian-flip step.
+--
+-- Concatenate the two txid hex strings (= concatenating the raw byte pairs),
+-- then double-SHA256 the concatenated bytes → Merkle root.
+merkle>t;sha256d (+ "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
+                   "169e1e83e930853391bc6f35f605c6754cfead57cf8387639d3b4096c54f18f4")
+
+-- run: merkle
+-- out: cba2bf79b14c6ff80108eb1a4d2f4b55cf4776dcdea24f292ba7dd163b5338bb

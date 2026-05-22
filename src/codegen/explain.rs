@@ -119,6 +119,18 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                 "alias",
                 0,
             )),
+
+            Decl::SumType { name, variants, .. } => {
+                let vs = variants
+                    .iter()
+                    .map(|v| match &v.payload {
+                        Some(ty) => format!("{}({})", v.name, fmt_type(ty)),
+                        None => v.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                Some(annotate_line(&format!("type {name} = {vs}"), "sum type", 0))
+            }
         };
 
         if let Some(s) = snippet {
@@ -179,6 +191,10 @@ fn role_of(stmt: &Stmt, is_last: bool) -> String {
         Stmt::Break(None) => "break".into(),
         Stmt::Continue => "continue".into(),
         Stmt::Destructure { bindings, .. } => format!("destructure → {}", bindings.join(", ")),
+        Stmt::Defer { kind, .. } => match kind {
+            crate::ast::DeferKind::Always => "defer".into(),
+            crate::ast::DeferKind::OnError => "errdefer".into(),
+        },
         Stmt::Expr(_) => {
             if is_last {
                 "return".into()
@@ -556,6 +572,10 @@ mod tests {
         prog.declarations.push(Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
             span: Span::UNKNOWN,
         });
         prog.declarations.push(Decl::Error {

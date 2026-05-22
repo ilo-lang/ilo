@@ -1,0 +1,14 @@
+-- use-reexport-main.ilo — consumer that imports re-exported names from outer
+--
+-- `foo` and `bar` were defined in use-reexport-inner.ilo but re-exported by
+-- use-reexport-outer.ilo via `use re:...`.  A consumer that imports outer
+-- gets `foo`, `bar`, and `baz` as if they were all defined in outer.
+
+use "use-reexport-outer.ilo" [foo bar baz]
+
+-- combine: foo 3 = 4 (3+1), bar 4 = 8 (4*2), baz 5 = 15 (5+10)
+-- 4 + 8 + 15 = 27
+combine>n;+(foo 3)+(bar 4)(baz 5)
+
+-- run: combine
+-- out: 27

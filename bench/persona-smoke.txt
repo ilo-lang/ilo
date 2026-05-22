@@ -1,0 +1,35 @@
+# Persona smoke set for skill-module regression harness (ILO-384).
+#
+# 12 personas spanning the dogfood blocks: Date/Time, Crypto, HTTP,
+# Numeric, IO, Records, Text, and Tools.  Pinned at first harness run;
+# do not reorder (baseline JSON is keyed by name).  To add a persona,
+# append it and commit a fresh baseline (see scripts/persona-smoke.py --baseline).
+#
+# Format: one persona slug per line.  Lines starting with # are ignored.
+
+# Date / Time  (exercises ilo-builtins-text: dtparse, dtfmt, dtparse-rel, dur-parse)
+schedule-arithmetic
+event-chronology
+
+# Numeric  (exercises ilo-builtins-math: stats, lstsq, matvec, bisect)
+linear-regression
+k-means
+
+# HTTP  (exercises ilo-builtins-io: mget, jpar, env)
+api-poller
+batch-http-fetch
+
+# IO / Filesystem  (exercises ilo-builtins-io: rd, wr, lsd, rdinl)
+csv-pipeline
+log-scanner
+
+# Records  (exercises ilo-language-records: type, field access, update)
+config-shaper
+record-transform
+
+# Text  (exercises ilo-builtins-text: rgx, fmt, cat, spl)
+cron-explainer
+text-mining
+
+# Tools / Agent  (exercises ilo-tools + ilo-agent: mcp, http-tool, agent protocol)
+doc-discovery

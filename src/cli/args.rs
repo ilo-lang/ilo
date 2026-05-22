@@ -116,8 +116,19 @@ pub enum Cmd {
     /// Run `-- run:` / `-- out:` / `-- err:` assertions in `.ilo` files.
     Test(TestArgs),
 
+    /// Serve HTTP requests with a user-supplied ilo handler function.
+    Httpd(HttpdArgs),
+
     /// Print version.
     Version,
+
+    /// Fetch a GitHub-hosted ilo package into the local cache (~/.ilo/pkgs/).
+    Add(AddArgs),
+
+    /// Re-fetch a cached package to its latest commit on the default branch.
+    Update(UpdateArgs),
+    /// Trace program execution, emitting one JSON line per statement.
+    Trace(TraceArgs),
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -166,7 +177,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub bench: bool,
 
-    /// Emit target (e.g. python) instead of running.
+    /// Emit target (e.g. python, js) instead of running.
     #[arg(long)]
     pub emit: Option<String>,
 
@@ -212,6 +223,13 @@ pub struct RunArgs {
     #[arg(long = "allow-run", value_name = "CMDS")]
     pub allow_run: Option<String>,
 
+    /// Allow environment variable access. Comma-separated variable name list,
+    /// or `*` for all. Omitting leaves behaviour unchanged (permissive).
+    /// `--allow-env=` (empty value) blocks all env reads. `--allow-env=PATH,HOME`
+    /// permits only those variables. `env-all` requires `*` in the allowlist.
+    #[arg(long = "allow-env", value_name = "VARS")]
+    pub allow_env: Option<String>,
+
     /// Remaining positional args: optional function name + call arguments.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
@@ -254,6 +272,21 @@ pub struct ServArgs {
     /// HTTP tool provider config (JSON).
     #[arg(long = "tools")]
     pub tools_path: Option<String>,
+}
+
+// ── Httpd ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct HttpdArgs {
+    /// Port to listen on.
+    #[arg(long, short = 'p', default_value = "8080")]
+    pub port: u16,
+
+    /// Source file containing the handler function.
+    pub handler: String,
+
+    /// Name of the handler function (default: `handler`).
+    pub func: Option<String>,
 }
 
 // ── Tools ──────────────────────────────────────────────────────────────────────
@@ -330,6 +363,16 @@ pub struct GraphArgs {
 
 // ── Compile ────────────────────────────────────────────────────────────────────
 
+/// Supported cross-compilation targets for `ilo compile --target`.
+pub const SUPPORTED_TARGETS: &[&str] = &[
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip1",
+];
+
 #[derive(Args, Debug)]
 pub struct CompileArgs {
     /// Source file or inline code.
@@ -345,6 +388,14 @@ pub struct CompileArgs {
     /// Benchmark binary mode.
     #[arg(long)]
     pub bench: bool,
+
+    /// Cross-compilation target triple.
+    /// Supported: aarch64-apple-darwin, x86_64-apple-darwin,
+    /// x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
+    /// x86_64-pc-windows-msvc, wasm32-wasip1.
+    /// Requires the target to be installed via `rustup target add <triple>`.
+    #[arg(long, value_name = "TRIPLE")]
+    pub target: Option<String>,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
@@ -421,6 +472,52 @@ pub enum SkillCmd {
     Show { name: String },
 }
 
+// ── Add ────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct AddArgs {
+    /// Package to fetch, in `<owner>/<repo>` or `<owner>/<repo>@<ref>` form.
+    /// Example: `ilo add myorg/helpers` or `ilo add myorg/helpers@v1.2`.
+    pub package: String,
+}
+
+// ── Update ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Package to update, in `<owner>/<repo>` form.
+    /// Omit to update all packages recorded in `ilo.lock`.
+    pub package: Option<String>,
+}
+
+// ── Trace ──────────────────────────────────────────────────────────────────────
+/// Granularity of trace events.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TraceDepth {
+    /// Emit one event per statement (default).
+    #[default]
+    Statement,
+    /// Emit one event per sub-expression in addition to per-statement events.
+    Expr,
+}
+#[derive(Args, Debug, Clone)]
+pub struct TraceArgs {
+    /// Source file to trace.
+    #[arg(value_name = "FILE")]
+    pub source: String,
+    /// Entry function name (defaults to first function).
+    #[arg(long = "func", value_name = "NAME")]
+    pub func: Option<String>,
+    /// Trace granularity: `statement` (default) or `expr` (per sub-expression).
+    #[arg(long = "depth", value_enum, default_value = "statement")]
+    pub depth: TraceDepth,
+    /// Only emit events that touch this variable name (may be repeated).
+    #[arg(long = "watch", value_name = "NAME", action = clap::ArgAction::Append)]
+    pub watch: Vec<String>,
+    /// Call arguments passed to the entry function.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub rest: Vec<String>,
+}
 // ── OutputMode resolution ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -793,6 +890,28 @@ mod tests {
     }
 
     #[test]
+    fn compile_with_target() {
+        let cli = Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", "wasm32-wasip1"])
+            .unwrap();
+        if let Some(Cmd::Compile(c)) = cli.cmd {
+            assert_eq!(c.target.as_deref(), Some("wasm32-wasip1"));
+        }
+    }
+
+    #[test]
+    fn compile_target_flag_parses_all_supported() {
+        for triple in SUPPORTED_TARGETS {
+            let cli =
+                Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", triple]).unwrap();
+            if let Some(Cmd::Compile(c)) = cli.cmd {
+                assert_eq!(c.target.as_deref(), Some(*triple));
+            } else {
+                panic!("expected Compile for target {triple}");
+            }
+        }
+    }
+
+    #[test]
     fn graph_with_budget() {
         let cli = Cli::try_parse_from(["ilo", "graph", "f.ilo", "--budget", "100"]).unwrap();
         if let Some(Cmd::Graph(g)) = cli.cmd {
@@ -936,6 +1055,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         assert_eq!(r.effective_engine(), Engine::Default);

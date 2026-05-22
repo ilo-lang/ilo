@@ -31,10 +31,14 @@ fn check_band(engine: &str) {
 }
 
 #[test]
-fn band_vm() { check_band("--vm"); }
+fn band_vm() {
+    check_band("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn band_jit() { check_band("--jit"); }
+fn band_jit() {
+    check_band("--jit");
+}
 
 // --- bor ---
 const BOR_SRC: &str = "f>n;bor 12 10";
@@ -44,10 +48,14 @@ fn check_bor(engine: &str) {
 }
 
 #[test]
-fn bor_vm() { check_bor("--vm"); }
+fn bor_vm() {
+    check_bor("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn bor_jit() { check_bor("--jit"); }
+fn bor_jit() {
+    check_bor("--jit");
+}
 
 // --- bxor ---
 const BXOR_SRC: &str = "f>n;bxor 12 10";
@@ -57,32 +65,52 @@ fn check_bxor(engine: &str) {
 }
 
 #[test]
-fn bxor_vm() { check_bxor("--vm"); }
+fn bxor_vm() {
+    check_bxor("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn bxor_jit() { check_bxor("--jit"); }
+fn bxor_jit() {
+    check_bxor("--jit");
+}
 
 // --- bnot ---
 const BNOT_ZERO_SRC: &str = "f>n;bnot 0";
 const BNOT_ONE_SRC: &str = "f>n;bnot 1";
 
 fn check_bnot_zero(engine: &str) {
-    assert_eq!(run(engine, BNOT_ZERO_SRC, "f"), "4294967295", "engine={engine}");
+    assert_eq!(
+        run(engine, BNOT_ZERO_SRC, "f"),
+        "4294967295",
+        "engine={engine}"
+    );
 }
 fn check_bnot_one(engine: &str) {
-    assert_eq!(run(engine, BNOT_ONE_SRC, "f"), "4294967294", "engine={engine}");
+    assert_eq!(
+        run(engine, BNOT_ONE_SRC, "f"),
+        "4294967294",
+        "engine={engine}"
+    );
 }
 
 #[test]
-fn bnot_zero_vm() { check_bnot_zero("--vm"); }
+fn bnot_zero_vm() {
+    check_bnot_zero("--vm");
+}
 #[test]
-fn bnot_one_vm() { check_bnot_one("--vm"); }
+fn bnot_one_vm() {
+    check_bnot_one("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn bnot_zero_jit() { check_bnot_zero("--jit"); }
+fn bnot_zero_jit() {
+    check_bnot_zero("--jit");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn bnot_one_jit() { check_bnot_one("--jit"); }
+fn bnot_one_jit() {
+    check_bnot_one("--jit");
+}
 
 // --- bshl ---
 const BSHL_SRC: &str = "f>n;bshl 1 4";
@@ -92,10 +120,14 @@ fn check_bshl(engine: &str) {
 }
 
 #[test]
-fn bshl_vm() { check_bshl("--vm"); }
+fn bshl_vm() {
+    check_bshl("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn bshl_jit() { check_bshl("--jit"); }
+fn bshl_jit() {
+    check_bshl("--jit");
+}
 
 // --- bshr ---
 const BSHR_SRC: &str = "f>n;bshr 256 3";
@@ -105,10 +137,14 @@ fn check_bshr(engine: &str) {
 }
 
 #[test]
-fn bshr_vm() { check_bshr("--vm"); }
+fn bshr_vm() {
+    check_bshr("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn bshr_jit() { check_bshr("--jit"); }
+fn bshr_jit() {
+    check_bshr("--jit");
+}
 
 // --- brot ---
 const BROT_1_1_SRC: &str = "f>n;brot 1 1";
@@ -118,19 +154,31 @@ fn check_brot_1_1(engine: &str) {
     assert_eq!(run(engine, BROT_1_1_SRC, "f"), "2", "engine={engine}");
 }
 fn check_brot_1_31(engine: &str) {
-    assert_eq!(run(engine, BROT_1_31_SRC, "f"), "2147483648", "engine={engine}");
+    assert_eq!(
+        run(engine, BROT_1_31_SRC, "f"),
+        "2147483648",
+        "engine={engine}"
+    );
 }
 
 #[test]
-fn brot_1_1_vm() { check_brot_1_1("--vm"); }
+fn brot_1_1_vm() {
+    check_brot_1_1("--vm");
+}
 #[test]
-fn brot_1_31_vm() { check_brot_1_31("--vm"); }
+fn brot_1_31_vm() {
+    check_brot_1_31("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn brot_1_1_jit() { check_brot_1_1("--jit"); }
+fn brot_1_1_jit() {
+    check_brot_1_1("--jit");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn brot_1_31_jit() { check_brot_1_31("--jit"); }
+fn brot_1_31_jit() {
+    check_brot_1_31("--jit");
+}
 
 // --- mod 2^32 wrap: values > 2^32 are truncated ---
 // 2^32 = 4294967296; as u32 it wraps to 0. band(0, 1) = 0.
@@ -141,10 +189,14 @@ fn check_mod_wrap(engine: &str) {
 }
 
 #[test]
-fn mod_wrap_vm() { check_mod_wrap("--vm"); }
+fn mod_wrap_vm() {
+    check_mod_wrap("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn mod_wrap_jit() { check_mod_wrap("--jit"); }
+fn mod_wrap_jit() {
+    check_mod_wrap("--jit");
+}
 
 // --- shift amount mod 32: bshl 1 32 == bshl 1 0 == 1 ---
 const SHIFT_MOD_SRC: &str = "f>n;bshl 1 32";
@@ -154,7 +206,11 @@ fn check_shift_mod(engine: &str) {
 }
 
 #[test]
-fn shift_mod_vm() { check_shift_mod("--vm"); }
+fn shift_mod_vm() {
+    check_shift_mod("--vm");
+}
 #[test]
 #[cfg(feature = "cranelift")]
-fn shift_mod_jit() { check_shift_mod("--jit"); }
+fn shift_mod_jit() {
+    check_shift_mod("--jit");
+}

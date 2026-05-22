@@ -187,6 +187,24 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
             out.push_str(&fmt_type(target));
         }
 
+        Decl::SumType { name, variants, .. } => {
+            out.push_str("type ");
+            out.push_str(name);
+            out.push_str(" =");
+            for (i, v) in variants.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(" |");
+                }
+                out.push(' ');
+                out.push_str(&v.name);
+                if let Some(ty) = &v.payload {
+                    out.push('(');
+                    out.push_str(&fmt_type(ty));
+                    out.push(')');
+                }
+            }
+        }
+
         Decl::Use { .. } => {}   // resolved before codegen — skip
         Decl::Error { .. } => {} // poison node — skip
     }
@@ -319,13 +337,20 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
             binding,
             start,
             end,
+            step,
             body,
         } => {
+            let step_part = if let Some(st) = step {
+                format!(" by {}", fmt_expr(st, FmtMode::Dense))
+            } else {
+                String::new()
+            };
             format!(
-                "@{} {}..{}{{{}}}",
+                "@{} {}..{}{}{{{}}}",
                 binding,
                 fmt_expr(start, FmtMode::Dense),
                 fmt_expr(end, FmtMode::Dense),
+                step_part,
                 fmt_body_dense(body)
             )
         }
@@ -340,6 +365,13 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
         Stmt::Break(Some(e)) => format!("brk {}", fmt_expr(e, FmtMode::Dense)),
         Stmt::Break(None) => "brk".to_string(),
         Stmt::Continue => "cnt".to_string(),
+        Stmt::Defer { expr, kind } => {
+            let kw = match kind {
+                DeferKind::Always => "defer",
+                DeferKind::OnError => "errdefer",
+            };
+            format!("{} {}", kw, fmt_expr(expr, FmtMode::Dense))
+        }
         Stmt::Expr(e) => fmt_expr(e, FmtMode::Dense),
     }
 }
@@ -441,6 +473,7 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
             binding,
             start,
             end,
+            step,
             body,
         } => {
             out.push_str(&ind);
@@ -451,6 +484,10 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
             out.push_str(&fmt_expr(start, FmtMode::Expanded));
             out.push_str("..");
             out.push_str(&fmt_expr(end, FmtMode::Expanded));
+            if let Some(st) = step {
+                out.push_str(" by ");
+                out.push_str(&fmt_expr(st, FmtMode::Expanded));
+            }
             out.push_str(" {\n");
             fmt_body_expanded(out, body, indent_level + 1);
             out.push_str(&ind);
@@ -484,6 +521,17 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
         Stmt::Continue => {
             out.push_str(&ind);
             out.push_str("cnt\n");
+        }
+        Stmt::Defer { expr, kind } => {
+            let kw = match kind {
+                DeferKind::Always => "defer",
+                DeferKind::OnError => "errdefer",
+            };
+            out.push_str(&ind);
+            out.push_str(kw);
+            out.push(' ');
+            out.push_str(&fmt_expr(expr, FmtMode::Expanded));
+            out.push('\n');
         }
         Stmt::Expr(e) => {
             out.push_str(&ind);
@@ -581,6 +629,13 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
             let items_str: Vec<String> = items.iter().map(|i| fmt_expr(i, mode)).collect();
             format!("[{}]", items_str.join(", "))
         }
+        Expr::AnonRecord { fields } => {
+            let fields_str: Vec<String> = fields
+                .iter()
+                .map(|(n, v)| format!("{}:{}", n, fmt_expr(v, mode)))
+                .collect();
+            format!("{{{}}}", fields_str.join(" "))
+        }
         Expr::Record { type_name, fields } => {
             if fields.is_empty() {
                 return type_name.clone();
@@ -631,6 +686,8 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
             let caps: Vec<String> = captures.iter().map(|c| fmt_expr(c, mode)).collect();
             format!("{}[{}]", fn_name, caps.join(" "))
         }
+        Expr::Todo(reason) => format!("todo {}", fmt_expr(reason, mode)),
+        Expr::Panic(reason) => format!("panic {}", fmt_expr(reason, mode)),
     }
 }
 
@@ -643,6 +700,11 @@ fn fmt_pattern(pat: &Pattern) -> String {
         Pattern::Err(binding) => format!("^{}", binding),
         Pattern::Literal(lit) => fmt_literal(lit),
         Pattern::TypeIs { ty, binding } => format!("{} {}", fmt_type(ty), binding),
+        Pattern::Variant { tag, binding } => match binding {
+            Some(b) => format!("{tag}({b})"),
+            None => tag.clone(),
+        },
+        Pattern::Or(alts) => alts.iter().map(fmt_pattern).collect::<Vec<_>>().join("|"),
     }
 }
 
@@ -1278,6 +1340,10 @@ mod tests {
         let use_decl = Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
             span: Span::UNKNOWN,
         };
         let s = format_decl(&use_decl, FmtMode::Dense);

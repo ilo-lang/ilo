@@ -91,6 +91,7 @@ fn stmt_uses_rd(stmt: &Stmt) -> bool {
         Stmt::Break(Some(e)) => expr_uses_rd(e),
         Stmt::Break(None) | Stmt::Continue => false,
         Stmt::Destructure { value, .. } => expr_uses_rd(value),
+        Stmt::Defer { expr, .. } => expr_uses_rd(expr),
         Stmt::Expr(e) => expr_uses_rd(e),
     }
 }
@@ -105,7 +106,9 @@ fn expr_uses_rd(expr: &Expr) -> bool {
         Expr::Ok(e) | Expr::Err(e) => expr_uses_rd(e),
         Expr::Field { object, .. } | Expr::Index { object, .. } => expr_uses_rd(object),
         Expr::List(items) => items.iter().any(expr_uses_rd),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_uses_rd(e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_uses_rd(e))
+        }
         Expr::Match { subject, arms } => {
             subject.as_ref().is_some_and(|s| expr_uses_rd(s))
                 || arms
@@ -154,6 +157,7 @@ fn stmt_uses_unwrap(stmt: &Stmt) -> bool {
         Stmt::Break(None) => false,
         Stmt::Continue => false,
         Stmt::Destructure { value, .. } => expr_uses_unwrap(value),
+        Stmt::Defer { expr, .. } => expr_uses_unwrap(expr),
         Stmt::Expr(e) => expr_uses_unwrap(e),
     }
 }
@@ -171,7 +175,9 @@ fn expr_uses_unwrap(expr: &Expr) -> bool {
         Expr::Ok(e) | Expr::Err(e) => expr_uses_unwrap(e),
         Expr::Field { object, .. } | Expr::Index { object, .. } => expr_uses_unwrap(object),
         Expr::List(items) => items.iter().any(expr_uses_unwrap),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_uses_unwrap(e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_uses_unwrap(e))
+        }
         Expr::Match { subject, arms } => {
             subject.as_ref().is_some_and(|s| expr_uses_unwrap(s))
                 || arms
@@ -260,6 +266,18 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
             indent(out, level);
             out.push_str(&format!("# alias {} = {}\n", name, emit_type(target)));
         }
+        Decl::SumType { name, variants, .. } => {
+            indent(out, level);
+            out.push_str(&format!("# sum type {name}\n"));
+            for v in variants {
+                indent(out, level);
+                if let Some(ty) = &v.payload {
+                    out.push_str(&format!("# {}({}) -> {name}\n", v.name, emit_type(ty)));
+                } else {
+                    out.push_str(&format!("# {} -> {name}\n", v.name));
+                }
+            }
+        }
         Decl::Use { .. } => {}   // resolved before codegen — skip
         Decl::Error { .. } => {} // poison node — skip
     }
@@ -344,17 +362,29 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             binding,
             start,
             end,
+            step,
             body,
         } => {
             let s = emit_expr(out, level, start);
             let e = emit_expr(out, level, end);
             indent(out, level);
-            out.push_str(&format!(
-                "for {} in range(int({}), int({})):\n",
-                py_name(binding),
-                s,
-                e
-            ));
+            if let Some(step_expr) = step {
+                let st = emit_expr(out, level, step_expr);
+                out.push_str(&format!(
+                    "for {} in range(int({}), int({}), int({})):\n",
+                    py_name(binding),
+                    s,
+                    e,
+                    st
+                ));
+            } else {
+                out.push_str(&format!(
+                    "for {} in range(int({}), int({})):\n",
+                    py_name(binding),
+                    s,
+                    e
+                ));
+            }
             emit_body(out, body, level + 1, false);
         }
         Stmt::While { condition, body } => {
@@ -391,6 +421,13 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             } else {
                 out.push_str(&format!("{}\n", val));
             }
+        }
+        Stmt::Defer { expr, .. } => {
+            // Python codegen: emit as a comment placeholder.
+            // Python transpilation does not implement defer semantics.
+            let _val = emit_expr(out, level, expr);
+            indent(out, level);
+            out.push_str("pass  # defer (not implemented in Python codegen)\n");
         }
     }
 }
@@ -450,6 +487,30 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                 indent(out, level + 1);
                 out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
             }
+            Pattern::Variant { tag, binding } => {
+                out.push_str(&format!(
+                    "{} isinstance({}, tuple) and {}[0] == \"{}\":\n",
+                    keyword, subj_str, subj_str, tag
+                ));
+                if let Some(b) = binding {
+                    indent(out, level + 1);
+                    out.push_str(&format!("{} = {}[1]\n", py_name(b), subj_str));
+                }
+            }
+            Pattern::Or(alts) => {
+                // Emit `if subj == alt1 or subj == alt2 or ...:`
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} == {}", subj_str, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "True".to_string(),
+                        _ => "False".to_string(), // unsupported alt type
+                    })
+                    .collect();
+                out.push_str(&format!("{} {}:\n", keyword, conds.join(" or ")));
+            }
         }
         emit_body(out, &arm.body, level + 1, true);
     }
@@ -462,7 +523,12 @@ fn arm_needs_statements(arm: &MatchArm) -> bool {
     // reference `_`. Plain wildcards also bind `_` to the subject, but the
     // ternary path special-cases that by inlining the subject expression.
     match &arm.pattern {
-        Pattern::Ok(_) | Pattern::Err(_) | Pattern::TypeIs { .. } => return true,
+        Pattern::Ok(_)
+        | Pattern::Err(_)
+        | Pattern::TypeIs { .. }
+        | Pattern::Variant {
+            binding: Some(_), ..
+        } => return true,
         Pattern::Wildcard if body_refs_underscore(&arm.body) => return true,
         _ => {}
     }
@@ -964,6 +1030,13 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             let items_str: Vec<String> = items.iter().map(|i| emit_expr(out, level, i)).collect();
             format!("[{}]", items_str.join(", "))
         }
+        Expr::AnonRecord { fields } => {
+            let mut parts = Vec::new();
+            for (name, val) in fields {
+                parts.push(format!("\"{}\": {}", name, emit_expr(out, level, val)));
+            }
+            format!("{{{}}}", parts.join(", "))
+        }
         Expr::Record { type_name, fields } => {
             let mut parts = vec![format!("\"_type\": \"{}\"", type_name)];
             for (name, val) in fields {
@@ -1006,6 +1079,14 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 format!(", {}", caps.join(", "))
             };
             format!("(lambda *_a: {}(*_a{}))", py_name(fn_name), cap_str)
+        }
+        Expr::Todo(reason) => {
+            let msg = emit_expr(out, level, reason);
+            format!("(_ := (_ for _ in ()).throw(NotImplementedError({msg})))")
+        }
+        Expr::Panic(reason) => {
+            let msg = emit_expr(out, level, reason);
+            format!("(_ := (_ for _ in ()).throw(RuntimeError({msg})))")
         }
     }
 }
@@ -1064,6 +1145,25 @@ fn emit_match_expr(
                     subj,
                     type_to_py(ty)
                 ));
+            }
+            Pattern::Variant { tag, .. } => {
+                parts.push(format!(
+                    "{} if isinstance({}, tuple) and {}[0] == \"{}\" else",
+                    arm_val, subj, subj, tag
+                ));
+            }
+            Pattern::Or(alts) => {
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} == {}", subj, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "True".to_string(),
+                        _ => "False".to_string(),
+                    })
+                    .collect();
+                parts.push(format!("{} if {} else", arm_val, conds.join(" or ")));
             }
         }
     }
@@ -1137,6 +1237,29 @@ fn emit_match_expr_complex(
                 ));
                 indent(out, level + 1);
                 out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
+            }
+            Pattern::Variant { tag, binding } => {
+                out.push_str(&format!(
+                    "{} isinstance({}, tuple) and {}[0] == \"{}\":\n",
+                    keyword, subj_str, subj_str, tag
+                ));
+                if let Some(b) = binding {
+                    indent(out, level + 1);
+                    out.push_str(&format!("{} = {}[1]\n", py_name(b), subj_str));
+                }
+            }
+            Pattern::Or(alts) => {
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} == {}", subj_str, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "True".to_string(),
+                        _ => "False".to_string(),
+                    })
+                    .collect();
+                out.push_str(&format!("{} {}:\n", keyword, conds.join(" or ")));
             }
         }
         emit_match_arm_body_to_tmp(out, &arm.body, level + 1, &tmp);
@@ -2108,6 +2231,7 @@ mod tests {
         use crate::ast::*;
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".into(),
                 params: vec![Param {
                     name: "s".into(),
@@ -2207,6 +2331,10 @@ mod tests {
         prog.declarations.push(Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            reexport: false,
             span: Span::UNKNOWN,
         });
         let py = emit(&prog);

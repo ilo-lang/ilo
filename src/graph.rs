@@ -89,6 +89,11 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 collect_calls(arg, calls, types);
             }
         }
+        Expr::AnonRecord { fields } => {
+            for (_, val) in fields {
+                collect_calls(val, calls, types);
+            }
+        }
         Expr::Record {
             type_name, fields, ..
         } => {
@@ -148,6 +153,7 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 collect_calls(cap, calls, types);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => collect_calls(inner, calls, types),
         Expr::Literal(_) | Expr::Ref(_) => {}
     }
 }
@@ -190,10 +196,17 @@ fn collect_stmts(
                 collect_stmts(body, calls, types);
             }
             Stmt::ForRange {
-                start, end, body, ..
+                start,
+                end,
+                step,
+                body,
+                ..
             } => {
                 collect_calls(start, calls, types);
                 collect_calls(end, calls, types);
+                if let Some(st) = step {
+                    collect_calls(st, calls, types);
+                }
                 collect_stmts(body, calls, types);
             }
             Stmt::While { condition, body } => {
@@ -205,6 +218,7 @@ fn collect_stmts(
             Stmt::Expr(expr) => collect_calls(expr, calls, types),
             Stmt::Destructure { value, .. } => collect_calls(value, calls, types),
             Stmt::Break(None) | Stmt::Continue => {}
+            Stmt::Defer { expr, .. } => collect_calls(expr, calls, types),
         }
     }
 }
@@ -226,8 +240,14 @@ fn collect_type_refs(ty: &Type, refs: &mut BTreeSet<String>) {
             }
             collect_type_refs(ret, refs);
         }
-        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any
-        | Type::U32 | Type::U64 | Type::I64 => {}
+        Type::Sum(_)
+        | Type::Number
+        | Type::Text
+        | Type::Bool
+        | Type::Any
+        | Type::U32
+        | Type::U64
+        | Type::I64 => {}
     }
 }
 
@@ -273,7 +293,7 @@ pub fn build_graph(program: &Program) -> ProgramGraph {
         .declarations
         .iter()
         .filter_map(|d| match d {
-            Decl::TypeDef { name, .. } => Some(name.clone()),
+            Decl::TypeDef { name, .. } | Decl::SumType { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
@@ -374,7 +394,9 @@ pub fn build_graph(program: &Program) -> ProgramGraph {
 /// Find a declaration by name.
 fn find_decl<'a>(program: &'a Program, name: &str) -> Option<&'a Decl> {
     program.declarations.iter().find(|d| match d {
-        Decl::Function { name: n, .. } | Decl::TypeDef { name: n, .. } => n == name,
+        Decl::Function { name: n, .. }
+        | Decl::TypeDef { name: n, .. }
+        | Decl::SumType { name: n, .. } => n == name,
         _ => false,
     })
 }

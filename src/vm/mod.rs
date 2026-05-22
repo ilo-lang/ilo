@@ -100,6 +100,10 @@ pub enum CompileError {
         #[allow(dead_code)]
         span: crate::ast::Span,
     },
+    /// Sum types with payloads are not yet natively compiled by the VM.
+    /// The caller should fall back to the tree interpreter.
+    #[error("sum type `{name}` is not yet supported by the VM; falling back to tree interpreter")]
+    SumTypeNotSupported { name: String },
 }
 
 #[cfg(feature = "cranelift")]
@@ -174,6 +178,22 @@ pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in 
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
 pub(crate) const OP_SEED: u8 = 190; // seed(R[B]) — set shared PRNG state; R[A] = Nil
+
+// ── Defer opcodes ────────────────────────────────────────────────────────────
+// OP_DEFER_PUSH  ABC: push a deferred callable onto the current frame's defer
+//   stack.  A = register holding a FnRef or Closure (0-arg callable); B = kind
+//   byte (0 = always, 1 = on-error only).  The NanVal is RC-cloned into the
+//   frame's per-frame Vec.
+pub(crate) const OP_DEFER_PUSH: u8 = 191;
+
+// OP_DEFER_DRAIN ABx: drain the current frame's defer stack before returning.
+//   A = the register that holds the about-to-be-returned value (used to decide
+//   whether the exit is an error so errdefer entries fire correctly).
+//   Pops every entry from the defer stack in LIFO order; entries with kind=0
+//   (always) are always called; kind=1 (errdefer) are called only when R[A]
+//   carries a TAG_ERR value.  Call errors are silently swallowed so that a
+//   failing defer cannot hide the real return value.
+pub(crate) const OP_DEFER_DRAIN: u8 = 192;
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
@@ -611,6 +631,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::RgxallMulti, 2) => true,
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
+        (Builtin::RdJson, 1) => true,
         (Builtin::Rdb, 2) => true,
         // Filesystem enumeration: ls / walk / glob. No FnRef args, returns
         // R (L t) t, dispatched through the tree interpreter the same way
@@ -734,6 +755,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // wra path s - append text to file. Same bridge contract as wr 2-arg:
         // no FnRef args, returns R t t, round-trips cleanly through NanVal.
         (Builtin::Wra, 2) => true,
+        // wro path s - truncate-write text to file. Same bridge contract as wra:
+        // no FnRef args, returns R t t, round-trips cleanly through NanVal.
+        (Builtin::Wro, 2) => true,
         // dtparse-rel s now -> R n t. Pure (no FnRef, no I/O), returns Result.
         // Tree-bridge gives VM + Cranelift cross-engine parity for free.
         (Builtin::DtparseRel, 2) => true,
@@ -812,7 +836,18 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::B64, 1) => true,
         (Builtin::B64Dec, 1) => true,
         (Builtin::HexEnc, 1) => true,
+        (Builtin::HexRev, 1) => true,
         (Builtin::CtEq, 2) => true,
+        // Raw-bytes crypto (ILO-383). Pure text-in / text-out, no FnRef args,
+        // no I/O, no Result wrapper (errors propagate as ILO-R009 runtime errors
+        // through the standard tree-bridge error path). VM and Cranelift
+        // inherit cross-engine parity at zero opcode cost.
+        (Builtin::Sha256Hex, 1) => true,
+        (Builtin::Sha256d, 1) => true,
+        // tokcount s — bytes/3.4 token-count stub. Pure text-in / number-out,
+        // no FnRef args, no Result wrapper. Tree-bridge eligible; VM and
+        // Cranelift inherit cross-engine parity at zero opcode cost.
+        (Builtin::Tokcount, 1) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
@@ -826,6 +861,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Rsum, 2) => true,
         (Builtin::Ravg, 2) => true,
         (Builtin::Rmin, 2) => true,
+        // idxof s sub > O n — first code-point index of sub in s, nil when
+        // not found. Pure 2-arg text-in / option-n-out, no FnRef args, no
+        // I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in lockstep
+        // without a dedicated opcode.
+        (Builtin::Idxof, 2) => true,
         // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
         // args, no Result wrapper. Tree interpreter performs the element-wise
         // select; VM and Cranelift inherit through the bridge at zero opcode
@@ -877,6 +917,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     matches!(
         b,
         Builtin::Rd
+            | Builtin::RdJson
             | Builtin::Rdb
             | Builtin::Mapr
             | Builtin::Ls
@@ -891,6 +932,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Rdin
             | Builtin::Rdinl
             | Builtin::Wra
+            | Builtin::Wro
             | Builtin::DtparseRel
             | Builtin::DurParse
             | Builtin::GetTo
@@ -1003,6 +1045,17 @@ impl Chunk {
         idx
     }
 
+    fn patch_jump_to(&mut self, jump_pos: usize, target: usize) {
+        let offset_i32 = target as i32 - jump_pos as i32 - 1;
+        assert!(
+            offset_i32 >= i16::MIN as i32 && offset_i32 <= i16::MAX as i32,
+            "jump offset {offset_i32} exceeds i16 range — function body too large (max ~32K instructions)"
+        );
+        let offset = offset_i32 as i16;
+        let inst = self.code[jump_pos];
+        self.code[jump_pos] = (inst & 0xFFFF0000) | (offset as u16 as u32);
+    }
+
     fn patch_jump(&mut self, jump_pos: usize) {
         let target = self.code.len();
         let offset_i32 = target as i32 - jump_pos as i32 - 1;
@@ -1062,11 +1115,18 @@ pub struct CompiledProgram {
     pub type_registry: TypeRegistry,
     /// Parallel to `func_names`/`chunks`: true if the function slot is a `tool` declaration.
     pub is_tool: Vec<bool>,
+    /// Parallel to `func_names`/`chunks`: true if the function contains `defer`/`errdefer`
+    /// and must be delegated to the tree-walker at runtime (OP_CALL bridge for internal calls).
+    pub is_defer_fn: Vec<bool>,
     /// Retained AST kept alive for the tree-bridge so it can resolve
     /// user-fn callbacks when HOFs (grp/uniqby/partition/srt-2arg) are
     /// dispatched via the bridge. Populated by `compile()`. Cheap clone
     /// behind an `Arc`; the bridge only needs a read-only view.
     pub ast: Option<std::sync::Arc<Program>>,
+    /// Functions that contain `defer`/`errdefer` statements are compiled to
+    /// stubs and delegated to the tree-walker at runtime. The VM does not yet
+    /// have native defer support (JIT bailout — v1 MVP).
+    pub defer_fns: std::collections::HashSet<String>,
 }
 
 impl CompiledProgram {
@@ -1773,6 +1833,24 @@ struct RegCompiler {
     /// covers the rebind shape; this flag covers the tail-position
     /// `mset m k v` shape inside helper fns reached via OP_CALL_OWN1.
     in_tail_position: bool,
+    /// Sum-type variant constructors: maps variant name → (type_id, tag_index, has_payload).
+    /// Registered during compile_program when a Decl::SumType is encountered.
+    /// type_id is the record type registered as `__variant_<typename>` with
+    /// fields ["tag", "payload"]. tag_index is the 0-based ordinal of the
+    /// variant within the sum type declaration.  has_payload is true when the
+    /// variant was declared with a payload argument (e.g. `circle(n)`).
+    variant_map: HashMap<String, (u16, usize, bool)>,
+    /// Set to true while lowering a function that contains at least one
+    /// `defer` / `errdefer` statement.  When true, `emit_ret` inserts an
+    /// OP_DEFER_DRAIN instruction immediately before every OP_RET.
+    current_fn_has_defer: bool,
+    /// Monotonic counter used to generate unique synthetic thunk names for
+    /// defer expressions: `__defer_0`, `__defer_1`, …
+    defer_thunk_counter: u32,
+    /// Compiled thunk chunks collected during function-body compilation.
+    /// After all real function chunks are pushed, these are appended in
+    /// order so that chunk indices match func_names indices.
+    deferred_thunk_chunks: Vec<Chunk>,
 }
 
 impl RegCompiler {
@@ -1796,6 +1874,10 @@ impl RegCompiler {
             current_fn_name: String::new(),
             current_fn_span: crate::ast::Span::UNKNOWN,
             in_tail_position: false,
+            variant_map: HashMap::new(),
+            current_fn_has_defer: false,
+            defer_thunk_counter: 0,
+            deferred_thunk_chunks: Vec::new(),
         }
     }
 
@@ -1857,6 +1939,17 @@ impl RegCompiler {
 
     fn emit_jmp_placeholder(&mut self) -> usize {
         self.emit_abx(OP_JMP, 0, 0)
+    }
+
+    /// Emit an OP_RET for `ret_reg`.  When the current function contains
+    /// defer/errdefer statements, inserts an OP_DEFER_DRAIN immediately
+    /// before the RET so all registered thunks fire before the frame is
+    /// torn down.
+    fn emit_ret(&mut self, ret_reg: u8) {
+        if self.current_fn_has_defer {
+            self.emit_abc(OP_DEFER_DRAIN, ret_reg, 0, 0);
+        }
+        self.emit_abx(OP_RET, ret_reg, 0);
     }
 
     fn emit_jump_to(&mut self, target: usize) {
@@ -2132,7 +2225,11 @@ impl RegCompiler {
     }
 
     fn compile_program(mut self, program: &Program) -> Result<CompiledProgram, CompileError> {
-        // Build type registry from TypeDefs
+        // Build type registry from TypeDefs and SumTypes.
+        // SumTypes are represented as 2-field heap records with type name
+        // `__variant_<typename>`, fields ["tag", "payload"].  The `tag` slot
+        // holds the variant's 0-based ordinal as a Number; `payload` holds the
+        // constructor argument (or Nil for payload-less variants).
         for decl in &program.declarations {
             if let Decl::TypeDef { name, fields, .. } = decl {
                 let field_names: Vec<String> = fields.iter().map(|p| p.name.clone()).collect();
@@ -2147,17 +2244,41 @@ impl RegCompiler {
             }
         }
 
-        // Track which function indices are tool declarations.
+        // Register sum-type variant record types and build variant_map.
+        for decl in &program.declarations {
+            if let Decl::SumType { name, variants, .. } = decl {
+                // Shared record type for all variants of this sum type.
+                // Fields: [0] = "tag" (numeric ordinal), [1] = "payload".
+                // Bit 0 of num_fields is set because field 0 ("tag") is always Number.
+                let type_name = format!("__variant_{}", name);
+                let type_id = self.type_registry.register(
+                    type_name,
+                    vec!["tag".to_string(), "payload".to_string()],
+                    0b01, // field 0 ("tag") is numeric
+                );
+                for (idx, v) in variants.iter().enumerate() {
+                    self.variant_map
+                        .insert(v.name.clone(), (type_id, idx, v.payload.is_some()));
+                }
+            }
+        }
+
+        // Track which function indices are tool declarations or defer-containing functions.
         let mut is_tool: Vec<bool> = Vec::new();
+        let mut is_defer_fn: Vec<bool> = Vec::new();
 
         for decl in &program.declarations {
             match decl {
                 Decl::Function {
-                    name, return_type, ..
+                    name,
+                    return_type,
+                    body,
+                    ..
                 } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
                     is_tool.push(false);
+                    is_defer_fn.push(body_has_defer(body));
                 }
                 Decl::Tool {
                     name, return_type, ..
@@ -2165,12 +2286,41 @@ impl RegCompiler {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
                     is_tool.push(true);
+                    is_defer_fn.push(false);
                 }
                 Decl::TypeDef { .. }
+                | Decl::SumType { .. }
                 | Decl::Alias { .. }
                 | Decl::Use { .. }
                 | Decl::Error { .. } => {}
             }
+        }
+
+        // Pre-register synthetic thunk names for every defer/errdefer site.
+        // compile_defer_thunk looks them up by name to get the chunk index,
+        // and compile_program inserts placeholder chunks here so the index
+        // slots exist before function bodies are compiled.
+        let total_defers: u32 = program
+            .declarations
+            .iter()
+            .filter_map(|d| {
+                if let Decl::Function { body, .. } = d {
+                    Some(count_defers_in_body(body))
+                } else {
+                    None
+                }
+            })
+            .sum();
+        for i in 0..total_defers {
+            let thunk_name = format!("__defer_{i}");
+            self.func_names.push(thunk_name);
+            self.func_return_types.push(crate::ast::Type::Any);
+            is_tool.push(false);
+            is_defer_fn.push(false);
+            // No placeholder chunk here — compile_defer_thunk pushes to
+            // self.deferred_thunk_chunks, which is appended to self.chunks
+            // after all real function chunks are compiled (preserving the
+            // func_names <-> chunk-index invariant).
         }
 
         for decl in &program.declarations {
@@ -2193,6 +2343,7 @@ impl RegCompiler {
                 self.max_reg = self.next_reg;
                 self.current_fn_name = name.clone();
                 self.current_fn_span = *span;
+                self.current_fn_has_defer = body_has_defer(body);
 
                 self.reg_is_num = [false; 256];
                 self.reg_is_str = [false; 256];
@@ -2225,21 +2376,31 @@ impl RegCompiler {
                     r
                 });
 
-                // Only emit RET if last instruction isn't already RET
-                let last_is_ret = self
-                    .current
-                    .code
-                    .last()
-                    .map(|inst| (inst >> 24) as u8 == OP_RET)
-                    .unwrap_or(false);
-                if !last_is_ret {
-                    self.emit_abx(OP_RET, ret_reg, 0);
+                // Only skip the final RET if `compile_body` itself produced no
+                // fall-through value (result == None), meaning every path
+                // already ends with an explicit `ret` statement. When result
+                // is Some(_), the last expression may have been after a guard
+                // whose body contained a `ret`, so the last emitted instruction
+                // could be OP_RET even though the fall-through path still needs
+                // one. Emitting an unconditional RET when `result` is Some is
+                // always correct.
+                if result.is_some() {
+                    self.emit_ret(ret_reg);
+                } else {
+                    // result == None: last stmt was a Stmt::Return or similar
+                    // non-value producer. If the last instruction is already
+                    // OP_RET (e.g. from Stmt::Return), skip to avoid double-ret.
+                    let last_op = self.current.code.last().map(|inst| (inst >> 24) as u8);
+                    if last_op != Some(OP_RET) {
+                        self.emit_ret(ret_reg);
+                    }
                 }
 
                 self.current.reg_count = self.max_reg;
                 if self.current_all_regs_numeric {
                     self.current.all_regs_numeric = chunk_is_all_numeric(&self.current);
                 }
+                self.current_fn_has_defer = false;
                 self.chunks.push(std::mem::take(&mut self.current));
             } else if let Decl::Tool { params, .. } = decl {
                 // Tool stub: emit LOADK Nil → WRAPOK → RET  (returns Ok(Nil))
@@ -2262,17 +2423,87 @@ impl RegCompiler {
             // TypeDef, Alias, Error — no chunk emitted (not in func_names)
         }
 
+        // Flush compiled thunk chunks after all real function/tool chunks.
+        // This preserves func_names[i] == self.chunks[i] for thunk indices.
+        for thunk_chunk in std::mem::take(&mut self.deferred_thunk_chunks) {
+            self.chunks.push(thunk_chunk);
+        }
+
         if let Some(e) = self.first_error {
             return Err(e);
         }
+
+        // Collect the names of functions that contain defer/errdefer.
+        // (No longer used for tree-bridge dispatch; kept for CompiledProgram metadata.)
+        let mut defer_fns = std::collections::HashSet::new();
+        for decl in &program.declarations {
+            if let Decl::Function { name, body, .. } = decl {
+                if body_has_defer(body) {
+                    defer_fns.insert(name.clone());
+                }
+            }
+        }
+
         Ok(CompiledProgram {
             chunks: self.chunks,
             func_names: self.func_names,
             nan_constants: Vec::new(),
             type_registry: self.type_registry,
             is_tool,
+            is_defer_fn,
             ast: None,
+            defer_fns,
         })
+    }
+
+    /// Emit a 2-field variant record: { tag: <tag_idx as Number>, payload: <payload_reg or Nil> }.
+    /// Returns the result register holding the new record.
+    fn emit_variant_record(&mut self, type_id: u16, tag_idx: usize, payload_reg: Option<u8>) -> u8 {
+        // Allocate tag constant
+        let tag_val = Value::Number(tag_idx as f64);
+        let tag_ki = self.current.add_const(tag_val);
+        let tag_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, tag_reg, tag_ki);
+        self.reg_is_num[tag_reg as usize] = true;
+
+        let payload_r = match payload_reg {
+            Some(r) => r,
+            None => {
+                let nil_ki = self.current.add_const(Value::Nil);
+                let nil_reg = self.alloc_reg();
+                self.emit_abx(OP_LOADK, nil_reg, nil_ki);
+                nil_reg
+            }
+        };
+
+        // OP_RECNEW: result in `a`, fields starting at `fields_base`.
+        // Layout: fields_base+0 = tag, fields_base+1 = payload.
+        // bx encodes (type_id << 8) | n_fields.
+        let a = self.alloc_reg();
+        let fields_base = self.next_reg;
+        // Ensure tag_reg and payload_r are in consecutive slots at fields_base.
+        if tag_reg != fields_base {
+            self.emit_abc(OP_MOVE, fields_base, tag_reg, 0);
+        }
+        self.next_reg = fields_base + 1;
+        if self.next_reg > self.max_reg {
+            self.max_reg = self.next_reg;
+        }
+        if payload_r != fields_base + 1 {
+            let _ = self.alloc_reg(); // reserve fields_base+1
+            self.emit_abc(OP_MOVE, fields_base + 1, payload_r, 0);
+        } else {
+            self.next_reg = fields_base + 2;
+            if self.next_reg > self.max_reg {
+                self.max_reg = self.next_reg;
+            }
+        }
+        let bx = (type_id << 8) | 2u16;
+        self.emit_abx(OP_RECNEW, a, bx);
+        self.reg_record_type[a as usize] = type_id;
+        // Reclaim scratch registers; only `a` stays live.
+        self.next_reg = a + 1;
+        a
     }
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
@@ -2309,6 +2540,13 @@ impl RegCompiler {
         }
         match stmt {
             Stmt::Let { name, value } => {
+                // `_=expr` — explicit discard bind. Compile value for side
+                // effects (IOs, tree-bridge calls) but do not allocate a
+                // register or add a local. `_` remains the wildcard/nil ref.
+                if name == "_" {
+                    self.compile_expr(value);
+                    return None;
+                }
                 if let Some(existing_reg) = self.resolve_local(name) {
                     // Peephole: `x = +x k` where k is a numeric literal and x is known numeric
                     // → emit ADDK_N/SUBK_N/MULK_N/DIVK_N directly into existing_reg (no temp + MOVE)
@@ -2677,7 +2915,7 @@ impl RegCompiler {
                         self.emit_abx(OP_LOADK, r, ki);
                         r
                     });
-                    self.emit_abx(OP_RET, ret_reg, 0);
+                    self.emit_ret(ret_reg);
                     self.current.patch_jump(jump);
                     self.next_reg = saved_next;
                     None
@@ -2802,11 +3040,22 @@ impl RegCompiler {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 // Evaluate start and end once
                 let start_reg = self.compile_expr(start);
                 let end_reg = self.compile_expr(end);
+
+                // Evaluate step (or use constant 1)
+                let step_reg = if let Some(step_expr) = step {
+                    self.compile_expr(step_expr)
+                } else {
+                    let one_ki = self.current.add_const(Value::Number(1.0));
+                    let r = self.alloc_reg();
+                    self.emit_abx(OP_LOADK, r, one_ki);
+                    r
+                };
 
                 let last_reg = self.alloc_reg();
                 let nil_ki = self.current.add_const(Value::Nil);
@@ -2817,8 +3066,6 @@ impl RegCompiler {
                 let counter_reg = self.alloc_reg();
                 self.emit_abc(OP_MOVE, counter_reg, start_reg, 0);
                 self.add_local(binding, counter_reg);
-
-                let one_ki = self.current.add_const(Value::Number(1.0));
 
                 // Loop top: check counter < end
                 let loop_top = self.current.code.len();
@@ -2856,14 +3103,8 @@ impl RegCompiler {
                     }
                 }
 
-                // counter += 1 (use ADDK_N when counter is known numeric)
-                if self.reg_is_num[counter_reg as usize] && one_ki <= 255 {
-                    self.emit_abc(OP_ADDK_N, counter_reg, counter_reg, one_ki as u8);
-                } else {
-                    let one_reg = self.alloc_reg();
-                    self.emit_abx(OP_LOADK, one_reg, one_ki);
-                    self.emit_abc(OP_ADD, counter_reg, counter_reg, one_reg);
-                }
+                // counter += step
+                self.emit_abc(OP_ADD, counter_reg, counter_reg, step_reg);
 
                 // Jump back to loop top
                 self.emit_jump_to(loop_top);
@@ -2922,7 +3163,7 @@ impl RegCompiler {
 
             Stmt::Return(expr) => {
                 let reg = self.compile_expr(expr);
-                self.emit_abx(OP_RET, reg, 0);
+                self.emit_ret(reg);
                 None
             }
 
@@ -2967,7 +3208,139 @@ impl RegCompiler {
                 let reg = self.compile_expr(expr);
                 Some(reg)
             }
+            Stmt::Defer { expr, kind } => {
+                // Compile the deferred expression as a synthetic zero-arg
+                // thunk chunk.  All current locals are passed as captures so
+                // the thunk sees the values they held at defer-registration
+                // time (snapshot by value, matching the tree-walker).
+                let kind_byte: u8 = match kind {
+                    crate::ast::DeferKind::Always => 0,
+                    crate::ast::DeferKind::OnError => 1,
+                };
+                let closure_reg = self.compile_defer_thunk(expr, kind_byte);
+                Some(closure_reg)
+            }
         }
+    }
+
+    /// Compile a deferred expression as a synthetic thunk and emit the
+    /// instructions that push it onto the current frame's defer stack.
+    ///
+    /// The thunk is a zero-capture-arg synthetic function whose parameter
+    /// list mirrors the current locals (so `expr` can reference any name
+    /// that is in scope at the `defer` site).  We compile the thunk's chunk
+    /// in a nested compiler state, then emit:
+    ///
+    ///   OP_LOADFN  fn_reg,   thunk_idx
+    ///   OP_MAKE_CLOSURE  closure_reg,  fn_reg,  N   [+ N/4 data words]
+    ///   OP_DEFER_PUSH    closure_reg,  kind,    0
+    ///
+    /// Returns the closure register (which callers can ignore; the push is
+    /// the side-effecting operation).
+    fn compile_defer_thunk(&mut self, expr: &Expr, kind: u8) -> u8 {
+        // Snapshot the locals visible at this defer site.
+        let captured_locals: Vec<(String, u8)> = self.locals.clone();
+
+        // Build the thunk name.
+        let thunk_name = format!("__defer_{}", self.defer_thunk_counter);
+        self.defer_thunk_counter += 1;
+
+        // The thunk index in func_names / chunks.  It was pre-registered by
+        // compile_program before the function-body loop, so we just look it up.
+        let thunk_fn_idx =
+            self.func_names
+                .iter()
+                .position(|n| n == &thunk_name)
+                .expect("defer thunk name must be pre-registered in func_names") as u16;
+
+        // Save compiler state for the enclosing function.
+        let saved_current = std::mem::take(&mut self.current);
+        let saved_locals = std::mem::take(&mut self.locals);
+        let saved_next = self.next_reg;
+        let saved_max = self.max_reg;
+        let saved_reg_is_num = self.reg_is_num;
+        let saved_reg_is_str = self.reg_is_str;
+        let saved_reg_record = self.reg_record_type;
+        let saved_all_numeric = self.current_all_regs_numeric;
+        let saved_fn_name = std::mem::take(&mut self.current_fn_name);
+        let saved_fn_span = self.current_fn_span;
+        let saved_in_tail = self.in_tail_position;
+        let saved_has_defer = self.current_fn_has_defer;
+
+        // Set up a new chunk for the thunk.  It receives N params — one per
+        // captured local — and evaluates `expr` using those params.
+        let n_caps = captured_locals.len() as u8;
+        self.current = Chunk::new(n_caps);
+        self.next_reg = n_caps;
+        self.max_reg = n_caps;
+        self.reg_is_num = [false; 256];
+        self.reg_is_str = [false; 256];
+        self.reg_record_type = [u16::MAX; 256];
+        self.current_all_regs_numeric = false; // conservative
+        self.current_fn_name = thunk_name.clone();
+        self.current_fn_span = self.current_span;
+        self.in_tail_position = true;
+        self.current_fn_has_defer = false; // thunks are never themselves defer-containing
+
+        // Re-establish locals as the captured params (in the same order so
+        // OP_MAKE_CLOSURE's register capture indices match).
+        self.locals.clear();
+        for (i, (name, _reg)) in captured_locals.iter().enumerate() {
+            self.locals.push((name.clone(), i as u8));
+        }
+
+        // Compile the expression body of the thunk.
+        let result_reg = self.compile_expr(expr);
+        self.emit_abx(OP_RET, result_reg, 0);
+
+        self.current.reg_count = self.max_reg;
+        let thunk_chunk = std::mem::take(&mut self.current);
+
+        // Restore enclosing function compiler state.
+        self.current = saved_current;
+        self.locals = saved_locals;
+        self.next_reg = saved_next;
+        self.max_reg = saved_max;
+        self.reg_is_num = saved_reg_is_num;
+        self.reg_is_str = saved_reg_is_str;
+        self.reg_record_type = saved_reg_record;
+        self.current_all_regs_numeric = saved_all_numeric;
+        self.current_fn_name = saved_fn_name;
+        self.current_fn_span = saved_fn_span;
+        self.in_tail_position = saved_in_tail;
+        self.current_fn_has_defer = saved_has_defer;
+
+        // Append the thunk chunk to the deferred side-channel.
+        // compile_program will flush self.deferred_thunk_chunks into self.chunks
+        // after all real function chunks are pushed, preserving the
+        // func_names[i] == self.chunks[i] invariant.
+        self.deferred_thunk_chunks.push(thunk_chunk);
+
+        // Emit instructions in the enclosing function to build the closure.
+        let fn_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADFN, fn_reg, thunk_fn_idx);
+
+        let closure_reg = self.alloc_reg();
+        // The closure captures all locals that were in scope at the defer site.
+        let n = captured_locals.len();
+        self.emit_abc(OP_MAKE_CLOSURE, closure_reg, fn_reg, n as u8);
+        // Pack capture source register indices 4 per 32-bit data word.
+        let n_words = n.div_ceil(4);
+        for w in 0..n_words {
+            let mut word: u32 = 0;
+            for slot in 0..4usize {
+                let i = w * 4 + slot;
+                if i < n {
+                    word |= (captured_locals[i].1 as u32) << (slot * 8);
+                }
+            }
+            self.current.emit(word, self.current_span);
+        }
+
+        // Push the closure onto the frame's defer stack.
+        self.emit_abc(OP_DEFER_PUSH, closure_reg, kind, 0);
+
+        closure_reg
     }
 
     fn compile_match_arms(&mut self, sub_reg: u8, result_reg: u8, arms: &[MatchArm]) {
@@ -3088,6 +3461,150 @@ impl RegCompiler {
                     }
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
+                }
+                Pattern::Variant { tag, binding } => {
+                    // Sum-type variant pattern: check sub_reg.tag == expected_idx,
+                    // optionally bind sub_reg.payload.
+                    //
+                    // Emitted sequence:
+                    //   tag_reg  = OP_RECFLD sub_reg, 0    ; extract tag field
+                    //   cmp_reg  = OP_LOADK  <tag_idx>
+                    //   eq_reg   = OP_EQ     tag_reg, cmp_reg
+                    //              OP_JMPF  eq_reg, <skip>
+                    //   [bind_reg = OP_RECFLD sub_reg, 1]   ; if binding present
+                    //   <body>
+                    //   OP_JMP <end>          ; added to end_jumps
+                    // skip:
+                    if let Some(&(type_id, tag_idx, _)) = self.variant_map.get(tag) {
+                        // Extract the tag field (index 0).
+                        let tag_reg = self.alloc_reg();
+                        self.emit_abc(OP_RECFLD, tag_reg, sub_reg, 0);
+                        self.reg_is_num[tag_reg as usize] = true;
+
+                        // Load the expected tag index as a constant.
+                        let cmp_ki = self.current.add_const(Value::Number(tag_idx as f64));
+                        let cmp_reg = self.alloc_reg();
+                        self.emit_abx(OP_LOADK, cmp_reg, cmp_ki);
+                        self.reg_is_num[cmp_reg as usize] = true;
+
+                        // Compare and branch if not equal.
+                        let eq_reg = self.alloc_reg();
+                        self.emit_abc(OP_EQ, eq_reg, tag_reg, cmp_reg);
+                        let skip = self.emit_jmpf(eq_reg);
+
+                        // Optionally bind payload (field index 1).
+                        if let Some(bind_name) = binding {
+                            let bind_reg = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD, bind_reg, sub_reg, 1);
+                            self.reg_record_type[bind_reg as usize] = u16::MAX;
+                            self.add_local(bind_name, bind_reg);
+                        }
+
+                        let body_result = self.compile_body(&arm.body);
+                        if let Some(br) = body_result
+                            && br != result_reg
+                        {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                        end_jumps.push(self.emit_jmp_placeholder());
+                        self.current.patch_jump(skip);
+                        let _ = type_id; // type_id used for future type-tracking
+                    } else if tag == "nil" {
+                        // `nil:` was emitted as Pattern::Variant { tag: "nil" } by the
+                        // parser (to also cover sum-type variants named `nil`).  When
+                        // the variant_map has no `nil` entry the subject is a plain
+                        // Optional/nil value, so fall back to a nil-literal equality
+                        // check — same code path as the old Pattern::Literal(Nil) arm.
+                        let nil_ki = self.current.add_const(Value::Nil);
+                        let nil_reg = self.alloc_reg();
+                        self.emit_abx(OP_LOADK, nil_reg, nil_ki);
+                        let eq_reg = self.alloc_reg();
+                        self.emit_abc(OP_EQ, eq_reg, sub_reg, nil_reg);
+                        let skip = self.emit_jmpf(eq_reg);
+
+                        let body_result = self.compile_body(&arm.body);
+                        if let Some(br) = body_result
+                            && br != result_reg
+                        {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                        end_jumps.push(self.emit_jmp_placeholder());
+                        self.current.patch_jump(skip);
+                    } else {
+                        // Unknown variant tag — variant_map was not populated
+                        // (e.g. the variant is from a type defined elsewhere).
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: tag.clone() });
+                    }
+                }
+
+                Pattern::Or(alts) => {
+                    // Emit: if alt1 matches OR alt2 matches OR ... → body, else skip.
+                    // Strategy: for each alt except the last, if it matches jump to body.
+                    // If the last alt doesn't match, jump to skip (past body).
+                    let mut to_body: Vec<usize> = Vec::new();
+                    for (i, alt) in alts.iter().enumerate() {
+                        let is_last = i == alts.len() - 1;
+                        match alt {
+                            Pattern::Literal(lit) => {
+                                let val = match lit {
+                                    Literal::Number(n) => Value::Number(*n),
+                                    Literal::Text(s) => Value::Text(Arc::new(s.clone())),
+                                    Literal::Bool(b) => Value::Bool(*b),
+                                    Literal::Nil => Value::Nil,
+                                };
+                                let const_reg = self.alloc_reg();
+                                let ki = self.current.add_const(val);
+                                self.emit_abx(OP_LOADK, const_reg, ki);
+                                let eq_reg = self.alloc_reg();
+                                self.emit_abc(OP_EQ, eq_reg, sub_reg, const_reg);
+                                if is_last {
+                                    // Last alt: if false skip to next arm
+                                    let skip = self.emit_jmpf(eq_reg);
+                                    // Patch all "to_body" jumps to here (body start)
+                                    let body_pos = self.current.code.len();
+                                    for tb in &to_body {
+                                        self.current.patch_jump_to(*tb, body_pos);
+                                    }
+                                    let body_result = self.compile_body(&arm.body);
+                                    if let Some(br) = body_result
+                                        && br != result_reg
+                                    {
+                                        self.emit_abc(OP_MOVE, result_reg, br, 0);
+                                    }
+                                    end_jumps.push(self.emit_jmp_placeholder());
+                                    self.current.patch_jump(skip);
+                                } else {
+                                    // Non-last: if true jump to body
+                                    to_body.push(self.emit_jmpt(eq_reg));
+                                }
+                            }
+                            Pattern::Wildcard => {
+                                // Wildcard always matches — patch to_body jumps then
+                                // fall through to body (no conditional needed).
+                                let body_pos = self.current.code.len();
+                                for tb in &to_body {
+                                    self.current.patch_jump_to(*tb, body_pos);
+                                }
+                                let bind_reg = self.alloc_reg();
+                                self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
+                                self.add_local("_", bind_reg);
+                                let body_result = self.compile_body(&arm.body);
+                                if let Some(br) = body_result
+                                    && br != result_reg
+                                {
+                                    self.emit_abc(OP_MOVE, result_reg, br, 0);
+                                }
+                                // This arm always matches — patch all end_jumps and return
+                                for j in end_jumps {
+                                    self.current.patch_jump(j);
+                                }
+                                return;
+                            }
+                            // Other pattern types in Or are not supported — skip silently
+                            _ => {}
+                        }
+                    }
                 }
             }
 
@@ -3615,6 +4132,20 @@ impl RegCompiler {
             Expr::Ref(name) => {
                 if let Some(reg) = self.resolve_local(name) {
                     reg // FREE — no instruction needed!
+                } else if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(name) {
+                    if !has_payload {
+                        // 0-payload variant used as a bare value: emit the 2-field
+                        // record (tag=tag_idx, payload=Nil) directly.
+                        self.emit_variant_record(type_id, tag_idx, None)
+                    } else {
+                        // Payload variant used as a bare reference (first-class
+                        // constructor value). This is uncommon; fall through to the
+                        // UndefinedVariable error path so callers get a clear message
+                        // rather than silent wrong behaviour.
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: name.clone() });
+                        0
+                    }
                 } else if let Some(idx) = self.func_names.iter().position(|n| n == name) {
                     // User function used as a value (passed to a HOF, stored,
                     // etc.). Encode as a FnRef NanVal via OP_LOADFN. Bx high
@@ -3633,6 +4164,15 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     let bx = 0x8000u16 | (b.tag() as u16);
                     self.emit_abx(OP_LOADFN, ra, bx);
+                    ra
+                } else if name == "nil" {
+                    // `nil` is emitted as Expr::Ref("nil") by the parser so that
+                    // sum-type variants named `nil` resolve via variant_map above.
+                    // When no such variant is registered, fall back to loading the
+                    // built-in nil constant (backward-compatible Optional / nil usage).
+                    let ra = self.alloc_reg();
+                    let ki = self.current.add_const(Value::Nil);
+                    self.emit_abx(OP_LOADK, ra, ki);
                     ra
                 } else {
                     self.first_error
@@ -5472,6 +6012,27 @@ impl RegCompiler {
                     return a;
                 }
 
+                // ── Sum-type variant constructor ──────────────────────────────
+                // Intercept calls like `circle 5` or `point` where `circle`/`point`
+                // are variant names registered in variant_map.  Emit inline record
+                // construction (OP_RECNEW) rather than a function call.
+                if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(function) {
+                    let payload_reg = if has_payload {
+                        if args.len() == 1 {
+                            Some(self.compile_expr(&args[0]))
+                        } else {
+                            self.first_error
+                                .get_or_insert(CompileError::UndefinedFunction {
+                                    name: function.clone(),
+                                });
+                            return 0;
+                        }
+                    } else {
+                        None
+                    };
+                    return self.emit_variant_record(type_id, tag_idx, payload_reg);
+                }
+
                 // Compiling args of this call: each arg is NOT in tail
                 // position, even if the outer call itself is. The
                 // top-of-compile_expr clear already zeroed
@@ -5774,6 +6335,81 @@ impl RegCompiler {
                         // the next item starts from the same low watermark.
                         self.next_reg = after_result;
                     }
+                    a
+                }
+            }
+
+            Expr::AnonRecord { fields } => {
+                // Anonymous record: synthesize a stable type name from the sorted
+                // field list so that two literals with the same shape share one
+                // registry entry (matching the structural unification the verifier
+                // promises). The name is internal — agents never see it.
+                let mut sorted_names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                sorted_names.sort_unstable();
+                let type_name = format!("__anon_{}", sorted_names.join("_"));
+                let fields_owned: Vec<(String, _)> = fields.clone();
+                // Delegate to the same logic as named Record by building an
+                // owned Vec and reusing the same bytecode path inline.
+                let type_id = match self.type_registry.name_to_id.get(&type_name) {
+                    Some(&id) => id,
+                    None => {
+                        let field_names: Vec<String> =
+                            fields_owned.iter().map(|(n, _)| n.clone()).collect();
+                        self.type_registry
+                            .register(type_name.clone(), field_names, 0)
+                    }
+                };
+                let canonical_order: Vec<String> =
+                    self.type_registry.types[type_id as usize].fields.clone();
+                let source_fields: HashMap<&str, &Expr> =
+                    fields_owned.iter().map(|(n, e)| (n.as_str(), e)).collect();
+                let n = canonical_order.len();
+                let pre_reg = self.next_reg as usize;
+                let fits_contiguous = n <= 255 && type_id <= 255 && pre_reg + 2 * n < 255;
+                assert!(
+                    type_id <= 255,
+                    "type_id {} exceeds 8-bit limit in OP_RECNEW",
+                    type_id
+                );
+                if fits_contiguous {
+                    let ordered_regs: Vec<u8> = canonical_order
+                        .iter()
+                        .map(|fname| {
+                            let expr = source_fields[fname.as_str()];
+                            self.compile_expr(expr)
+                        })
+                        .collect();
+                    let a = self.alloc_reg();
+                    let fields_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + ordered_regs.len() <= 255,
+                        "register overflow: anonymous record literal requires too many register slots"
+                    );
+                    self.next_reg += ordered_regs.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
+                    }
+                    for (i, &field_reg) in ordered_regs.iter().enumerate() {
+                        let target = fields_base + i as u8;
+                        if field_reg != target {
+                            self.emit_abc(OP_MOVE, target, field_reg, 0);
+                        }
+                    }
+                    let bx = (type_id << 8) | ordered_regs.len() as u16;
+                    self.emit_abx(OP_RECNEW, a, bx);
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                } else {
+                    let a = self.alloc_reg();
+                    self.emit_abx(OP_RECNEW_EMPTY, a, type_id);
+                    let after_result = self.next_reg;
+                    for (i, fname) in canonical_order.iter().enumerate() {
+                        let expr = source_fields[fname.as_str()];
+                        let val_reg = self.compile_expr(expr);
+                        self.emit_abc(OP_RECSETFIELD, a, val_reg, i as u8);
+                        self.next_reg = after_result;
+                    }
+                    self.reg_record_type[a as usize] = type_id;
                     a
                 }
             }
@@ -6113,6 +6749,17 @@ impl RegCompiler {
                     }
                     self.current.emit(word, self.current_span);
                 }
+                dest
+            }
+            // `todo "reason"` / `panic "reason"`: compile reason, wrap as
+            // Err, then OP_PANIC_UNWRAP to abort with the message. The
+            // returned dest register is never read (execution halts at the
+            // panic), but we allocate one to satisfy the register contract.
+            Expr::Todo(reason) | Expr::Panic(reason) => {
+                let dest = self.alloc_reg();
+                let reason_reg = self.compile_expr(reason);
+                self.emit_abc(OP_WRAPERR, reason_reg, reason_reg, 0);
+                self.emit_abc(OP_PANIC_UNWRAP, 0, reason_reg, 0);
                 dest
             }
         }
@@ -6799,6 +7446,12 @@ enum HeapObj {
         id: u32,
         captures: Vec<NanVal>,
     },
+    /// Lazy stdin line iterator — produced by `for-line stdin` (ILO-70).
+    /// Wraps the tree-level StdinLinesHandle so the VM's OP_FOREACH can
+    /// drain it one line at a time without converting to a List first.
+    /// The Arc makes this cheaply cloneable; the Mutex enables interior
+    /// mutability across the VM's ownership model.
+    LazyStdinLines(crate::interpreter::StdinLinesHandle),
 }
 
 impl Drop for HeapObj {
@@ -6834,6 +7487,10 @@ impl Drop for HeapObj {
                 for v in captures {
                     v.drop_rc();
                 }
+            }
+            HeapObj::LazyStdinLines(_) => {
+                // The Arc inside StdinLinesHandle is cheaply dropped (refcount decrement).
+                // No NanVal children to drop_rc.
             }
         }
     }
@@ -6874,10 +7531,10 @@ fn materialize_list_view(v: NanVal) -> NanVal {
                 .collect();
             NanVal::heap_list(items)
         }
-        // Tag-checked above, so unreachable for these variants. Closure
-        // shares TAG_LIST but is not list-shaped — materialize_list_view is
-        // a no-op for closures (they don't have a list-view sibling).
-        HeapObj::Closure { .. } => v,
+        // Tag-checked above, so unreachable for these variants. Closure and
+        // LazyStdinLines share TAG_LIST but are not list-shaped — materialize
+        // is a no-op for them.
+        HeapObj::Closure { .. } | HeapObj::LazyStdinLines(_) => v,
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
@@ -6935,7 +7592,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         | HeapObj::Record { .. }
         | HeapObj::OkVal(_)
         | HeapObj::ErrVal(_)
-        | HeapObj::Closure { .. } => {
+        | HeapObj::Closure { .. }
+        | HeapObj::LazyStdinLines(_) => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -6969,7 +7627,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
                 | HeapObj::Record { .. }
                 | HeapObj::OkVal(_)
                 | HeapObj::ErrVal(_)
-                | HeapObj::Closure { .. } => {
+                | HeapObj::Closure { .. }
+                | HeapObj::LazyStdinLines(_) => {
                     debug_assert!(false, "ListView::src does not reference HeapObj::List");
                     &[]
                 }
@@ -7096,6 +7755,12 @@ impl NanVal {
     /// the closure (no clone_rc here); the closure's Drop releases them.
     fn heap_closure(kind: FnRefKind, id: u32, captures: Vec<NanVal>) -> Self {
         let rc = Rc::new(HeapObj::Closure { kind, id, captures });
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
+    }
+
+    fn heap_stdin_lines(handle: crate::interpreter::StdinLinesHandle) -> Self {
+        let rc = Rc::new(HeapObj::LazyStdinLines(handle));
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
@@ -7337,6 +8002,49 @@ impl NanVal {
                 // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
             }
+            Value::Variant { tag, payload, .. } => {
+                // Variants are not natively representable in NanVal — the VM
+                // bridge falls back to the tree interpreter for sum-type programs.
+                // Encode as a string sentinel so the conversion doesn't panic.
+                let s = match payload {
+                    Some(p) => format!("{}({})", tag, p),
+                    None => tag.clone(),
+                };
+                NanVal::heap_string(s)
+            }
+            Value::LazyStdinLines(handle) => {
+                // Wrap the lazy stdin handle in a HeapObj so the VM's OP_FOREACH
+                // can drain it one line at a time without buffering.
+                NanVal::heap_stdin_lines(handle.clone())
+            }
+            Value::World {
+                net,
+                read,
+                write,
+                run,
+            } => {
+                // World tokens are opaque at the VM level — represented as a
+                // tagged record so the VM can pass them through without special
+                // opcodes. Decode in `to_value` matches this layout.
+                use crate::vm::TypeInfo;
+                let type_info = Rc::new(TypeInfo {
+                    name: "World".to_string(),
+                    fields: vec![
+                        "net".to_string(),
+                        "read".to_string(),
+                        "write".to_string(),
+                        "run".to_string(),
+                    ],
+                    num_fields: 0,
+                });
+                let flat: Box<[NanVal]> = Box::new([
+                    NanVal::boolean(*net),
+                    NanVal::boolean(*read),
+                    NanVal::boolean(*write),
+                    NanVal::boolean(*run),
+                ]);
+                NanVal::heap_record(type_info, flat)
+            }
         }
     }
 
@@ -7562,6 +8270,10 @@ impl NanVal {
                             captures: captures.iter().map(|v| v.to_value()).collect(),
                         }
                     }
+                    HeapObj::LazyStdinLines(handle) => {
+                        // Round-trip the lazy handle back to Value::LazyStdinLines.
+                        Value::LazyStdinLines(handle.clone())
+                    }
                 }
             },
         }
@@ -7647,6 +8359,7 @@ impl NanVal {
                                     .collect(),
                             }
                         }
+                        HeapObj::LazyStdinLines(handle) => Value::LazyStdinLines(handle.clone()),
                     }
                 }
             }
@@ -7682,6 +8395,48 @@ impl NanVal {
 }
 
 // ── VM ───────────────────────────────────────────────────────────────
+
+/// Returns true if any statement in `body` (recursively) is a `Stmt::Defer`.
+fn body_has_defer(body: &[crate::ast::Spanned<Stmt>]) -> bool {
+    body.iter().any(|s| stmt_has_defer(&s.node))
+}
+
+fn stmt_has_defer(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Defer { .. } => true,
+        Stmt::Guard {
+            body, else_body, ..
+        } => body_has_defer(body) || else_body.as_deref().map(body_has_defer).unwrap_or(false),
+        Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_defer(&a.body)),
+        Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } | Stmt::While { body, .. } => {
+            body_has_defer(body)
+        }
+        _ => false,
+    }
+}
+
+/// Count the total number of `Stmt::Defer` / `Stmt::Errdefer` nodes in a body
+/// (recursively).  Used to pre-allocate synthetic thunk name slots before the
+/// function-body compilation pass.
+fn count_defers_in_body(body: &[crate::ast::Spanned<Stmt>]) -> u32 {
+    body.iter().map(|s| count_defers_in_stmt(&s.node)).sum()
+}
+
+fn count_defers_in_stmt(stmt: &Stmt) -> u32 {
+    match stmt {
+        Stmt::Defer { .. } => 1,
+        Stmt::Guard {
+            body, else_body, ..
+        } => {
+            count_defers_in_body(body) + else_body.as_deref().map(count_defers_in_body).unwrap_or(0)
+        }
+        Stmt::Match { arms, .. } => arms.iter().map(|a| count_defers_in_body(&a.body)).sum(),
+        Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } | Stmt::While { body, .. } => {
+            count_defers_in_body(body)
+        }
+        _ => 0,
+    }
+}
 
 pub fn compile(program: &Program) -> Result<CompiledProgram, CompileError> {
     let mut prog = RegCompiler::new().compile_program(program)?;
@@ -7725,6 +8480,7 @@ pub fn run_with_caps(
         call_stack: Vec::new(),
     })?;
     check_entry_arity(compiled, func_idx, &target, args.len())?;
+
     VM::new_with_caps(compiled, caps).call(func_idx, args)
 }
 
@@ -7745,6 +8501,7 @@ pub fn run(
             })?
             .clone(),
     };
+
     let func_idx = compiled.func_index(&target).ok_or_else(|| VmRuntimeError {
         error: VmError::UndefinedFunction {
             name: target.clone(),
@@ -7880,6 +8637,10 @@ struct CallFrame {
     ip: usize,
     stack_base: usize,
     result_reg: u8,
+    /// Per-frame defer stack: (callable NanVal, kind).
+    /// kind 0 = always, 1 = on-error only.
+    /// Populated by OP_DEFER_PUSH; drained LIFO by OP_DEFER_DRAIN.
+    defer_stack: Vec<(NanVal, u8)>,
 }
 
 struct VM<'a> {
@@ -7895,6 +8656,10 @@ struct VM<'a> {
     tokio_runtime: Option<&'a tokio::runtime::Runtime>,
     /// CLI capability policy.
     caps: Arc<Caps>,
+    /// When > 0, `execute()` stops and returns as soon as `self.frames.len()`
+    /// drops to this value instead of continuing to run the parent frame.
+    /// Used by `OP_DEFER_DRAIN` to run each defer thunk in isolation.
+    execute_stop_depth: usize,
 }
 
 impl<'a> Drop for VM<'a> {
@@ -7918,6 +8683,7 @@ impl<'a> VM<'a> {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps: Arc::new(Caps::default()),
+            execute_stop_depth: 0,
         }
     }
 
@@ -7933,6 +8699,7 @@ impl<'a> VM<'a> {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps,
+            execute_stop_depth: 0,
         }
     }
 
@@ -7952,6 +8719,7 @@ impl<'a> VM<'a> {
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
             caps: Arc::new(Caps::default()),
+            execute_stop_depth: 0,
         }
     }
 
@@ -7973,6 +8741,7 @@ impl<'a> VM<'a> {
             ip: 0,
             stack_base,
             result_reg,
+            defer_stack: Vec::new(),
         });
     }
 
@@ -8673,16 +9442,9 @@ impl<'a> VM<'a> {
                         reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
                         continue;
                     }
-                    let fmt = std::path::Path::new(&path)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("raw")
-                        .to_lowercase();
+                    // rd always returns raw text — no extension-based auto-parse.
                     let result = match std::fs::read_to_string(&path) {
-                        Ok(content) => match vm_parse_format(&fmt, &content) {
-                            Ok(v) => NanVal::heap_ok(v),
-                            Err(e) => NanVal::heap_err(e),
-                        },
+                        Ok(content) => NanVal::heap_ok(NanVal::heap_string(content)),
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
@@ -9354,6 +10116,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("index access on non-list"))
                             }
@@ -9394,6 +10157,7 @@ impl<'a> VM<'a> {
                                 | HeapObj::Record { .. }
                                 | HeapObj::OkVal(_)
                                 | HeapObj::ErrVal(_)
+                                | HeapObj::LazyStdinLines(_)
                                 | HeapObj::Closure { .. } => {
                                     vm_err!(VmError::Type("foreach requires a list"))
                                 }
@@ -9431,6 +10195,24 @@ impl<'a> VM<'a> {
                                 }
                                 // else: empty list → fall through to JMP exit
                             }
+                            HeapObj::LazyStdinLines(handle) => {
+                                // Lazy stdin: pull the first line.
+                                match handle.next_line() {
+                                    None => {
+                                        // EOF immediately — fall through to JMP exit (empty).
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "for-line: stdin read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
+                            }
                             HeapObj::Str(_)
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
@@ -9453,17 +10235,17 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
                     let list = reg!(b);
-                    // idx_reg holds the current index (a number); increment it.
-                    // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
-                    // only modified here by addition of 1.0).
-                    let new_idx = reg!(c).as_number() + 1.0;
-                    reg_set!(c, NanVal::number(new_idx));
-                    // SAFETY: list is the same heap List validated by FOREACHPREP on entry.
+                    // SAFETY: list is the same heap value validated by FOREACHPREP on entry.
                     debug_assert!(list.is_heap(), "OP_FOREACHNEXT on non-heap value");
                     unsafe {
                         let heap = list.as_heap_ref();
                         match heap {
                             HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                // idx_reg holds the current index (a number); increment it.
+                                // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
+                                // only modified here by addition of 1.0).
+                                let new_idx = reg!(c).as_number() + 1.0;
+                                reg_set!(c, NanVal::number(new_idx));
                                 let items = slice_of(heap);
                                 let i = new_idx as usize;
                                 if i < items.len() {
@@ -9473,6 +10255,25 @@ impl<'a> VM<'a> {
                                     ip += 1; // skip JMP exit → execute JMP body_top
                                 }
                                 // else: out of bounds → fall through to JMP exit
+                            }
+                            HeapObj::LazyStdinLines(handle) => {
+                                // Lazy stdin: pull next line. idx_reg is unused
+                                // for streaming — we just call next_line().
+                                match handle.next_line() {
+                                    None => {
+                                        // EOF — fall through to JMP exit.
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "for-line: stdin read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
                             }
                             HeapObj::Str(_)
                             | HeapObj::Map(_)
@@ -9686,6 +10487,33 @@ impl<'a> VM<'a> {
                         continue;
                     }
 
+                    // If this function contains defer/errdefer, bridge to the tree-walker.
+                    // The tree interpreter has native defer support; the VM does not (v1 MVP).
+                    let is_defer_call = self
+                        .program
+                        .is_defer_fn
+                        .get(func_idx as usize)
+                        .copied()
+                        .unwrap_or(false);
+                    if is_defer_call {
+                        if let Some(ast) = &self.program.ast {
+                            let callee_name = &self.program.func_names[func_idx as usize].clone();
+                            let mut value_args = Vec::with_capacity(n_args);
+                            for i in 0..n_args {
+                                value_args.push(reg!(base + a as usize + 1 + i).to_value());
+                            }
+                            let tree_result =
+                                crate::interpreter::run(ast, Some(callee_name), value_args)
+                                    .map_err(|e| VmError::Runtime(e.message))?;
+                            let nan_result = NanVal::from_value(&tree_result);
+                            reg_set!(base + a as usize, nan_result);
+                            continue;
+                        }
+                        // AST not available — fall through to normal VM dispatch
+                        // (defer semantics will be silently absent, but this path
+                        // is not reachable in practice since compile() always sets ast).
+                    }
+
                     // Push args directly onto the stack (no intermediate Vec).
                     let new_base = self.stack.len();
                     let callee_all_numeric =
@@ -9730,6 +10558,7 @@ impl<'a> VM<'a> {
                         ip: 0,
                         stack_base: new_base,
                         result_reg: a,
+                        defer_stack: Vec::new(),
                     });
 
                     // SAFETY: we just pushed a new frame above.
@@ -9858,6 +10687,7 @@ impl<'a> VM<'a> {
                                 ip: 0,
                                 stack_base: new_base,
                                 result_reg: a,
+                                defer_stack: Vec::new(),
                             });
                             ci = func_idx as usize;
                             ip = 0;
@@ -9935,8 +10765,13 @@ impl<'a> VM<'a> {
                         self.stack.truncate(base);
                         self.frames.pop();
 
-                        if self.frames.is_empty() {
-                            self.arena.reset();
+                        let stop = self.execute_stop_depth;
+                        if self.frames.len() == stop {
+                            // Either fully done (stop == 0) or returning to the
+                            // depth requested by OP_DEFER_DRAIN's thunk runner.
+                            if stop == 0 {
+                                self.arena.reset();
+                            }
                             return Ok(result.to_value_with_program(&self.program.func_names));
                         }
 
@@ -9959,18 +10794,21 @@ impl<'a> VM<'a> {
                         self.stack.truncate(base);
                         self.frames.pop();
 
-                        if self.frames.is_empty() {
-                            // Promote arena records before resetting arena
+                        let stop = self.execute_stop_depth;
+                        if self.frames.len() == stop {
+                            // Either fully done or thunk-runner stop point.
                             if result.is_arena_record() {
                                 result = result.promote_arena_to_heap(&self.program.type_registry);
                             }
-                            self.arena.reset();
+                            if stop == 0 {
+                                self.arena.reset();
+                            }
                             let val = result.to_value_with_program(&self.program.func_names);
                             result.drop_rc();
                             return Ok(val);
                         }
 
-                        // SAFETY: we just checked !self.frames.is_empty().
+                        // SAFETY: we just checked frames.len() > stop (non-zero remaining).
                         let f = unsafe { self.frames.last().unwrap_unchecked() };
                         ci = f.chunk_idx as usize;
                         ip = f.ip;
@@ -10507,6 +11345,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("len requires string, list, or map"))
                             }
@@ -10520,16 +11359,21 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
-                    if !v.is_number() {
-                        vm_err!(VmError::Type("str requires a number"));
-                    }
-                    let n = v.as_number();
-                    let s = if n.fract() == 0.0 && n.abs() < 1e15 {
-                        format!("{}", n as i64)
+                    if v.is_string() {
+                        // identity passthrough — text in, same text out
+                        v.clone_rc();
+                        reg_set!(a, v);
+                    } else if v.is_number() {
+                        let n = v.as_number();
+                        let s = if n.fract() == 0.0 && n.abs() < 1e15 {
+                            format!("{}", n as i64)
+                        } else {
+                            format!("{}", n)
+                        };
+                        reg_set!(a, NanVal::heap_string(s));
                     } else {
-                        format!("{}", n)
-                    };
-                    reg_set!(a, NanVal::heap_string(s));
+                        vm_err!(VmError::Type("str requires a number or text"));
+                    }
                 }
                 OP_NUM => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -11110,6 +11954,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_env(&key_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::env::var(&key_str) {
                         Ok(val) => NanVal::heap_ok(NanVal::heap_string(val)),
                         Err(_) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -11646,6 +12494,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("has requires a list or text"))
                             }
@@ -11690,6 +12539,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("hd requires a list or text"))
                             }
@@ -11766,6 +12616,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("at requires a list or text"))
                             }
@@ -12164,6 +13015,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("tl requires a list or text"))
                             }
@@ -12270,6 +13122,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rev requires a list or text"))
                             }
@@ -12384,6 +13237,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("srt requires a list or text"))
                             }
@@ -12452,6 +13306,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rsrt requires a list or text"))
                             }
@@ -12683,6 +13538,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("slc requires a list or text"))
                             }
@@ -12738,6 +13594,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("lst requires a list"))
                             }
@@ -12892,6 +13749,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("take requires a list or text"))
                             }
@@ -12943,6 +13801,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("drop requires a list or text"))
                             }
@@ -13021,6 +13880,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 return Err(VmError::Type("+= requires a list"));
                             }
@@ -13047,6 +13907,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("+= requires a list"))
                             }
@@ -13312,6 +14173,7 @@ impl<'a> VM<'a> {
                         ip: 0,
                         stack_base: new_base,
                         result_reg: a,
+                        defer_stack: Vec::new(),
                     });
 
                     ci = func_idx as usize;
@@ -13432,6 +14294,137 @@ impl<'a> VM<'a> {
                     ip = 0;
                     base = saved_stack_base;
                 }
+
+                // ── Defer opcodes ────────────────────────────────────────
+                OP_DEFER_PUSH => {
+                    // ABC: A = closure register, B = kind byte (0=always, 1=on-error)
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let kind = ((inst >> 8) & 0xFF) as u8;
+                    let callable = reg!(a);
+                    // RC-bump the value so the defer stack holds a reference.
+                    if !callable.is_number() {
+                        callable.clone_rc();
+                    }
+                    // SAFETY: frames is non-empty while execute() runs.
+                    unsafe { self.frames.last_mut().unwrap_unchecked() }
+                        .defer_stack
+                        .push((callable, kind));
+                }
+
+                OP_DEFER_DRAIN => {
+                    // ABC: A = the register holding the about-to-be-returned
+                    // value (used to detect error exits for errdefer).
+                    // Drain the current frame's defer_stack in LIFO order,
+                    // calling each 0-arg thunk.  Errors from thunks are
+                    // silently swallowed so they cannot mask the real result.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let ret_val = reg!(a);
+                    let is_error = (ret_val.0 & TAG_MASK) == TAG_ERR;
+
+                    // Drain into a local vec so thunks can push their own
+                    // defers without invalidating our iteration.
+                    let defers = {
+                        // SAFETY: frames non-empty.
+                        let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                        std::mem::take(&mut frame.defer_stack)
+                    };
+
+                    // LIFO: drain in reverse order.
+                    for (callable, kind) in defers.into_iter().rev() {
+                        let should_run = kind == 0 || (kind == 1 && is_error);
+                        if !should_run {
+                            callable.drop_rc();
+                            continue;
+                        }
+
+                        // Resolve the callable: FnRef (user fn) or Closure.
+                        let (thunk_fn_idx, captures): (usize, Vec<NanVal>) = if callable.is_fnref()
+                        {
+                            let (_kind, id) = callable.fnref_parts();
+                            (id as usize, Vec::new())
+                        } else if callable.is_heap() && (callable.0 & TAG_MASK) == TAG_LIST {
+                            let heap = unsafe { callable.as_heap_ref() };
+                            if let HeapObj::Closure {
+                                kind: _k,
+                                id,
+                                captures,
+                            } = heap
+                            {
+                                let caps = captures.clone();
+                                (*id as usize, caps)
+                            } else {
+                                callable.drop_rc();
+                                continue;
+                            }
+                        } else {
+                            callable.drop_rc();
+                            continue;
+                        };
+                        callable.drop_rc();
+
+                        // Push the thunk frame.  Captures are installed as
+                        // the param registers (mirrors OP_CALL_DYN closure path).
+                        let new_base = self.stack.len();
+                        let cap_count = captures.len();
+                        let reg_count = self
+                            .program
+                            .chunks
+                            .get(thunk_fn_idx)
+                            .map(|c| c.reg_count as usize)
+                            .unwrap_or(cap_count);
+                        let new_len = new_base + reg_count;
+                        {
+                            let old_len = self.stack.len();
+                            if new_len > old_len {
+                                self.stack.reserve(new_len - old_len);
+                                let nil = NanVal::nil();
+                                let ptr = self.stack.as_mut_ptr();
+                                for i in old_len..new_len {
+                                    unsafe { ptr.add(i).write(nil) };
+                                }
+                                unsafe { self.stack.set_len(new_len) };
+                            }
+                        }
+                        // Install captures at R[0..cap_count].
+                        for (i, cap) in captures.into_iter().enumerate() {
+                            if !cap.is_number() {
+                                cap.clone_rc();
+                            }
+                            unsafe {
+                                *self.stack.as_mut_ptr().add(new_base + i) = cap;
+                            }
+                        }
+
+                        // Save the parent frame's ip so execute() restores it.
+                        // SAFETY: frames non-empty.
+                        unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+
+                        self.frames.push(CallFrame {
+                            chunk_idx: thunk_fn_idx as u16,
+                            ip: 0,
+                            stack_base: new_base,
+                            result_reg: 0, // result is discarded
+                            defer_stack: Vec::new(),
+                        });
+
+                        // Run the thunk in isolation by setting execute_stop_depth
+                        // to the parent-frame depth.  execute() will return as soon
+                        // as OP_RET in the thunk pops back to that depth.
+                        let stop = self.frames.len() - 1; // parent frame depth
+                        let saved_stop = self.execute_stop_depth;
+                        self.execute_stop_depth = stop;
+                        let _ = self.execute(); // errors silently swallowed
+                        self.execute_stop_depth = saved_stop;
+
+                        // Restore the enclosing frame's dispatch variables.
+                        // SAFETY: frames non-empty (parent frame still present).
+                        let f = unsafe { self.frames.last().unwrap_unchecked() };
+                        ci = f.chunk_idx as usize;
+                        ip = f.ip;
+                        base = f.stack_base;
+                    }
+                }
+
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
         }
@@ -13848,6 +14841,9 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                         };
                         serde_json::Value::String(format!("<closure:{}>", name))
                     }
+                    HeapObj::LazyStdinLines(_) => {
+                        serde_json::Value::String("<stdin-lines>".to_string())
+                    }
                 }
             }
         }
@@ -13885,6 +14881,7 @@ fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
 /// Grid ("csv", "tsv") → Ok(list of rows).
 /// Graph ("json")      → Ok(parsed JSON) or Err(error string NanVal).
 /// Raw/unknown         → Ok(plain string).
+#[allow(dead_code)]
 fn vm_parse_format(fmt: &str, content: &str) -> Result<NanVal, NanVal> {
     match fmt {
         "csv" | "tsv" => {
@@ -14015,7 +15012,8 @@ fn nanval_truthy(v: NanVal) -> bool {
                     | HeapObj::Record { .. }
                     | HeapObj::OkVal(_)
                     | HeapObj::ErrVal(_)
-                    | HeapObj::Closure { .. } => true,
+                    | HeapObj::Closure { .. }
+                    | HeapObj::LazyStdinLines(_) => true,
                 }
             },
         }
@@ -14582,8 +15580,12 @@ pub(crate) extern "C" fn jit_len(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_str(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
+    if v.is_string() {
+        // identity passthrough — text in, same text out
+        return v.0;
+    }
     if !v.is_number() {
-        jit_set_runtime_error_with_span(VmError::Type("str requires a number"), span_bits);
+        jit_set_runtime_error_with_span(VmError::Type("str requires a number or text"), span_bits);
         return TAG_NIL;
     }
     let n = v.as_number();
@@ -17063,6 +18065,18 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Rsum
             | Builtin::Ravg
             | Builtin::Rmin
+            // Raw-bytes crypto (ILO-383). sha256-hex / sha256d raise ILO-R009
+            // on odd-length or non-hex input. Surface on Cranelift in lockstep
+            // rather than degenerating silently to nil.
+            | Builtin::Sha256Hex
+            | Builtin::Sha256d
+            // hex-rev raises ILO-T013 on odd-length input (not a whole number
+            // of bytes). Surface on Cranelift in lockstep rather than
+            // degenerating silently to nil.
+            | Builtin::HexRev
+            // tokcount: raises ILO-R009 on non-text input. Surface on
+            // Cranelift in lockstep rather than degenerating silently to nil.
+            | Builtin::Tokcount
     )
 }
 
@@ -19365,16 +20379,9 @@ pub(crate) extern "C" fn jit_rd(v: u64, span_bits: u64) -> u64 {
             _ => unreachable!(),
         }
     };
-    let fmt = std::path::Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("raw")
-        .to_lowercase();
+    // rd always returns raw text — no extension-based auto-parse.
     match std::fs::read_to_string(&path) {
-        Ok(content) => match vm_parse_format(&fmt, &content) {
-            Ok(v) => NanVal::heap_ok(v).0,
-            Err(e) => NanVal::heap_err(e).0,
-        },
+        Ok(content) => NanVal::heap_ok(NanVal::heap_string(content)).0,
         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())).0,
     }
 }
@@ -19832,6 +20839,16 @@ pub extern "C" fn ilo_aot_arena_reset() {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_publish_program(ptr: u64, len: u64) -> u64 {
+    // SAFETY: The Cranelift AOT codegen emits the blob into a `.rodata` data
+    // section via `create_data_section`; the linker maps that section
+    // read-only for the entire process lifetime.  The call site (the
+    // cranelift-emitted `main` shim) passes the section's base address and
+    // byte length as literal constants baked into the binary — neither can
+    // be attacker-controlled without first compromising the binary on disk.
+    // Potential violation: if `ptr`/`len` were passed from an untrusted
+    // source (e.g. a future IPC or plugin mechanism) the guarantee would
+    // break; at that point this function must validate the pointer against a
+    // known-good range before constructing the slice.
     let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
     let program = match aot_blob::deserialize_program(bytes) {
         Ok(p) => p,
@@ -19879,6 +20896,14 @@ pub extern "C" fn jit_get_registry_ptr() -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is a compile-time `.rodata` address of a null-terminated
+    // C string emitted by the Cranelift AOT codegen (`data_section_counter`
+    // path in `compile_cranelift.rs`).  The codegen always appends a NUL
+    // byte and the data section lives for the process lifetime, so
+    // `CStr::from_ptr` will find the terminator within the mapped region.
+    // Potential violation: if a future codegen change forgets to NUL-
+    // terminate, or if `ptr` is zero/garbage, this is UB.  The
+    // `data_section_counter` path must maintain the NUL invariant.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("").to_string();
     NanVal::heap_string(s).0
@@ -19888,6 +20913,11 @@ pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is `argv[i]` forwarded by the cranelift-emitted `main`
+    // shim as a u64-cast C string pointer.  The OS guarantees each `argv`
+    // entry is a valid NUL-terminated string for the duration of `main`.
+    // Potential violation: if the AOT shim ever passes an arbitrary u64 that
+    // is not an `argv` pointer (e.g. a computed value), this becomes UB.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("");
     match s {
@@ -22251,14 +23281,22 @@ mod tests {
     }
 
     #[test]
-    fn vm_str_non_number_type_error() {
-        // OP_STR on text → L1903 ("str requires a number")
+    fn vm_str_text_passthrough() {
+        // OP_STR on text is identity — returns the same string unchanged
         let source = "f x:t>t;str x";
-        let err = vm_run_err(
+        let result = vm_run(
             source,
             Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
+            vec![Value::Text(Arc::new("hello".to_string()))],
         );
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
+    }
+
+    #[test]
+    fn vm_str_non_text_non_number_type_error() {
+        // OP_STR on a non-text, non-number type → runtime error via VM path.
+        // Bypass the verifier by using `_` param type so the VM sees a bool.
+        let err = vm_run_err("f x:_ >t;str x", Some("f"), vec![Value::Bool(true)]);
         assert!(err.contains("str"), "got: {err}");
     }
 
@@ -22471,6 +23509,7 @@ mod tests {
             .collect();
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params,
                 body: vec![],
@@ -24329,21 +25368,50 @@ mod tests {
         assert_eq!(result, Value::Number(1.0), "original should be unchanged");
     }
 
-    // --- OP_RD with JSON parsing ---
+    // --- OP_RD — ILO-374: rd always returns raw text ---
 
     #[test]
-    fn vm_rd_json_file() {
-        let path = "/tmp/ilo_vm_rd_json.json";
+    fn vm_rd_json_file_returns_raw_text() {
+        // ILO-374: rd on a .json path must return raw text, not a parsed value.
+        let path = "/tmp/ilo_vm_rd_json_raw.json";
         std::fs::write(path, r#"{"key":"value"}"#).unwrap();
         let result = vm_run(
             "f p:t>R t t;rd p",
             Some("f"),
             vec![Value::Text(Arc::new(path.into()))],
         );
+        match &result {
+            Value::Ok(inner) => assert!(
+                matches!(inner.as_ref(), Value::Text(_)),
+                "rd on .json must return raw text, got {:?}",
+                inner
+            ),
+            other => panic!("rd on .json should return Ok(text), got {other:?}"),
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn vm_rd_json_builtin_parses_json() {
+        // rd-json path must read and parse the JSON, returning a non-text value.
+        let path = "/tmp/ilo_vm_rd_json_builtin.json";
+        std::fs::write(path, r#"{"key":"value"}"#).unwrap();
+        let result = vm_run(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path.into()))],
+        );
         assert!(
             matches!(result, Value::Ok(_)),
-            "rd json should succeed, got {result:?}"
+            "rd-json should succeed, got {result:?}"
         );
+        // The inner value must NOT be raw text (it should be a map/record).
+        if let Value::Ok(inner) = &result {
+            assert!(
+                !matches!(inner.as_ref(), Value::Text(_)),
+                "rd-json must return parsed value, not raw text"
+            );
+        }
         let _ = std::fs::remove_file(path);
     }
 
@@ -25742,7 +26810,19 @@ mod tests {
         }
 
         #[test]
-        fn jit_str_non_number_signals_runtime_error() {
+        fn jit_str_text_passthrough() {
+            let input = NanVal::heap_string("hello".to_string());
+            let r = jit_str(input.0, 0);
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.as_str(), "hello");
+        }
+
+        #[test]
+        fn jit_str_non_number_non_text_signals_runtime_error() {
             let _ = jit_take_runtime_error();
             let r = jit_str(TAG_NIL, 0);
             assert!(is_nil(r));
@@ -28115,7 +29195,9 @@ mod tests {
 
     // rd with bad JSON content — triggers Err return (line 2939)
     #[test]
-    fn vm_rd_bad_json_returns_err() {
+    fn vm_rd_json_path_returns_raw_text_even_when_invalid_json() {
+        // ILO-374: rd on a .json path returns raw text regardless of content.
+        // Bad JSON is not an error for rd — it's only a parse error for rd-json.
         let path = "/tmp/ilo_vm_rd_badjson.json";
         std::fs::write(path, "{ this is not valid json }").unwrap();
         let result = vm_run(
@@ -28123,9 +29205,30 @@ mod tests {
             Some("f"),
             vec![Value::Text(Arc::new(path.into()))],
         );
+        match &result {
+            Value::Ok(inner) => assert!(
+                matches!(inner.as_ref(), Value::Text(_)),
+                "rd on .json (even invalid) must return raw text, got {:?}",
+                inner
+            ),
+            other => panic!("expected Ok(text), got {other:?}"),
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn vm_rd_json_builtin_bad_json_returns_err() {
+        // rd-json on invalid JSON must return Err.
+        let path = "/tmp/ilo_vm_rd_json_bad.json";
+        std::fs::write(path, "{ this is not valid json }").unwrap();
+        let result = vm_run(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path.into()))],
+        );
         assert!(
             matches!(result, Value::Err(_)),
-            "expected Err from bad JSON, got {result:?}"
+            "expected Err from rd-json on bad JSON, got {result:?}"
         );
         let _ = std::fs::remove_file(path);
     }
@@ -28662,9 +29765,10 @@ mod tests {
     #[test]
     fn vm_rd_csv_quoted_fields() {
         let path = "/tmp/ilo_vm_test_quoted.csv";
-        // CSV with a quoted field containing a comma, and an escaped double-quote
+        // CSV with a quoted field containing a comma, and an escaped double-quote.
+        // rd requires an explicit "csv" format arg — no extension-based auto-parse (ILO-374).
         std::fs::write(path, "\"hello, world\",\"say \"\"hi\"\"\"").unwrap();
-        let source = format!(r#"f>n;rows=rd! "{path}";len rows"#);
+        let source = format!(r#"f>n;rows=rd! "{path}" "csv";len rows"#);
         let result = vm_run(&source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(1.0)); // one row
     }
@@ -28689,7 +29793,9 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("fallthrough should succeed");
         assert_eq!(result, Value::Nil);
@@ -28713,7 +29819,9 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let err = run(&program, Some("f"), vec![]).unwrap_err();
         // Error kind should be UnknownOpcode and span should be captured.
@@ -29286,6 +30394,60 @@ mod tests {
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(5.0)]),
             Value::Number(0.0)
+        );
+    }
+
+    // ── Or (|) patterns ─────────────────────────────────────────────────
+
+    #[test]
+    fn vm_or_pattern_first_alt_matches() {
+        // `?x{"a"|"b":"found";_:"miss"}` — subject matches first alternative
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("a".to_string()))]
+            ),
+            Value::Text(Arc::new("found".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_second_alt_matches() {
+        // subject matches second alternative
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("b".to_string()))]
+            ),
+            Value::Text(Arc::new("found".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_no_alt_matches() {
+        // subject matches neither alternative — falls to wildcard
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("c".to_string()))]
+            ),
+            Value::Text(Arc::new("miss".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_three_alts() {
+        // three alternatives, middle one matches
+        let source = r#"f x:n>t;?x{1|2|3:"low";_:"high"}"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(2.0)]),
+            Value::Text(Arc::new("low".to_string()))
         );
     }
 
@@ -29954,11 +31116,8 @@ mod tests {
 
     #[test]
     fn vm_err_str_wrong_type() {
-        let err = vm_run_err(
-            r#"f x:t>t;str x"#,
-            Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
-        );
+        // str now accepts text (identity) and number; bool triggers the error
+        let err = vm_run_err(r#"f x:_ >t;str x"#, Some("f"), vec![Value::Bool(true)]);
         assert!(
             err.contains("str") || err.contains("number") || err.contains("type"),
             "got: {err}"
@@ -33756,7 +34915,9 @@ f>n;r=mk 10 20;+r.x r.y";
             ]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -33809,7 +34970,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(99.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -33858,7 +35021,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         // Pass a number as the collection arg → triggers "foreach requires a list"
@@ -33962,7 +35127,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![], vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false, false],
+            is_defer_fn: vec![false, false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         // g falls through with no RET → returns nil; f returns that nil
@@ -34102,7 +35269,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
@@ -34179,7 +35348,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         // Pass a string as the collection → is_heap()=true but not a list → error
@@ -34256,7 +35427,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("sqrt nil should not error");
         match result {
@@ -34284,7 +35457,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("pow nil should not error");
         match result {
@@ -34313,7 +35488,9 @@ f>n;r=mk 10 20;+r.x r.y";
                 nan_constants: vec![vec![NanVal::nil()]],
                 type_registry: TypeRegistry::default(),
                 is_tool: vec![false],
+                is_defer_fn: vec![false],
                 ast: None,
+                defer_fns: std::collections::HashSet::new(),
             };
             let result = run(&program, Some("f"), vec![]).expect("math op on nil should not error");
             match result {
@@ -34353,7 +35530,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(input)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("unary math op should not error") {
             Value::Number(n) => n,
@@ -34391,7 +35570,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(2.0), NanVal::number(10.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("pow should not error") {
             Value::Number(n) => assert!((n - 1024.0).abs() < 1e-10, "got {n}"),
@@ -34531,7 +35712,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(1.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("atan2 should not error") {
             Value::Number(n) => {
@@ -34570,7 +35753,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("atan2 nan path") {
             Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
@@ -34952,7 +36137,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(5.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
             Value::Number(n) => assert_eq!(n, 5.0),
@@ -34989,7 +36176,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::number(1.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         crate::rng::seed(7);
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
@@ -35027,7 +36216,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let res = run(&program, Some("f"), vec![]);
         assert!(res.is_err(), "expected type error, got {res:?}");
@@ -35917,6 +37108,205 @@ main>n
                 assert_eq!(got, 0);
             }
             other => panic!("expected VmError::Arity, got {other:?}"),
+        }
+    }
+
+    // ── ILO-401: Sum-type VM/JIT codegen ─────────────────────────────────────
+
+    /// VM can construct a payload-less variant and pattern-match on it.
+    #[test]
+    fn sum_type_vm_zero_payload_variant() {
+        let v = vm_run_main_for_test(
+            "type color = red | green | blue\n\
+             pick c:color>t;?c{red:\"r\";green:\"g\";blue:\"b\"}\n\
+             main>t;pick red",
+        );
+        assert_eq!(v, Value::Text(std::sync::Arc::new("r".to_string())));
+    }
+
+    /// VM can construct a payload-carrying variant and extract the payload in a match.
+    #[test]
+    fn sum_type_vm_payload_variant_match() {
+        // circle area = 3.14159 * 25 = 78.53975; square area = 9; sum = 87.53975
+        let v = vm_run_main_for_test(
+            "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)",
+        );
+        match v {
+            Value::Number(n) => {
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
+            }
+            _ => panic!("expected Number, got {v:?}"),
+        }
+    }
+
+    /// Regression: same program runs identically under tree interpreter and VM.
+    #[test]
+    fn sum_type_vm_matches_interpreter() {
+        let src = "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).unwrap();
+        let vm_result = run(&compiled, Some("main"), vec![]).unwrap();
+        let interp_result = crate::interpreter::run(&prog, Some("main"), vec![]).unwrap();
+        assert_eq!(
+            vm_result, interp_result,
+            "VM and tree interpreter disagree on sum-type result"
+        );
+    }
+
+    /// VM compile step must not return ILO-E803 (SumTypeNotSupported).
+    #[test]
+    fn sum_type_vm_no_e803_bailout() {
+        let src = "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("sum-type program must compile without ILO-E803");
+        let val = run(&compiled, Some("main"), vec![]).unwrap();
+        match val {
+            Value::Number(n) => {
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
+            }
+            _ => panic!("expected Number, got {val:?}"),
+        }
+    }
+
+    /// Regression test: every tree-bridge-eligible (Builtin, arity) pair whose
+    /// verify.rs signature returns `R ...` must appear in
+    /// `tree_bridge_returns_result`, so that the auto-unwrap (`!` / `!!`)
+    /// protocol works correctly in the VM and Cranelift backends.
+    ///
+    /// The "result-returning eligible" set below is derived from the
+    /// `src/verify.rs` BUILTINS table: any entry whose return-type string
+    /// starts with `"R "` and whose name maps to a Builtin that also appears
+    /// in `is_tree_bridge_eligible`.  When a new tree-bridge builtin is added
+    /// that returns an ILO Result type, it must be added to BOTH
+    /// `is_tree_bridge_eligible` AND `tree_bridge_returns_result`.
+    ///
+    /// ILO-397: audit for the same gap found in ILO-376 (wro).
+    #[test]
+    fn tree_bridge_eligible_result_builtins_are_in_returns_result() {
+        use crate::builtins::Builtin;
+
+        // (Builtin, representative arity) pairs where:
+        //   1. is_tree_bridge_eligible(B, arity) == true, AND
+        //   2. verify.rs BUILTINS signature returns "R ..." (ILO Result)
+        //
+        // Update this list whenever a new Result-returning builtin is added
+        // to the tree bridge.
+        let result_eligible: &[(Builtin, usize)] = &[
+            (Builtin::Rd, 2),
+            (Builtin::Rdb, 2),
+            (Builtin::Ls, 1),
+            (Builtin::Walk, 1),
+            (Builtin::Glob, 2),
+            (Builtin::Fsize, 1),
+            (Builtin::Mtime, 1),
+            (Builtin::TzOffset, 2),
+            (Builtin::Run, 2),
+            (Builtin::Run2, 2),
+            (Builtin::EnvAll, 0),
+            (Builtin::Jkeys, 2),
+            (Builtin::Rdin, 0),
+            (Builtin::Rdinl, 0),
+            (Builtin::Wra, 2),
+            (Builtin::Wro, 2),
+            (Builtin::DtparseRel, 2),
+            (Builtin::DurParse, 1),
+            (Builtin::GetTo, 2),
+            (Builtin::PstTo, 3),
+            (Builtin::Getx, 1),
+            (Builtin::Getx, 2),
+            (Builtin::Pstx, 2),
+            (Builtin::Pstx, 3),
+            (Builtin::Put, 2),
+            (Builtin::Put, 3),
+            (Builtin::Pat, 2),
+            (Builtin::Pat, 3),
+            (Builtin::Del, 1),
+            (Builtin::Del, 2),
+            (Builtin::Hed, 1),
+            (Builtin::Hed, 2),
+            (Builtin::Opt, 1),
+            (Builtin::Opt, 2),
+            (Builtin::Urldec, 1),
+            (Builtin::B64uDec, 1),
+            (Builtin::B64Dec, 1),
+        ];
+
+        for &(builtin, arity) in result_eligible {
+            assert!(
+                is_tree_bridge_eligible(builtin, arity),
+                "Builtin {:?} arity {} is listed as result-eligible but \
+                 is_tree_bridge_eligible returned false — add it to \
+                 is_tree_bridge_eligible or remove it from this list",
+                builtin,
+                arity
+            );
+            assert!(
+                tree_bridge_returns_result(builtin),
+                "Builtin {:?} (arity {}) has a verify.rs signature starting \
+                 with 'R ' but is missing from tree_bridge_returns_result — \
+                 add it to that function so auto-unwrap (! / !!) works \
+                 correctly in the VM and Cranelift backends",
+                builtin,
+                arity
+            );
+        }
+
+        // Inverse check: every builtin in tree_bridge_returns_result must be
+        // eligible for at least one arity (or be Mapr, which is compiled
+        // natively via OP_CALL_DYN and retains a legacy guard entry).
+        let returns_result_builtins = [
+            Builtin::Rd,
+            Builtin::Rdb,
+            Builtin::Mapr, // native (OP_CALL_DYN path), legacy guard entry
+            Builtin::Ls,
+            Builtin::Walk,
+            Builtin::Glob,
+            Builtin::Fsize,
+            Builtin::Mtime,
+            Builtin::EnvAll,
+            Builtin::Run,
+            Builtin::Run2,
+            Builtin::Jkeys,
+            Builtin::Rdin,
+            Builtin::Rdinl,
+            Builtin::Wra,
+            Builtin::Wro,
+            Builtin::DtparseRel,
+            Builtin::DurParse,
+            Builtin::GetTo,
+            Builtin::PstTo,
+            Builtin::Getx,
+            Builtin::Pstx,
+            Builtin::Put,
+            Builtin::Pat,
+            Builtin::Del,
+            Builtin::Hed,
+            Builtin::Opt,
+            Builtin::Urldec,
+            Builtin::B64uDec,
+            Builtin::B64Dec,
+            Builtin::TzOffset,
+        ];
+        for builtin in returns_result_builtins {
+            assert!(
+                tree_bridge_returns_result(builtin),
+                "Builtin {:?} is in the expected returns_result set but \
+                 tree_bridge_returns_result returned false — update either \
+                 the function or this test",
+                builtin
+            );
         }
     }
 }

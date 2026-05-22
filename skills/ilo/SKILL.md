@@ -56,6 +56,7 @@ The content lives in `skills/ilo/<name>.md`. The installed binary serves the sam
 - `+ a b` - two-arg text/number concat (also list concat). `+ "hi " name` -> `"hi alice"`.
 - `fmt "x={} y={}" x y` - template formatting (variadic; `{}` placeholders filled left-to-right, count must equal arg count, no list splat). `{name}` slots auto-desugar to a lookup of the binding `name`.
 - `cat xs sep` - join a list of text with a separator. `cat ["a" "b" "c"] ","` -> `"a,b,c"`. NOT two-string concat; reach for `+` for that.
+- **Labelled args (ILO-71):** any callable with declared parameter names accepts `label:value` form. `dtfmt epoch:e fmt:"%Y"` ≡ `dtfmt e "%Y"`. Order is free; mix positional + labelled freely (positional fill from left, labels fill remaining slots by name). Works in postfix and paren form. Unknown label → `ILO-P019` with known-params list.
 
 **HTTP custom headers.** Every verb in the cluster (`get pst put pat del hed opt`) accepts an optional trailing `M t t` headers map. The two-arg `get url headers` and three-arg `pst url body headers` forms are real, not workarounds. Build the map with `mmap` + `mset`:
 
@@ -106,6 +107,18 @@ Agents reach for these names constantly — pick the listed alternative and move
 - `cnt` / `brk` (loop control) → `count`/`index`, `brake`/`stop`
 
 When in doubt: pick a 4+ char descriptive name. The token cost of an extra character is dwarfed by the cost of an ILO-P011 retry round-trip.
+
+## Streaming stdin (ILO-70)
+
+For unbounded input streams (e.g. `tail -f`, a producer that never closes stdin), use `for-line` instead of `rdinl`:
+
+```
+-- rdinl buffers ALL of stdin before returning — blocks on infinite/slow producers.
+-- for-line "stdin" yields one line at a time as the pipe delivers it.
+main>n;n=0;@line (for-line "stdin"){prnt line;n=+ n 1};n
+```
+
+`for-line` takes exactly one arg: the text `"stdin"`. It is iterable directly with `@binding` foreach. On WASM it returns Err. Tree + VM engines only (Cranelift JIT follow-up). Keep using `rdinl` when you need random access to all lines (e.g. to sort them).
 
 ## Date/time builtins
 

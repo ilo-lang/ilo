@@ -1,0 +1,22 @@
+-- Sum types with payloads (discriminated unions)
+-- Demonstrates ILO-62: type Shape = circle(n) | square(n) | point
+
+type shape = circle(n) | square(n) | point
+
+area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}
+
+describe s:shape>t;?s{circle(r):fmt "circle with radius {}" r;square(side):fmt "square with side {}" side;point:"a point"}
+
+main>n
+  c=circle 5
+  s=square 3
+  p=point
+  ca=area c
+  sa=area s
+  pa=area p
+  prnt (describe c)
+  prnt (describe s)
+  prnt (describe p)
+  prnt (fmt "circle area: {}" ca)
+  prnt (fmt "square area: {}" sa)
+  +ca sa

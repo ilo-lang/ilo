@@ -1,0 +1,91 @@
+-- check-skill-tokens.ilo
+--
+-- Enforce the modular-skill token budget.
+--
+-- Each skills/ilo/ilo-*.md module must encode to <= 1,000 tokens under
+-- cl100k_base. Modules currently above the baseline carry an explicit
+-- per-module override baked into `limit-for` below (measured baseline +
+-- ~50-token headroom, ILO-382). Growth past an override requires an
+-- editorial trim or a module split — not a bump.
+-- The aggregate across all modules must be <= 12,500.
+--
+-- `tokcount` uses a bytes/3.4 approximation for cl100k_base (correct
+-- within ~5% for natural-language skill files). A follow-up (ILO-47)
+-- will replace the stub with a real BPE tokeniser.
+--
+-- Run locally with: ilo run scripts/check-skill-tokens.ilo
+
+-- Per-module override caps (bytes/3.4 stub measurement + ~60-token headroom).
+-- Caps are set for the bytes/3.4 approximation; they will be tightened once
+-- the real tiktoken-rs BPE tokeniser lands (ILO-47 follow-up). Modules not
+-- listed default to 1000. Stub measurements (2026-05-22):
+--   ilo-language:1410  ilo-builtins-core:995  ilo-builtins-math:1323
+--   ilo-builtins-io:1834  ilo-builtins-text:1114  ilo-agent:1330
+limit-for name:t>n
+  ?name{"ilo-language":1500
+        "ilo-builtins-core":1060
+        "ilo-builtins-math":1390
+        "ilo-builtins-io":1900
+        "ilo-builtins-text":1180
+        "ilo-agent":1395
+        _:1000}
+
+-- Ordered list of skill module names (matches Python predecessor exactly).
+skill-names>L t
+  ["ilo-language",
+   "ilo-language-records",
+   "ilo-builtins-core",
+   "ilo-builtins-math",
+   "ilo-builtins-io",
+   "ilo-builtins-text",
+   "ilo-errors",
+   "ilo-tools",
+   "ilo-engines",
+   "ilo-agent",
+   "ilo-examples",
+   "ilo-edit-loop"]
+
+-- process-content name:t content:t > n
+-- Count tokens in content, print result row, return token count.
+process-content name:t content:t>n
+  tokens = flr (tokcount content)
+  lim = limit-for name
+  over = >tokens lim
+  flag = ?h over +(+" OVER (cap " str lim) ")" ""
+  col1 = padr name 22
+  col2 = padl (str tokens) 5
+  prnt +(+"  " col1) +col2 +" tokens" flag
+  tokens
+
+-- check-module dir:t name:t > R n t
+-- Reads a skill file, delegates token counting to process-content.
+-- Returns Ok(tokens) on success, Err(message) when the file is missing.
+check-module dir:t name:t>R n t
+  path = +(+(+dir "/") name) ".md"
+  rc = rd path
+  ?rc{~content:~process-content name content
+      ^er:^+"ERROR: missing skill file: " path}
+
+-- pair-failed pair:L _ > b
+-- True when a (name, R n t) pair is missing or over its token cap.
+pair-failed pair:L _>b
+  name = at pair 0
+  r = at pair 1
+  ?r{^_:true;~v:>v (limit-for name)}
+
+-- main: aggregate check. Exits 1 (via Err return) if any module is
+-- over-budget or the total exceeds 12,500.
+main>_
+  names = skill-names()
+  dir = "./skills/ilo"
+  results = map (n:t>R n t; check-module dir n) names
+  total = flr (fld (acc:n r:R n t>n; ?r{~v:+acc v;^_:acc}) results 0)
+  col1 = padr "TOTAL" 22
+  col2 = padl (str total) 5
+  prnt +(+"  " col1) +col2 " tokens"
+  over-total = >total 12500
+  over-total{prnt +(+"ERROR: total " str total) " exceeds aggregate budget 12500"}
+  pairs = zip names results
+  failures = flt pair-failed pairs
+  bad = |(>len failures 0) over-total
+  bad{ret ^"budget exceeded"}

@@ -9,6 +9,7 @@ use super::*;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, InstBuilder};
+use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -928,8 +929,11 @@ fn compile_function_body(
     all_func_ids: &[FuncId],
     program: &CompiledProgram,
 ) -> Option<()> {
-    // Build function signature: (i64, i64, ...) -> i64
+    // Build function signature: (i64, i64, ...) -> i64 with CallConv::Tail so that
+    // OP_TAILCALL sites can emit `return_call` (which requires both caller and callee
+    // to use the Tail calling convention).
     let mut sig = module.make_signature();
+    sig.call_conv = CallConv::Tail;
     for _ in 0..chunk.param_count {
         sig.params.push(AbiParam::new(I64));
     }
@@ -4427,13 +4431,14 @@ fn compile_function_body(
                 // referenced again.
                 //
                 // OP_TAILCALL: bytecode-VM tail-call elimination opcode.
-                // For Cranelift we lower it identically to OP_CALL for
-                // now — semantically correct (the callee's return value
-                // flows back to be returned by the next OP_RET), but the
-                // host stack still grows by one frame per call. PR3 of
-                // the TCO series will switch this to Cranelift's
-                // `return_call` for true tail-call elimination, lifting
-                // the JIT/AOT host-stack bound to match the VM.
+                // For Cranelift we emit `return_call` (a terminator) so the
+                // callee reuses the caller's stack frame — true TCO with no
+                // host-stack growth. Both caller and callee use CallConv::Tail,
+                // which is required for `return_call`. Inlinable callees skip
+                // this path (they are inlined directly, so TCO is automatic).
+                // The `jit_call` fallback path cannot use `return_call` because
+                // the helper uses SystemV; that path is only hit for out-of-range
+                // func indices which should not occur in well-formed programs.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;
@@ -4527,44 +4532,56 @@ fn compile_function_body(
                             call_args.push(builder.use_var(vars[a_idx_call + 1 + i]));
                         }
 
-                        // Push the callee's name onto the per-thread JIT
-                        // call stack so a runtime error surfaced from
-                        // inside the callee carries call_stack notes
-                        // matching VM/tree output. We only push for
-                        // non-inlined calls because inlined callees fuse
-                        // into the caller's IR — they do not constitute
-                        // a separate frame in the VM/tree model either
-                        // (the inliner mirrors what the tree walker
-                        // would have called the caller, not the
-                        // callee).
-                        let push_call_emitted = if let Some(name) = program.func_names.get(func_idx)
-                            && !name.is_empty()
-                        {
-                            let name_ptr = builder.ins().iconst(I64, name.as_ptr() as i64);
-                            let name_len = builder.ins().iconst(I64, name.len() as i64);
-                            let push_fref =
-                                get_func_ref(&mut builder, module, helpers.push_call_frame);
-                            builder.ins().call(push_fref, &[name_ptr, name_len]);
-                            true
+                        if op == OP_TAILCALL {
+                            // True tail-call elimination: emit `return_call` which is a
+                            // Cranelift terminator that reuses the current stack frame.
+                            // Both caller and callee use CallConv::Tail, satisfying the
+                            // ABI requirement. The call-stack push/pop is omitted because
+                            // the frame is replaced, not nested — there is no "return to
+                            // caller" so no pop is needed.
+                            builder.ins().return_call(target_fref, &call_args);
+                            block_terminated = true;
                         } else {
-                            false
-                        };
+                            // Push the callee's name onto the per-thread JIT
+                            // call stack so a runtime error surfaced from
+                            // inside the callee carries call_stack notes
+                            // matching VM/tree output. We only push for
+                            // non-inlined calls because inlined callees fuse
+                            // into the caller's IR — they do not constitute
+                            // a separate frame in the VM/tree model either
+                            // (the inliner mirrors what the tree walker
+                            // would have called the caller, not the
+                            // callee).
+                            let push_call_emitted = if let Some(name) =
+                                program.func_names.get(func_idx)
+                                && !name.is_empty()
+                            {
+                                let name_ptr = builder.ins().iconst(I64, name.as_ptr() as i64);
+                                let name_len = builder.ins().iconst(I64, name.len() as i64);
+                                let push_fref =
+                                    get_func_ref(&mut builder, module, helpers.push_call_frame);
+                                builder.ins().call(push_fref, &[name_ptr, name_len]);
+                                true
+                            } else {
+                                false
+                            };
 
-                        let call_inst = builder.ins().call(target_fref, &call_args);
-                        call_result = builder.inst_results(call_inst)[0];
-                        builder.def_var(vars[a_idx_call], call_result);
+                            let call_inst = builder.ins().call(target_fref, &call_args);
+                            call_result = builder.inst_results(call_inst)[0];
+                            builder.def_var(vars[a_idx_call], call_result);
 
-                        // Pop on the success path. On the error path the
-                        // post-call check in `jit_cranelift::call` will
-                        // snapshot the stack before unwinding, so we do
-                        // not need to pop in that case. (The callee
-                        // returned normally here: any helper-set error
-                        // is the *caller's* responsibility to propagate
-                        // via its own RET sequence.)
-                        if push_call_emitted {
-                            let pop_fref =
-                                get_func_ref(&mut builder, module, helpers.pop_call_frame);
-                            builder.ins().call(pop_fref, &[]);
+                            // Pop on the success path. On the error path the
+                            // post-call check in `jit_cranelift::call` will
+                            // snapshot the stack before unwinding, so we do
+                            // not need to pop in that case. (The callee
+                            // returned normally here: any helper-set error
+                            // is the *caller's* responsibility to propagate
+                            // via its own RET sequence.)
+                            if push_call_emitted {
+                                let pop_fref =
+                                    get_func_ref(&mut builder, module, helpers.pop_call_frame);
+                                builder.ins().call(pop_fref, &[]);
+                            }
                         }
                     } // end else (not inlined)
                 } else {
@@ -4605,8 +4622,9 @@ fn compile_function_body(
                     }
                 }
                 // Update F64 shadow so arithmetic ops can skip bitcast when using this
-                // register as input.
-                if a_idx_call < reg_count && reg_always_num[a_idx_call] {
+                // register as input.  Skip when the block was terminated by a
+                // `return_call` (OP_TAILCALL path) — no further IR is allowed.
+                if !block_terminated && a_idx_call < reg_count && reg_always_num[a_idx_call] {
                     let mf = cranelift_codegen::ir::MemFlags::new();
                     let rv = builder.use_var(vars[a_idx_call]);
                     let rf = builder.ins().bitcast(F64, mf, rv);
@@ -5125,6 +5143,9 @@ pub fn compile(
 fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFunction> {
     let mut flag_builder = settings::builder();
     flag_builder.set("opt_level", "speed").ok()?;
+    // CallConv::Tail requires frame pointers to be preserved so that the
+    // backend can construct the tail-call frame correctly.
+    flag_builder.set("preserve_frame_pointers", "true").ok()?;
     let isa_builder = cranelift_native::builder().ok()?;
     let isa = isa_builder
         .finish(settings::Flags::new(flag_builder))
@@ -5135,11 +5156,14 @@ fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFun
     let mut module = JITModule::new(jit_builder);
     let helpers = declare_all_helpers(&mut module);
 
-    // First pass: declare ALL functions in the module
+    // First pass: declare ALL functions in the module.
+    // All ilo functions use CallConv::Tail so that OP_TAILCALL sites can emit
+    // `return_call` for true stack-growth-free tail-call elimination.
     let mut func_ids = Vec::with_capacity(program.chunks.len());
     for (i, chunk) in program.chunks.iter().enumerate() {
         let name = format!("ilo_{}", program.func_names[i]);
         let mut sig = module.make_signature();
+        sig.call_conv = CallConv::Tail;
         for _ in 0..chunk.param_count {
             sig.params.push(AbiParam::new(I64));
         }
@@ -5166,11 +5190,54 @@ fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFun
         )?;
     }
 
+    // Third pass: emit a thin SystemV ("extern C") trampoline for the entry function.
+    // All ilo functions above use CallConv::Tail, which uses different parameter
+    // registers than SystemV.  Rust calls into JIT code via `extern "C"` fn pointers
+    // (SystemV), so we need this bridge.  The trampoline simply forwards all arguments
+    // to the real ilo entry function using a regular `call`, then returns the result.
+    let entry_param_count = program.chunks[entry_idx].param_count as usize;
+    let trampoline_fid = {
+        let tramp_name = format!("ilo_{}_trampoline", program.func_names[entry_idx]);
+        let mut sig = module.make_signature();
+        // sig.call_conv defaults to SystemV — the ABI Rust uses for extern "C"
+        for _ in 0..entry_param_count {
+            sig.params.push(AbiParam::new(I64));
+        }
+        sig.returns.push(AbiParam::new(I64));
+        let fid = module
+            .declare_function(&tramp_name, Linkage::Local, &sig)
+            .ok()?;
+
+        let mut ctx = Context::new();
+        ctx.func.signature = sig;
+        let mut fn_builder_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let args: Vec<_> = (0..entry_param_count)
+            .map(|i| builder.block_params(entry_block)[i])
+            .collect();
+
+        let target_fref = module.declare_func_in_func(func_ids[entry_idx], builder.func);
+        let call_inst = builder.ins().call(target_fref, &args);
+        let result = builder.inst_results(call_inst)[0];
+        builder.ins().return_(&[result]);
+
+        builder.seal_all_blocks();
+        builder.finalize();
+
+        module.define_function(fid, &mut ctx).ok()?;
+        fid
+    };
+
     module.finalize_definitions().ok()?;
 
-    let entry_func_id = func_ids[entry_idx];
-    let func_ptr = module.get_finalized_function(entry_func_id);
-    let param_count = program.chunks[entry_idx].param_count as usize;
+    let func_ptr = module.get_finalized_function(trampoline_fid);
+    let param_count = entry_param_count;
 
     Some(JitFunction {
         _module: module,
@@ -5184,8 +5251,9 @@ fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFun
 /// # Safety (internal)
 /// Each `transmute` casts the JIT function pointer to a typed `extern "C"` fn.
 /// This is sound because:
-/// 1. `compile()` generates code using the SystemV/Win64 C calling convention
-///    (Cranelift's `CallConv::SystemV` / platform default).
+/// 1. `compile()` generates a SystemV trampoline as the entry point; all ilo
+///    functions use `CallConv::Tail` internally, but the exported function
+///    pointer points to the trampoline which uses the SystemV/Win64 C ABI.
 /// 2. All parameters and the return value are `u64` (NanVal bit patterns),
 ///    matching the `I64` Cranelift type used for every parameter and return.
 /// 3. The function pointer is obtained from `module.get_finalized_function()`
@@ -7621,6 +7689,58 @@ mod tests {
             &[Value::Number(3.0), Value::Number(5.0)],
         );
         assert_eq!(r, Some(Value::Bool(true)));
+    }
+
+    // ── ILO-387: Cranelift JIT regression tests for bounded generics ────────
+    // Generics are erased at compile time; the JIT sees monomorphic bytecode.
+    // These tests prove the JIT path executes bounded-generic functions correctly
+    // for each bound kind: comparable, numeric, and unbounded (any).
+
+    #[test]
+    fn cranelift_bounded_generic_comparable_min_numbers() {
+        // gmn<a:comparable>: lesser of two numbers.
+        let r = jit_run_numeric(
+            "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r",
+            "gmn",
+            &[7.0, 3.0],
+        );
+        assert_eq!(r, Some(3.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_comparable_max_numbers() {
+        // gmx<a:comparable>: greater of two numbers.
+        let r = jit_run_numeric(
+            "gmx<a:comparable> x:a y:a>a\n  r=x\n  <(x) y{r=y}\n  r",
+            "gmx",
+            &[3.0, 7.0],
+        );
+        assert_eq!(r, Some(7.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_numeric_add() {
+        // gadd<a:numeric>: generic addition.
+        let r = jit_run_numeric("gadd<a:numeric> x:a y:a>a;+x y", "gadd", &[10.0, 20.0]);
+        assert_eq!(r, Some(30.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_any_identity_number() {
+        // gid<a>: unbounded identity with numeric arg.
+        let r = jit_run_numeric("gid<a> x:a>a;x", "gid", &[42.0]);
+        assert_eq!(r, Some(42.0));
+    }
+
+    #[test]
+    fn cranelift_bounded_generic_any_identity_text() {
+        // gid<a>: unbounded identity with text arg.
+        let r = jit_run(
+            "gid<a> x:a>a;x",
+            "gid",
+            &[Value::Text(Arc::new("hello".to_string()))],
+        );
+        assert_eq!(r, Some(Value::Text(Arc::new("hello".to_string()))));
     }
 
     // ── inline_chunk: CMPK_LT_N / CMPK_LE_N / CMPK_EQ_N / CMPK_NE_N arms ──

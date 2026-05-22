@@ -1,0 +1,46 @@
+-- ILO-53: multi-statement function bodies (bind-chain, early return, Result unwrap)
+--
+-- Function bodies accept a sequence of `;`-separated statements; the last
+-- expression is the return value. Both the inline form (`f x:n>n;s=+x 1;*s s`)
+-- and the brace-block form (`f x:n>n { s=+x 1; *s s }`) are supported.
+
+-- ── Bind-chain ─────────────────────────────────────────────────────────────
+-- Intermediate results bound to locals; final expression is the return value.
+add-and-double x:n y:n>n;s=+x y;*s 2
+
+-- Same body written in brace-block form.
+add-and-double-b x:n y:n>n { s = +x y; *s 2 }
+
+-- Three-step chain: intermediate values xs and ys, final expr is their sum.
+sum-of-squares a:n b:n>n;as=*a a;bs=*b b;+as bs
+
+-- ── Early return via braceless guard ───────────────────────────────────────
+-- Braceless guard short-circuits: `>=n 0 val` returns `val` immediately if true.
+-- Statements after a taken guard are skipped.
+abs-and-scale x:n>n;>=x 0 *x 10;neg=*x -1;*neg 10
+
+-- ── Early return via `ret` ─────────────────────────────────────────────────
+-- `ret expr` returns from the enclosing function regardless of position.
+clamp-pos x:n>n;<=x 0{ret 0};+x 0
+
+-- ── Result unwrap mid-body (`!`) ───────────────────────────────────────────
+-- `name!` on a Result-returning call: Ok(v) extracts v, Err propagates out.
+parse-and-add>R n t;a=num! "10";b=num! "32";~+a b
+
+-- ── run / out contracts ────────────────────────────────────────────────────
+-- run: add-and-double 3 4
+-- out: 14
+-- run: add-and-double-b 3 4
+-- out: 14
+-- run: sum-of-squares 3 4
+-- out: 25
+-- run: abs-and-scale -5
+-- out: 50
+-- run: abs-and-scale 3
+-- out: 30
+-- run: clamp-pos -3
+-- out: 0
+-- run: clamp-pos 7
+-- out: 7
+-- run: parse-and-add
+-- out: 42
