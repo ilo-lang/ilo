@@ -2839,21 +2839,15 @@ fn builtin_check_args(
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!(
-                        "'par-map' first arg must be a function (F ...), got {fn_ty}"
-                    ),
-                    hint: Some(
-                        "pass a function name or lambda: par-map double xs 4".to_string(),
-                    ),
+                    message: format!("'par-map' first arg must be a function (F ...), got {fn_ty}"),
+                    hint: Some("pass a function name or lambda: par-map double xs 4".to_string()),
                     span,
                     is_warning: false,
                 });
             }
             // Return type: L (R b t) where b is the fn's return type
             let ret_elem = match arg_types.first() {
-                Some(Ty::Fn(_, ret)) => {
-                    Ty::Result(Box::new(*ret.clone()), Box::new(Ty::Text))
-                }
+                Some(Ty::Fn(_, ret)) => Ty::Result(Box::new(*ret.clone()), Box::new(Ty::Text)),
                 _ => Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
             };
             (Ty::List(Box::new(ret_elem)), errors)
@@ -5515,7 +5509,11 @@ impl VerifyContext {
                             "0 or 2".to_string()
                         } else if callee == "srt" || callee == "rsrt" {
                             "1, 2, or 3".to_string()
-                        } else if callee == "par-map" || callee == "map" || callee == "flt" || callee == "ct" {
+                        } else if callee == "par-map"
+                            || callee == "map"
+                            || callee == "flt"
+                            || callee == "ct"
+                        {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()
