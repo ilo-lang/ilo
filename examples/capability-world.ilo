@@ -1,0 +1,30 @@
+-- ILO-68: World / capability parameter at the language level
+--
+-- The `world` builtin returns the current capability World token (type W).
+-- Functions that perform I/O accept `w:W` as an explicit proof-of-authority
+-- parameter, making side-effect surfaces visible in the signature — the
+-- Zig/Zero capability-passing pattern applied to ilo.
+--
+-- `world` is constructed from CLI --allow-* flags at startup:
+--   ilo run capability-world.ilo          -> all caps true (permissive default)
+--   ilo --allow-net=* run capability-world.ilo -> net=true, others false
+--   ilo --allow-read=/tmp --allow-net=api.example.com run capability-world.ilo
+--
+-- W syntax mirrors L (List), R (Result), M (Map) etc.
+-- w:W in a function signature = "this function requires a World capability token".
+
+-- Pure function: no W param needed, no side effects.
+add x:n y:n>n;+x y
+
+-- A world-aware function: declares that it uses I/O.
+-- The signature makes the dependency explicit to both agents and verifiers.
+greet w:W name:t>t;
+  fmt "hello, {} (world.net={})" name w.net
+
+-- Main receives the world token from the runtime and threads it through.
+main>t;
+  w=world
+  greeting=greet w "ilo"
+  prnt greeting
+  prnt fmt "world: net={} read={} write={} run={}" w.net w.read w.write w.run
+  "done"
