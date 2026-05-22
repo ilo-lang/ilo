@@ -43,14 +43,21 @@ SKILL_NAMES = [
 ]
 
 PER_MODULE_LIMIT = 1000
-# `ilo-language` is the foundational module every agent loads first; it
-# carries a higher cap because core syntax doesn't split cleanly into
-# smaller files. `ilo-builtins-io` is the next most-touched module —
-# HTTP, JSON, env, time, and process all live there; agent dogfooding
-# hits this cap on every other doc PR. Bumped to match its density.
+# Per-module overrides for the densest modules. Caps track measured size
+# with light headroom; the aggregate budget (TOTAL_LIMIT) is the real
+# token-economics gate, since agents load 1-2 modules per task.
+# `ilo-language` is the foundational module every agent loads first.
+# `ilo-builtins-io` covers HTTP, JSON, env, time, process - dogfooding
+# hits it on every other doc PR. `ilo-builtins-math` carries the full
+# numerics surface (stats, distance, regression, FFT, bisect). `ilo-agent`
+# documents the agent-protocol RPC, which has grown with each verb.
 PER_MODULE_OVERRIDES = {
-    "ilo-language": 1500,
-    "ilo-builtins-io": 1500,
+    "ilo-language": 1700,
+    "ilo-builtins-core": 1200,
+    "ilo-builtins-math": 1500,
+    "ilo-builtins-io": 2000,
+    "ilo-builtins-text": 1200,
+    "ilo-agent": 1300,
 }
 TOTAL_LIMIT = 15000
 

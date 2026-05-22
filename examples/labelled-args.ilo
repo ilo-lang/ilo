@@ -1,0 +1,38 @@
+-- Labelled args (ILO-71)
+-- Optional `name:value` syntax at call sites for arity-4+ functions.
+-- Labels resolve to positional by parameter name, so order doesn't matter.
+-- Works for builtins, user functions, and paren-form calls.
+
+-- User-defined arity-4 function
+combine a:t b:t c:t d:t>t;fmt "{} {} {} {}" a b c d
+
+-- Demonstrates:
+--  1. All-labelled call (order matches declaration)
+--  2. All-labelled call (reversed order — same result)
+--  3. Mixed positional + labelled
+--  4. Builtin with labelled args (dtfmt)
+--  5. Paren-form labelled call
+--  6. Unknown label → clear ILO-P019 diagnostic
+
+main>t;
+-- 1. All-labelled, declaration order
+r1=combine a:"alpha" b:"beta" c:"gamma" d:"delta";
+
+-- 2. All-labelled, reversed — identical result
+r2=combine d:"delta" c:"gamma" b:"beta" a:"alpha";
+
+-- 3. Mixed: first two positional, last two labelled
+r3=combine "alpha" "beta" d:"delta" c:"gamma";
+
+-- 4. Builtin dtfmt with labelled args (epoch + fmt reversed)
+epoch=1700000000;
+r4tmp=dtfmt fmt:"%Y-%m-%d" epoch:epoch;
+r4=?r4tmp{~v:v;^e:"err"};
+
+-- 5. Paren-form labelled call
+r5=combine(d:"delta", c:"gamma", b:"beta", a:"alpha");
+
+-- 6. Positional (unchanged behaviour)
+r6=combine "alpha" "beta" "gamma" "delta";
+
+fmt "{}\n{}\n{}\n{}\n{}\n{}" r1 r2 r3 r4 r5 r6
