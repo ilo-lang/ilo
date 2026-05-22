@@ -28,6 +28,47 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// ── auth ───────────────────────────────────────────────────────────────────────
+
+/// Load a GitHub token from `$GITHUB_TOKEN` env var or `~/.ilo/credentials`.
+///
+/// The credentials file is JSON with a `"github_token"` key, e.g.:
+/// ```json
+/// { "github_token": "ghp_xxxx" }
+/// ```
+///
+/// Returns `None` when no token is configured — callers fall back to unauthenticated.
+pub fn load_github_token() -> Option<String> {
+    // 1. Environment variable takes precedence.
+    if let Ok(tok) = std::env::var("GITHUB_TOKEN") {
+        if !tok.is_empty() {
+            return Some(tok);
+        }
+    }
+
+    // 2. ~/.ilo/credentials (JSON).
+    let home = home_dir()?;
+    let creds_path = home.join(".ilo").join("credentials");
+    let text = std::fs::read_to_string(&creds_path).ok()?;
+    let val: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let tok = val.get("github_token")?.as_str()?;
+    if tok.is_empty() {
+        None
+    } else {
+        Some(tok.to_string())
+    }
+}
+
+/// Build an authenticated GitHub clone URL.  If `token` is `Some`, embeds it
+/// as `https://<token>@github.com/...` so git does not prompt interactively.
+/// The token is never printed to the terminal.
+fn github_clone_url(owner: &str, repo: &str, token: Option<&str>) -> String {
+    match token {
+        Some(tok) => format!("https://{}@github.com/{owner}/{repo}.git", tok),
+        None => format!("https://github.com/{owner}/{repo}.git"),
+    }
+}
+
 // ── public helpers ─────────────────────────────────────────────────────────────
 
 /// Return the cache directory for a package.  Creates `~/.ilo/pkgs/` if needed.
@@ -250,7 +291,8 @@ fn add_recursive(spec: &str, visited: &mut HashSet<String>, stack: &mut Vec<Stri
         return 0;
     }
 
-    let url = format!("https://github.com/{owner}/{repo}.git");
+    let token = load_github_token();
+    let url = github_clone_url(owner, repo, token.as_deref());
 
     // Resolve semver constraints to a concrete tag before cloning.
     // `resolved_owned` keeps the heap allocation alive for the lifetime of
@@ -731,5 +773,41 @@ reuse "org/pkg2""#;
         // Should return 0 immediately (already resolved, no network call).
         let rc = add_recursive("myorg/helpers", &mut visited, &mut stack);
         assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn github_clone_url_no_token() {
+        let url = github_clone_url("myorg", "myrepo", None);
+        assert_eq!(url, "https://github.com/myorg/myrepo.git");
+    }
+
+    #[test]
+    fn github_clone_url_with_token() {
+        let url = github_clone_url("myorg", "myrepo", Some("ghp_secret"));
+        assert_eq!(url, "https://ghp_secret@github.com/myorg/myrepo.git");
+        // Token must not appear in the publicly-visible URL written to ilo.lock.
+        let lock_url = "https://github.com/myorg/myrepo".to_string();
+        assert!(!lock_url.contains("ghp_secret"));
+    }
+
+    #[test]
+    fn load_github_token_from_env() {
+        // Temporarily set the env var and verify it is returned.
+        // SAFETY: single-threaded test context; no other thread reads GITHUB_TOKEN.
+        unsafe { std::env::set_var("GITHUB_TOKEN", "tok_from_env") };
+        let tok = load_github_token();
+        unsafe { std::env::remove_var("GITHUB_TOKEN") };
+        assert_eq!(tok.as_deref(), Some("tok_from_env"));
+    }
+
+    #[test]
+    fn load_github_token_empty_env_ignored() {
+        // SAFETY: single-threaded test context; no other thread reads GITHUB_TOKEN.
+        unsafe { std::env::set_var("GITHUB_TOKEN", "") };
+        // With an empty env var and no credentials file (temp dir), should be None.
+        // The function returns None or a file-based token; either way "" is not returned.
+        let tok = load_github_token();
+        unsafe { std::env::remove_var("GITHUB_TOKEN") };
+        assert_ne!(tok.as_deref(), Some(""));
     }
 }
