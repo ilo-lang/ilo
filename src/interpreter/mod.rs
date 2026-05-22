@@ -6,6 +6,67 @@ use std::sync::Arc;
 
 pub mod json;
 
+// ── Trace hook ────────────────────────────────────────────────────────────────
+
+/// One trace event emitted after each statement executes.
+/// Schema matches the ILO-72 proposal:
+/// `{"schemaVersion":1,"line":N,"stmt":"...","bindings":{...},"result":...}`
+#[derive(Debug)]
+pub struct TraceEvent {
+    /// 1-based source line of the statement start, or 0 if unknown.
+    pub line: usize,
+    /// Source text of the statement (trimmed), or empty if unavailable.
+    pub stmt: String,
+    /// All variable bindings visible in the current scope after the statement.
+    pub bindings: Vec<(String, Value)>,
+    /// The value produced by the statement (Nil for side-effect statements).
+    pub result: Value,
+}
+
+// Thread-local trace sink. When `Some`, `eval_body` fires it after each
+// statement. Set to `Some` by `run_with_trace` and cleared on return.
+std::thread_local! {
+    #[allow(clippy::type_complexity)]
+    static TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(TraceEvent)>>> =
+        const { std::cell::RefCell::new(None) };
+
+    // Source text used to look up statement spans; set alongside TRACE_HOOK.
+    static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `program` with a per-statement trace callback.
+/// `on_event` is called after each statement in the entry function body.
+pub fn run_with_trace<F>(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    on_event: F,
+) -> Result<Value>
+where
+    F: FnMut(TraceEvent) + 'static,
+{
+    // Install the hook.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = Some(Box::new(on_event));
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = program.source.clone();
+    });
+
+    let result = run_with_env(program, func_name, args, Env::new());
+
+    // Always clear the hook, even on error.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = None;
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = None;
+    });
+
+    result
+}
+
 /// A typed key for `Value::Map` and `HeapObj::Map`.
 ///
 /// Two variants — `Text` for string keys and `Int` for integer keys.
@@ -5747,6 +5808,33 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
+    if builtin == Some(Builtin::Wro) && args.len() == 2 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: first arg must be a text path, got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let content = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: second arg must be text content, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::write(path.as_str(), content.as_bytes()) {
+            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        };
+    }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
         if let Value::Text(path) = &args[0] {
             if let Err(msg) = env.caps.check_write(path.as_str()) {
@@ -7904,14 +7992,41 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         // statements are not in tail position by definition.
         let stmt_is_tail = is_tail && i + 1 == n;
         match eval_stmt(env, &spanned.node, stmt_is_tail) {
-            Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
-            Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
-            Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
+            Ok(Some(BodyResult::Return(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                return Ok(BodyResult::Return(v));
+            }
+            Ok(Some(BodyResult::Break(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                return Ok(BodyResult::Break(v));
+            }
+            Ok(Some(BodyResult::Continue)) => {
+                fire_trace_event(env, spanned, Value::Nil);
+                return Ok(BodyResult::Continue);
+            }
             Ok(Some(BodyResult::TailCall { callee, args })) => {
+                fire_trace_event(env, spanned, Value::Nil);
                 return Ok(BodyResult::TailCall { callee, args });
             }
-            Ok(Some(BodyResult::Value(v))) => last = v,
-            Ok(None) => {}
+            Ok(Some(BodyResult::Value(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                last = v;
+            }
+            Ok(None) => {
+                // For Let statements the assigned value is available in env.
+                // Use it as the result so the trace shows what was bound.
+                let result = if let Stmt::Let { name, .. } = &spanned.node {
+                    env.vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k == name)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(Value::Nil)
+                } else {
+                    Value::Nil
+                };
+                fire_trace_event(env, spanned, result);
+            }
             Err(mut e) => {
                 // Auto-unwrap propagation: convert to early return
                 if let Some(val) = e.propagate_value.take() {
@@ -7928,6 +8043,48 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         }
     }
     Ok(BodyResult::Value(last))
+}
+
+/// Fire the TRACE_HOOK (if installed) after a statement executes.
+/// Extracts line number from the span and collects current bindings.
+#[inline]
+fn fire_trace_event(env: &Env, spanned: &Spanned<Stmt>, result: Value) {
+    let has_hook = TRACE_HOOK.with(|h| h.borrow().is_some());
+    if !has_hook {
+        return;
+    }
+
+    let span = spanned.span;
+
+    // Resolve 1-based line number from the span.
+    let (line, stmt_text) = TRACE_SOURCE.with(|src| {
+        if let Some(ref source) = *src.borrow() {
+            let sm = crate::ast::SourceMap::new(source);
+            let (line, _col) = sm.lookup(span.start);
+            let text = sm.line_text(source, line).trim().to_string();
+            (line, text)
+        } else {
+            (0, String::new())
+        }
+    });
+
+    // Snapshot current bindings.
+    let bindings: Vec<(String, Value)> = env
+        .vars
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    TRACE_HOOK.with(|h| {
+        if let Some(ref mut hook) = *h.borrow_mut() {
+            hook(TraceEvent {
+                line,
+                stmt: stmt_text,
+                bindings,
+                result,
+            });
+        }
+    });
 }
 
 /// If `value` is the self-rebind accumulator shape `name = mset name k v`,
