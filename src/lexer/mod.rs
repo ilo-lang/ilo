@@ -140,6 +140,18 @@ pub enum Token {
 
     // Literals
     #[regex(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
+    #[regex(r"0[xX][0-9a-fA-F]+", |lex| {
+        let s = lex.slice();
+        u64::from_str_radix(&s[2..], 16).ok().map(|n| n as f64)
+    })]
+    #[regex(r"0[bB][01]+", |lex| {
+        let s = lex.slice();
+        u64::from_str_radix(&s[2..], 2).ok().map(|n| n as f64)
+    })]
+    #[regex(r"0[oO][0-7]+", |lex| {
+        let s = lex.slice();
+        u64::from_str_radix(&s[2..], 8).ok().map(|n| n as f64)
+    })]
     Number(f64),
 
     #[regex(r#""[^"\\]*(?:\\.[^"\\]*)*""#, |lex| {

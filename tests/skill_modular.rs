@@ -48,7 +48,7 @@ const SKILL_NAMES: &[&str] = &[
 /// per-module cap (1,000 tokens for category modules, 1,500 for the
 /// foundational `ilo-language`); this in-binary check is a defence-in-depth
 /// tripwire that catches drift even when CI is bypassed.
-const BYTE_BUDGET_PER_MODULE: usize = 8_000;
+const BYTE_BUDGET_PER_MODULE: usize = 7_000;
 
 /// Total bytes across all twelve. ~31,200 bytes ≈ 9,000 tokens at ~3.4 bytes
 /// per cl100k_base token on our content; the tighter tiktoken job in CI

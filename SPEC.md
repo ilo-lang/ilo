@@ -36,6 +36,7 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - Last expression is the return value (no `return` keyword)
 - Zero-arg call: `make-id()`
 - Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
+- Labelled args (ILO-71): `dtfmt epoch:e fmt:"%Y"` — optional `label:value` form for any callable with declared parameter names. Labels resolve to positional by name; order is free. Mixed positional + labelled is allowed (positional fill from left; labels fill remaining slots by name). Unknown or duplicate labels surface `ILO-P019` at parse time. Works in both postfix and paren form: `f(b:2, a:1)` ≡ `f a:1 b:2`.
 
 ```
 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
@@ -230,7 +231,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
         flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
         mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
-        run sin slc spl srt str sum tan tau trm unq upr wra wrl zip
+        run sin slc spl srt str sum tan tau trm unq upr wra wrl wro zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
@@ -660,7 +661,8 @@ Called like functions, compiled to dedicated opcodes.
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
 | `wr path data "json"` | write any value as pretty JSON | `R t t` |
-| `wra path s` | append text to file (create if missing) | `R t t` |
+| `wra path s` | append text to file (create if missing); see also `wro` for overwrite | `R t t` |
+| `wro path s` | truncate file at path and write s (create if missing); see also `wra` for append | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
@@ -2083,7 +2085,13 @@ ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; prote
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
 ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
+ilo run --allow-net[=HOSTS] <file>   -- restrict outbound net to comma-separated hosts (* = all, empty = none)
+ilo run --allow-read[=PATHS] <file>  -- restrict file reads to comma-separated path prefixes
+ilo run --allow-write[=PATHS] <file> -- restrict file writes to comma-separated path prefixes
+ilo run --allow-run[=CMDS] <file>    -- restrict subprocess spawning to comma-separated command names
 ```
+
+**Capability flags (`ILO-CAP-001`).** `ilo run --allow-net=HOSTS --allow-read=PATHS --allow-write=PATHS --allow-run=CMDS` gates IO builtins at the process level. Any `--allow-*` flag present switches the runtime from **permissive** (default — no restrictions, full backwards compatibility) to **restricted** (only listed targets are permitted). Denial returns a normal `R` Err value with code `ILO-CAP-001`; programs can pattern-match it. Capability matrix: `get`/`post`/`put`/`patch`/`del`/`fetch` → `--allow-net`; `rd`/`rd-lines`/`ls`/`lsr` → `--allow-read`; `wr`/`wr-lines`/`wr-app` → `--allow-write`; `run`/`run2` → `--allow-run`. Value syntax: omit = unrestricted; `*` = all permitted; empty (`--allow-net=`) = all blocked; comma list = only those targets. Matching: net = hostname extracted from URL, exact or `*.domain` wildcard; read/write = path-prefix with separator boundary; run = basename or full-path match. See `SANDBOX.md` for the operator guide and `examples/capability-sandbox.ilo` for a runnable demo.
 
 **Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards were installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
@@ -2172,3 +2180,8 @@ fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 ```
 fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 ```
+
+
+## Stability
+
+See STABILITY.md at repo root for the per-surface stability matrix. Three tiers: stable (schemaVersion:1 envelope, ILO-error-codes, serv-protocol-phases, file-version-pragma, manifesto-principles, reserved-name-policy), provisional (builtin-signatures, cli-flag-names, error-message-prose, examples-corpus, ilo-test-surface), experimental (0.13-in-flight-features, aot-artifact-format, cranelift-jit-internals, extensions-dir, cargo-feature-flags). Stable surfaces are safe to pin across releases. Provisional surfaces carry a deprecation-window guarantee. Experimental surfaces may disappear without notice. `ilo spec --json ai` surfaces this matrix in the `stability` field of the JSON envelope, and per-item stability annotations on every builtin in the `builtins` array.
