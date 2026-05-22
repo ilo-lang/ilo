@@ -2467,6 +2467,7 @@ fn resolve_imports(
                         imported_dir.as_deref(),
                         visited,
                         diagnostics,
+                        build_target,
                     );
                     visited.remove(&canonical);
                     let filtered =
