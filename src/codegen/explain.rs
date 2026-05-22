@@ -215,6 +215,9 @@ fn fmt_type_long(ty: &Type) -> String {
             format!("fn({}) → {}", ps.join(", "), fmt_type_long(ret))
         }
         Type::Named(name) => name.clone(),
+        Type::U32 => "u32".into(),
+        Type::U64 => "u64".into(),
+        Type::I64 => "i64".into(),
     }
 }
 
@@ -240,6 +243,9 @@ fn fmt_type(ty: &Type) -> String {
             s
         }
         Type::Named(name) => name.clone(),
+        Type::U32 => "U32".into(),
+        Type::U64 => "U64".into(),
+        Type::I64 => "I64".into(),
     }
 }
 

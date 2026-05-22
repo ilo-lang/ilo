@@ -231,6 +231,9 @@ fn fmt_type(ty: &Type) -> String {
             s
         }
         Type::Named(name) => name.clone(),
+        Type::U32 => "U32".to_string(),
+        Type::U64 => "U64".to_string(),
+        Type::I64 => "I64".to_string(),
     }
 }
 

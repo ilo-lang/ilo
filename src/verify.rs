@@ -20,6 +20,12 @@ pub enum Ty {
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
     Unknown,
+    /// 32-bit unsigned integer — stored as f64 in tree-walker; exact up to 2^32.
+    U32,
+    /// 64-bit unsigned integer — stored as f64; precision loss above 2^53.
+    U64,
+    /// 64-bit signed integer — stored as f64; precision loss outside ±2^53.
+    I64,
 }
 
 impl std::fmt::Display for Ty {
@@ -49,6 +55,9 @@ impl std::fmt::Display for Ty {
             }
             Ty::Named(name) => write!(f, "{name}"),
             Ty::Unknown => write!(f, "_"),
+            Ty::U32 => write!(f, "U32"),
+            Ty::U64 => write!(f, "U64"),
+            Ty::I64 => write!(f, "I64"),
         }
     }
 }
@@ -149,7 +158,8 @@ fn collect_named_refs_inner(ty: &Type, refs: &mut Vec<String>) {
             }
             collect_named_refs_inner(ret, refs);
         }
-        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any => {}
+        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any
+        | Type::U32 | Type::U64 | Type::I64 => {}
     }
 }
 
@@ -182,6 +192,9 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
                 .collect(),
             Box::new(convert_type_with_aliases(ret, aliases)),
         ),
+        Type::U32 => Ty::U32,
+        Type::U64 => Ty::U64,
+        Type::I64 => Ty::I64,
         Type::Named(name) => {
             if let Some(resolved) = aliases.get(name) {
                 resolved.clone()
@@ -223,6 +236,13 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
                 && compatible(ar, br)
         }
         (Ty::Named(a), Ty::Named(b)) => a == b,
+        // Integer width types are compatible with each other and with Number
+        // (tree-walker stores all of them as f64).
+        (Ty::U32, Ty::U32)
+        | (Ty::U64, Ty::U64)
+        | (Ty::I64, Ty::I64) => true,
+        (Ty::U32 | Ty::U64 | Ty::I64, Ty::Number)
+        | (Ty::Number, Ty::U32 | Ty::U64 | Ty::I64) => true,
         _ => false,
     }
 }
@@ -5701,8 +5721,16 @@ ilo has no tuple type."
         match op {
             BinOp::Add => {
                 // Number+Number, Text+Text, List+List
+                // Integer width types (U32/U64/I64) are stored as f64 and
+                // behave identically to Number for arithmetic purposes.
                 match (lt, rt) {
                     (Ty::Number, Ty::Number) => Ty::Number,
+                    // Integer width types are numeric; return the more specific type.
+                    (Ty::U32, Ty::U32) => Ty::U32,
+                    (Ty::U64, Ty::U64) => Ty::U64,
+                    (Ty::I64, Ty::I64) => Ty::I64,
+                    (Ty::U32 | Ty::U64 | Ty::I64, Ty::Number)
+                    | (Ty::Number, Ty::U32 | Ty::U64 | Ty::I64) => Ty::Number,
                     (Ty::Text, Ty::Text) => Ty::Text,
                     (Ty::List(a), Ty::List(_)) => Ty::List(a.clone()),
                     (Ty::Unknown, _) | (_, Ty::Unknown) => Ty::Unknown,

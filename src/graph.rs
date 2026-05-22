@@ -226,7 +226,8 @@ fn collect_type_refs(ty: &Type, refs: &mut BTreeSet<String>) {
             }
             collect_type_refs(ret, refs);
         }
-        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any => {}
+        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any
+        | Type::U32 | Type::U64 | Type::I64 => {}
     }
 }
 

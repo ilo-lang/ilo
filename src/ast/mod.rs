@@ -83,6 +83,15 @@ pub enum Type {
     Sum(Vec<String>),             // S a b c  — closed set of named string variants
     Fn(Vec<Type>, Box<Type>),     // F param... return  (last type is return)
     Named(String),                // user-defined type name or type variable
+    /// 32-bit unsigned integer type. Stored as f64 in the tree-walker engine.
+    /// Precision is exact for integers ≤ 2^32 (≤ 4 294 967 295).
+    U32,
+    /// 64-bit unsigned integer type. Stored as f64 in the tree-walker engine.
+    /// PRECISION LIMIT: f64 has 53 mantissa bits, so values > 2^53 lose precision.
+    U64,
+    /// 64-bit signed integer type. Stored as f64 in the tree-walker engine.
+    /// PRECISION LIMIT: f64 has 53 mantissa bits, so values outside ±2^53 lose precision.
+    I64,
 }
 
 /// A parameter: `name:type`
@@ -957,7 +966,8 @@ impl Type {
         {
             match ty {
                 // Inline primitives.
-                Type::Number | Type::Bool | Type::Sum(_) => false,
+                Type::Number | Type::Bool | Type::Sum(_)
+                | Type::U32 | Type::U64 | Type::I64 => false,
                 // Immutable shared bytes; no embedded references.
                 Type::Text => false,
                 // No information at the type level.

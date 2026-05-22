@@ -32,6 +32,15 @@ pub enum Token {
     #[token("S")]
     SumType,
 
+    // Integer width types — listed before single-letter sigils so logos
+    // matches the longer `U32`/`U64`/`I64` before falling back to `U`/`I`.
+    #[token("U32")]
+    U32Type,
+    #[token("U64")]
+    U64Type,
+    #[token("I64")]
+    I64Type,
+
     // Reserved keywords from other languages — not valid in ilo, emit friendly errors
     #[token("if")]
     KwIf,
@@ -208,6 +217,9 @@ impl Token {
             Token::OptType => "`O`".into(),
             Token::MapType => "`M`".into(),
             Token::SumType => "`S`".into(),
+            Token::U32Type => "`U32`".into(),
+            Token::U64Type => "`U64`".into(),
+            Token::I64Type => "`I64`".into(),
 
             // Reserved cross-language keywords
             Token::KwIf => "`if`".into(),
