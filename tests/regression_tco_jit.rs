@@ -20,7 +20,11 @@ fn run_jit(src: &str, entry: &str, args: &[&str]) -> String {
         cmd.arg(a);
     }
     let out = cmd.output().expect("ilo --jit failed to spawn");
-    assert!(out.status.success(), "jit exited non-zero: {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "jit exited non-zero: {:?}",
+        out.status
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 

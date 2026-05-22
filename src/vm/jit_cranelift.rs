@@ -4552,24 +4552,19 @@ fn compile_function_body(
                             // (the inliner mirrors what the tree walker
                             // would have called the caller, not the
                             // callee).
-                            let push_call_emitted =
-                                if let Some(name) = program.func_names.get(func_idx)
-                                    && !name.is_empty()
-                                {
-                                    let name_ptr =
-                                        builder.ins().iconst(I64, name.as_ptr() as i64);
-                                    let name_len =
-                                        builder.ins().iconst(I64, name.len() as i64);
-                                    let push_fref = get_func_ref(
-                                        &mut builder,
-                                        module,
-                                        helpers.push_call_frame,
-                                    );
-                                    builder.ins().call(push_fref, &[name_ptr, name_len]);
-                                    true
-                                } else {
-                                    false
-                                };
+                            let push_call_emitted = if let Some(name) =
+                                program.func_names.get(func_idx)
+                                && !name.is_empty()
+                            {
+                                let name_ptr = builder.ins().iconst(I64, name.as_ptr() as i64);
+                                let name_len = builder.ins().iconst(I64, name.len() as i64);
+                                let push_fref =
+                                    get_func_ref(&mut builder, module, helpers.push_call_frame);
+                                builder.ins().call(push_fref, &[name_ptr, name_len]);
+                                true
+                            } else {
+                                false
+                            };
 
                             let call_inst = builder.ins().call(target_fref, &call_args);
                             call_result = builder.inst_results(call_inst)[0];
@@ -4583,11 +4578,8 @@ fn compile_function_body(
                             // is the *caller's* responsibility to propagate
                             // via its own RET sequence.)
                             if push_call_emitted {
-                                let pop_fref = get_func_ref(
-                                    &mut builder,
-                                    module,
-                                    helpers.pop_call_frame,
-                                );
+                                let pop_fref =
+                                    get_func_ref(&mut builder, module, helpers.pop_call_frame);
                                 builder.ins().call(pop_fref, &[]);
                             }
                         }
@@ -5205,10 +5197,7 @@ fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFun
     // to the real ilo entry function using a regular `call`, then returns the result.
     let entry_param_count = program.chunks[entry_idx].param_count as usize;
     let trampoline_fid = {
-        let tramp_name = format!(
-            "ilo_{}_trampoline",
-            program.func_names[entry_idx]
-        );
+        let tramp_name = format!("ilo_{}_trampoline", program.func_names[entry_idx]);
         let mut sig = module.make_signature();
         // sig.call_conv defaults to SystemV — the ABI Rust uses for extern "C"
         for _ in 0..entry_param_count {
