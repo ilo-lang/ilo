@@ -5747,6 +5747,33 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
+    if builtin == Some(Builtin::Wro) && args.len() == 2 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: first arg must be a text path, got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let content = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: second arg must be text content, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::write(path.as_str(), content.as_bytes()) {
+            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        };
+    }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
         if let Value::Text(path) = &args[0] {
             if let Err(msg) = env.caps.check_write(path.as_str()) {
