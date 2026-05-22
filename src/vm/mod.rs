@@ -7971,14 +7971,24 @@ impl NanVal {
                 // can drain it one line at a time without buffering.
                 NanVal::heap_stdin_lines(handle.clone())
             }
-            Value::World { net, read, write, run } => {
+            Value::World {
+                net,
+                read,
+                write,
+                run,
+            } => {
                 // World tokens are opaque at the VM level — represented as a
                 // tagged record so the VM can pass them through without special
                 // opcodes. Decode in `to_value` matches this layout.
                 use crate::vm::TypeInfo;
                 let type_info = Rc::new(TypeInfo {
                     name: "World".to_string(),
-                    fields: vec!["net".to_string(), "read".to_string(), "write".to_string(), "run".to_string()],
+                    fields: vec![
+                        "net".to_string(),
+                        "read".to_string(),
+                        "write".to_string(),
+                        "run".to_string(),
+                    ],
                     num_fields: 0,
                 });
                 let flat: Box<[NanVal]> = Box::new([

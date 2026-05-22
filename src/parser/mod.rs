@@ -1791,7 +1791,8 @@ statement boundary; bind the chain to a local first. For example, split \
             Some(tok) => Err(self.error_hint(
                 "ILO-P007",
                 format!("expected type, got {}", tok.user_facing_name()),
-                "valid types: n, t, b, L n, R n t, F n>n, W (World), or a record type name".to_string(),
+                "valid types: n, t, b, L n, R n t, F n>n, W (World), or a record type name"
+                    .to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
@@ -4158,7 +4159,12 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `env-all!` / etc. Never consume args — return immediately as
                 // a 0-arg call. Without this guard the greedy args loop below
                 // would steal the first token of the next statement.
-                if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" || name == "world-no-net" {
+                if name == "rdin"
+                    || name == "rdinl"
+                    || name == "env-all"
+                    || name == "world"
+                    || name == "world-no-net"
+                {
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],

@@ -1852,9 +1852,6 @@ fires on the pathological wide-capture case.
         phase: Phase::Verify,
         short: "generic type variable used inconsistently or bound violated",
         long: r#"## ILO-T045: generic type variable inconsistency / bound violation
-        code: "ILO-T044",
-        short: "generic type variable used inconsistently or bound violated",
-        long: r#"## ILO-T044: generic type variable inconsistency / bound violation
 
 A function with explicit generic type parameters (`<a:comparable>`,
 `<a:numeric>`, etc.) was called with arguments that either:
@@ -1877,7 +1874,7 @@ A function with explicit generic type parameters (`<a:comparable>`,
 mn<a:comparable> x:a y:a>a
   r=x;>(x) y{r=y};r
 
-mn 1 "two"   -- ILO-T044: 'a' bound to n then t
+mn 1 "two"   -- ILO-T045: 'a' bound to n then t
 ```
 
 Fix: pass two values of the same type.
@@ -1887,7 +1884,7 @@ Fix: pass two values of the same type.
 ```
 add-one<a:numeric> x:a>a;+x 1
 
-add-one "hello"   -- ILO-T044: text does not satisfy numeric
+add-one "hello"   -- ILO-T045: text does not satisfy numeric
 ```
 
 Fix: pass a numeric argument.
