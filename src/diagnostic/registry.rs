@@ -1316,6 +1316,7 @@ may be legitimately side-effecting (logging, file I/O).
     },
     ErrorEntry {
         code: "ILO-T044",
+        phase: Phase::Verify,
         short: "'with' cannot add new field to anonymous record",
         long: r#"## ILO-T044: 'with' cannot add new field to anonymous record
 

@@ -5837,7 +5837,12 @@ ilo has no tuple type."
                                     def_fields.iter().map(|(n, _)| n.clone()).collect();
                                 let hint = closest_match(fname, def_field_strings.iter())
                                     .map(|s| format!("did you mean '{s}'?"))
-                                    .or_else(|| Some(format!("existing fields: {}", def_field_strings.join(", "))));
+                                    .or_else(|| {
+                                        Some(format!(
+                                            "existing fields: {}",
+                                            def_field_strings.join(", ")
+                                        ))
+                                    });
                                 self.err(
                                     "ILO-T044",
                                     func,
