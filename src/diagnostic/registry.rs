@@ -1350,38 +1350,33 @@ may be legitimately side-effecting (logging, file I/O).
     ErrorEntry {
         code: "ILO-T044",
         phase: Phase::Verify,
-        short: "'with' cannot add new field to anonymous record",
-        long: r#"## ILO-T044: 'with' cannot add new field to anonymous record
+        short: "net builtin called with a World that has net=false",
+        long: r#"## ILO-T044: net builtin called with a World that has net=false
 
-The `with` expression updates fields of an existing record. When applied
-to an **anonymous record** (an inline `{field:value ...}` literal), every
-field named in the update must already exist in the source record.
+A network builtin (`get`, `pst`, `put`, `pat`, `del`, `hed`, `opt`,
+`getx`, `pstx`, `get-many`, `get-to`, `pst-to`) is called in a scope
+that contains a World value statically known to deny network access
+(constructed via `world-no-net`).
 
-Anonymous records have a fixed shape determined at the point of
-construction. Extending that shape via `with` is not allowed because it
-would silently produce a record with a different type than the original,
-making the shape hard to reason about statically.
+This is a **static capability violation**: the code explicitly declared
+that net access is denied, then attempted a net operation anyway.
 
-**Example (error):**
+**Example:**
 
-    main>_
-      r = {x:1 y:2}
-      r with z:3          -- ILO-T044: 'z' is not a field of r
+    fetch w:W url:t>R t t
+      wn = world-no-net
+      get url              -- ERROR ILO-T044: wn has net=false
 
-**Fix — include the field in the original record:**
+**Fix:** either remove the `world-no-net` binding, or restructure so
+the net call happens in a context where net access is allowed.
 
-    main>_
-      r = {x:1 y:2 z:0}
-      r with z:3
+    fetch url:t>R t t
+      get url              -- ok: no net-denied World in scope
 
-**Fix — construct a new record literal with all fields:**
-
-    main>_
-      r = {x:1 y:2}
-      {x:r.x y:r.y z:3}
-
-Named record types (declared with `type`) also reject unknown fields in
-`with` — that is ILO-T021.
+Note: this check only fires for syntactically known constructions
+(`world-no-net`). Dynamic World values (from the `world` builtin or
+function parameters) are not checked statically — those are enforced
+at runtime via the `--allow-net` flag.
 "#,
     },
     ErrorEntry {

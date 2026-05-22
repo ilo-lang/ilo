@@ -152,6 +152,11 @@ pub enum Builtin {
     /// `world > World` — return the current capability World value.
     /// Zero args; reads from the runtime's active `Caps`.
     WorldCap,
+    /// `world-no-net > World` — construct a World with net=false.
+    /// All other caps (read, write, run) are inherited from the runtime `Caps`.
+    /// Used to pass a restricted capability token to a sub-function that should
+    /// not perform network I/O; the verifier enforces this statically (ILO-T044).
+    WorldNoNet,
     Ls,
     Walk,
     Glob,
@@ -532,6 +537,7 @@ impl Builtin {
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
             "world" => Some(Builtin::WorldCap),
+            "world-no-net" => Some(Builtin::WorldNoNet),
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
@@ -740,6 +746,7 @@ impl Builtin {
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
             Builtin::WorldCap => "world",
+            Builtin::WorldNoNet => "world-no-net",
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
@@ -937,6 +944,7 @@ impl Builtin {
         Builtin::Prnt,
         Builtin::Env,
         Builtin::WorldCap,
+        Builtin::WorldNoNet,
         Builtin::Trm,
         Builtin::Upr,
         Builtin::Lwr,

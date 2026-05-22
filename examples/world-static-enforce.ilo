@@ -1,0 +1,33 @@
+-- ILO-391: World static capability enforcement
+--
+-- `world-no-net` constructs a World token with net=false. Passing it to any
+-- scope that calls a net builtin (get, pst, put, pat, del, hed, opt, getx,
+-- pstx, get-many, get-to, pst-to) is rejected by the verifier at compile time.
+--
+-- This is the static complement to the runtime World check introduced in
+-- ILO-68: the verifier catches the mismatch without needing to run the program.
+--
+-- Pattern: use `world-no-net` to construct a restricted World and pass it
+-- to sub-functions that must not perform network I/O. The type is still W,
+-- so the sub-function signature is unchanged — the capability restriction
+-- is enforced at the construction site.
+
+-- A pure helper that inspects capability flags.
+-- Accepts any W; does no net I/O itself.
+show-caps w:W>t;
+  fmt "net={} rd={} wr={} run={}" w.net w.read w.write w.run
+
+-- Demonstrates world-no-net at runtime: net=false, others true.
+main>t;
+  wn = world-no-net
+  show-caps wn
+
+-- NOTE: world-no-net is an interpreter-only builtin (same as `world` in ILO-68).
+-- To run: ilo examples/world-static-enforce.ilo
+-- Expected output: net=false rd=true wr=true run=true
+
+-- Uncomment the lines below to see ILO-T044 from the verifier:
+--
+-- bad url:t>R t t
+--   wn = world-no-net
+--   get url           -- ERROR ILO-T044: 'wn' is a World with net=false

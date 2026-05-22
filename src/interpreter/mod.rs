@@ -7245,6 +7245,38 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::World { net, read, write, run });
     }
 
+    // world-no-net > World — construct a World with net=false.
+    // All other caps (read, write, run) are inherited from the active Caps so
+    // that an outer --allow-read / --allow-run policy is preserved.
+    if builtin == Some(Builtin::WorldNoNet) && args.is_empty() {
+        let (_net, read, write, run) = match env.caps.as_ref() {
+            crate::caps::Caps::Permissive => (true, true, true, true),
+            crate::caps::Caps::Restricted {
+                net,
+                read,
+                write,
+                run,
+            } => {
+                let cap_allowed = |p: &crate::caps::Policy| {
+                    matches!(p, crate::caps::Policy::All)
+                        || matches!(p, crate::caps::Policy::List(v) if !v.is_empty())
+                };
+                (
+                    cap_allowed(net),
+                    cap_allowed(read),
+                    cap_allowed(write),
+                    cap_allowed(run),
+                )
+            }
+        };
+        return Ok(Value::World {
+            net: false, // statically denied
+            read,
+            write,
+            run,
+        });
+    }
+
     // env-all -> R M t t: snapshot the full process environment as a
     // Map[Text, Text] wrapped in Ok. The Result wrapper mirrors `env key`
     // so callers can use `env-all!` to auto-unwrap; the Err arm is reserved

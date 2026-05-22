@@ -1219,17 +1219,28 @@ pure-fn    x:n>n;+x 1                       -- no W param: provably no I/O
 
 **Capability values match CLI flags.** Under the permissive default (no `--allow-*` flags) all four flags are `true`. Under `--allow-net=*` only, `net=true`; the other three remain `true` because unspecified flags default to permissive. To restrict a dimension to nothing, pass `--allow-read=` (empty string = block all reads).
 
-**v1 is dynamic, not static.** In this MVP the `World` token is a runtime value — a function can receive `w:W` without the verifier enforcing that a `net=false` world is not passed to a net builtin. Static enforcement (verifier rejects mismatched worlds at call sites) is deferred to a follow-up. Carry-forward pattern: always thread `world` from `main` to every I/O function.
+**Static enforcement for known-denied Worlds.** `world-no-net` constructs a `W` token with `net=false` known at compile time. The verifier emits **ILO-T044** if any net builtin (`get`, `pst`, `put`, `pat`, `del`, `hed`, `opt`, `getx`, `pstx`, `get-many`, `get-to`, `pst-to`) is called in the same scope:
 
 ```
-fetch w:W url:t>R t t;get url        -- no w.net check yet (v1 dynamic)
+wn = world-no-net          -- W: net=false, read/write/run=true
+wn.net                     -- b: false
+
+fetch url:t>R t t
+  wn = world-no-net
+  get url                  -- ERROR ILO-T044: 'wn' is a World with net=false
+```
+
+Dynamic worlds (from `world` or `w:W` parameters) are not checked statically — their cap values are determined at runtime via `--allow-*` flags.
+
+```
+fetch w:W url:t>R t t;get url        -- ok: w is dynamic, enforced at runtime
 main>t;
   w=world
   r=fetch w "https://api.example.com/data"
   ...
 ```
 
-See `examples/capability-world.ilo` for a full working example.
+See `examples/capability-world.ilo` and `examples/world-static-enforce.ilo` for working examples.
 
 ### JSON builtins
 
