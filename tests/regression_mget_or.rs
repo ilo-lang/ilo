@@ -21,11 +21,7 @@ fn ilo() -> Command {
 fn run_inline(engine: &str, src: &str, entry: &str) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "ilo_mget_or_{}_{}.ilo",
-        std::process::id(),
-        seq
-    ));
+    let path = std::env::temp_dir().join(format!("ilo_mget_or_{}_{}.ilo", std::process::id(), seq));
     std::fs::write(&path, src).unwrap();
     let out = ilo()
         .args([path.to_str().unwrap(), engine, entry])
@@ -80,13 +76,21 @@ fn check(engine: &str) {
     );
     // Numeric-key map: hit
     assert_eq!(
-        run_inline(engine, r#"f>t;m=mset mmap 7 "seven";mget-or m 7 "default""#, "f"),
+        run_inline(
+            engine,
+            r#"f>t;m=mset mmap 7 "seven";mget-or m 7 "default""#,
+            "f"
+        ),
         "seven",
         "mget-or num-key hit [{engine}]"
     );
     // Numeric-key map: miss
     assert_eq!(
-        run_inline(engine, r#"f>t;m=mset mmap 7 "seven";mget-or m 8 "default""#, "f"),
+        run_inline(
+            engine,
+            r#"f>t;m=mset mmap 7 "seven";mget-or m 8 "default""#,
+            "f"
+        ),
         "default",
         "mget-or num-key miss [{engine}]"
     );
