@@ -8564,6 +8564,12 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 env.set(name, val);
                 return Ok(None);
             }
+            // `_=expr` — explicit discard bind. Evaluate for side effects only;
+            // do not allocate a slot for `_` (it's a sigil, not a real binding).
+            if name == "_" {
+                eval_expr(env, value)?;
+                return Ok(None);
+            }
             let val = eval_expr(env, value)?;
             env.set(name, val);
             Ok(None)

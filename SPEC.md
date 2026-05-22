@@ -802,7 +802,7 @@ Called like functions, compiled to dedicated opcodes.
 
 > **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine - nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
 
-> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position - any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine - the value flows out as the return.
+> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position - any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine - the value flows out as the return. If discarding the result is genuinely intentional (e.g. calling for a side effect you know returns a new map), use `_=mset m k v` — the explicit discard sigil suppresses T033.
 
 > **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout - noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
 
@@ -1265,6 +1265,7 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | Form | Meaning |
 |------|---------|
 | `x=expr` | bind |
+| `_=expr` | explicit discard — evaluate `expr` for side effects, result dropped. Suppresses ILO-T033 so `_=mset m k v` or `_=+=xs v` is not flagged as an accidental discard. |
 | `cond{body}` | conditional execution: run body if cond true (no early return) |
 | `cond expr` | braceless guard: early return expr if cond true |
 | `cond{then}{else}` | ternary: evaluate then or else (no early return) |

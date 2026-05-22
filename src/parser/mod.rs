@@ -1779,6 +1779,24 @@ statement boundary; bind the chain to a local first. For example, split \
                 Ok(Stmt::While { condition, body })
             }
             Some(Token::LBrace) if self.is_destructure_pattern() => self.parse_destructure(),
+            // `_=expr` — explicit discard bind. Evaluates expr for side effects
+            // and discards the result. The `_` name is a sigil, not a local
+            // binding, so no slot is allocated and T033 does not fire.
+            Some(Token::Underscore)
+                if self.token_at(self.pos + 1) == Some(&Token::Eq)
+                    // Guard: `_ identifier` with no space means `_ident` reference;
+                    // we must NOT intercept that here (underscore adjacent to eq is
+                    // the only shape we want).
+                    =>
+            {
+                self.advance(); // consume `_`
+                self.advance(); // consume `=`
+                let value = self.parse_expr()?;
+                Ok(Stmt::Let {
+                    name: "_".to_string(),
+                    value,
+                })
+            }
             Some(Token::Ident(_)) => {
                 // Check for let binding: ident '='
                 if self.pos + 1 < self.tokens.len()
@@ -6144,6 +6162,20 @@ mod tests {
         assert_eq!(name, "tot");
         assert_eq!(params.len(), 3);
         assert_eq!(body.len(), 3); // s=..., t=..., +s t
+    }
+
+    #[test]
+    fn parse_discard_bind() {
+        // `_=expr` should parse as Stmt::Let { name: "_", value }
+        let prog = parse_str(r#"f>n;_=prnt "hi";3"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        assert_eq!(body.len(), 2);
+        let Stmt::Let { name, .. } = &body[0].node else {
+            panic!("expected let for _=expr")
+        };
+        assert_eq!(name, "_");
     }
 
     #[test]
