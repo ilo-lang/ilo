@@ -189,6 +189,8 @@ struct HelperFuncs {
     // Phase 2 PR3c finalizers for the native `srt 2` / `grp 2` /
     // `uniqby 2` lifts. Each takes (keys, vals, span_bits).
     srt_by_key: FuncId,
+    // PR B of ILO-45 finalizer for native `rsrt 2` / `rsrt 3` lifts.
+    rsrt_by_key: FuncId,
     grp_by_key: FuncId,
     uniq_by_key: FuncId,
     frq: FuncId,
@@ -415,6 +417,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         uniqby: declare_helper(module, "jit_uniqby", 2, 1),
         partition: declare_helper(module, "jit_partition", 2, 1),
         srt_by_key: declare_helper(module, "jit_srt_by_key", 3, 1),
+        rsrt_by_key: declare_helper(module, "jit_rsrt_by_key", 3, 1),
         grp_by_key: declare_helper(module, "jit_grp_by_key", 3, 1),
         uniq_by_key: declare_helper(module, "jit_uniq_by_key", 3, 1),
         frq: declare_helper(module, "jit_frq", 2, 1),
@@ -1261,11 +1264,12 @@ fn compile_function_body(
                 | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR
                 | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC
                 | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ
-                | OP_NUM | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
-                | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
-                | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
-                | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
+                | OP_NUM | OP_SRT_BY_KEY | OP_RSRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
+                | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW
+                | OP_CHUNKS | OP_CUMSUM | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF
+                | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT
+                | OP_DTPARSE | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN
+                | OP_SEED => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -4276,6 +4280,16 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.srt_by_key);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RSRT_BY_KEY => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.rsrt_by_key);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

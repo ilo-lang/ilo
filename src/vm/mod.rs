@@ -450,6 +450,14 @@ pub(crate) const OP_GRP_BY_KEY: u8 = 180;
 // arm), so we deliberately don't reuse `MapKey` here.
 pub(crate) const OP_UNIQ_BY_KEY: u8 = 181;
 
+// ABC OP_RSRT_BY_KEY: finalizer for `rsrt 2` / `rsrt 3` native lift.
+//   A = destination register (sorted list, descending)
+//   B = register holding the pre-computed keys list
+//   C = register holding the values list
+// Identical contract to OP_SRT_BY_KEY but with the comparator reversed.
+// Lifted off the tree-bridge in PR B of ILO-45.
+pub(crate) const OP_RSRT_BY_KEY: u8 = 191;
+
 // Move-not-clone variant of OP_MOVE. Transfers the NanVal bit pattern from
 // R[B] to R[A] without bumping the RC of any heap payload, then clears R[B]
 // to Nil so the source register drops its reference. Used by the
@@ -669,23 +677,18 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // `cnt`-as-continue keyword reservation.
         (Builtin::Ct, 2) => true,
         (Builtin::Ct, 3) => true,
-        // rsrt fn xs — descending sort by key. Same bridge contract as
-        // srt 2-arg: tree interpreter does the user-fn callback, bridge
-        // round-trips the result list. Cross-engine parity with srt.
-        (Builtin::Rsrt, 2) => true,
+        // rsrt fn xs (2-arg, ascending key) lifted to native dispatch via
+        // OP_RSRT_BY_KEY in PR B of ILO-45.
         // mapr fn xs was on the bridge through Phase 2 PR3; PR 3b lifts it
         // natively via OP_CALL_DYN + OP_ISERR short-circuit + OP_WRAPOK so
         // closure callbacks dispatch without a tree re-entry. See the
         // matching arm in the compiler.
         // Closure-bind ctx variants. PR A of ILO-45 (2026-05-22) lifted
         // map/flt/fld off the bridge to native VM dispatch via 2- and 3-arg
-        // OP_CALL_DYN — Cranelift inherits via the existing OP_CALL_DYN
-        // codegen. srt 3 and rsrt 3 still bridge pending a finalizer-opcode
-        // extension (PR B).
-        (Builtin::Srt, 3) => true,
-        // rsrt fn ctx xs — closure-bind descending sort. Same bridge
-        // contract as srt 3-arg.
-        (Builtin::Rsrt, 3) => true,
+        // OP_CALL_DYN; PR B (same day) added the OP_RSRT_BY_KEY finalizer
+        // and ctx-threading variant of emit_hof_keyed_finalize so srt 3 /
+        // rsrt 3 dispatch natively too. Cranelift inherits via the
+        // existing OP_CALL_DYN codegen.
         // env-all -> R M t t: zero-arg snapshot of the process environment.
         // Not perf-sensitive (one-shot enumeration), and the result is a
         // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
@@ -1917,7 +1920,32 @@ impl RegCompiler {
         xs_arg: &crate::ast::Expr,
         finalizer_op: u8,
     ) -> u8 {
+        self.emit_hof_keyed_finalize_inner(fn_arg, None, xs_arg, finalizer_op)
+    }
+
+    /// Closure-bind variant: per-element call is `fn(item, ctx)` instead of
+    /// `fn(item)`. Used by `srt 3 fn ctx xs` / `rsrt 3 fn ctx xs` to thread
+    /// the ctx arg through OP_CALL_DYN with argc=2. Lifted off the tree-bridge
+    /// in PR B of ILO-45.
+    fn emit_hof_keyed_finalize_ctx(
+        &mut self,
+        fn_arg: &crate::ast::Expr,
+        ctx_arg: &crate::ast::Expr,
+        xs_arg: &crate::ast::Expr,
+        finalizer_op: u8,
+    ) -> u8 {
+        self.emit_hof_keyed_finalize_inner(fn_arg, Some(ctx_arg), xs_arg, finalizer_op)
+    }
+
+    fn emit_hof_keyed_finalize_inner(
+        &mut self,
+        fn_arg: &crate::ast::Expr,
+        ctx_arg: Option<&crate::ast::Expr>,
+        xs_arg: &crate::ast::Expr,
+        finalizer_op: u8,
+    ) -> u8 {
         let fn_reg = self.compile_expr(fn_arg);
+        let ctx_reg = ctx_arg.map(|c| self.compile_expr(c));
         let xs_reg = self.compile_expr(xs_arg);
 
         // Two parallel scratch lists: keys (per-element callback
@@ -1938,23 +1966,41 @@ impl RegCompiler {
         let nil_ki = self.current.add_const(Value::Nil);
         self.emit_abx(OP_LOADK, item_reg, nil_ki);
 
-        // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+        // res_reg + arg slots contiguous for OP_CALL_DYN ABI. Plain
+        // form: 1 arg (item). Ctx form: 2 args (item, ctx).
         let res_reg = self.alloc_reg();
         self.emit_abx(OP_LOADK, res_reg, nil_ki);
-        let arg_reg = self.alloc_reg();
+        let arg0_reg = self.alloc_reg();
         assert!(
-            arg_reg == res_reg + 1,
-            "keyed-finalize HOF: arg reg must follow result reg contiguously"
+            arg0_reg == res_reg + 1,
+            "keyed-finalize HOF: arg0 reg must follow result reg contiguously"
         );
-        self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+        self.emit_abx(OP_LOADK, arg0_reg, nil_ki);
+        let arg1_reg = if ctx_reg.is_some() {
+            let r = self.alloc_reg();
+            assert!(
+                r == arg0_reg + 1,
+                "keyed-finalize HOF: arg1 reg must follow arg0 reg contiguously"
+            );
+            self.emit_abx(OP_LOADK, r, nil_ki);
+            Some(r)
+        } else {
+            None
+        };
 
         let _loop_top = self.current.code.len();
         self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
         let exit_jump_a = self.emit_jmp_placeholder();
 
         let body_top = self.current.code.len();
-        self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
-        self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+        self.emit_abc(OP_MOVE, arg0_reg, item_reg, 0);
+        let argc = if let (Some(cr), Some(a1)) = (ctx_reg, arg1_reg) {
+            self.emit_abc(OP_MOVE, a1, cr, 0);
+            2
+        } else {
+            1
+        };
+        self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, argc);
 
         // Push key and value into their respective accs. OP_LISTAPPEND
         // clone_rc's the appended NanVal so res_reg and item_reg can
@@ -5543,6 +5589,37 @@ impl RegCompiler {
                                 &args[0],
                                 &args[1],
                                 OP_UNIQ_BY_KEY,
+                            );
+                        }
+                        // PR B of ILO-45: native dispatch for the descending /
+                        // closure-bind sort variants.
+                        // `rsrt fn xs` — same shape as `srt 2` but the finalizer
+                        // is OP_RSRT_BY_KEY (descending comparator).
+                        (Builtin::Rsrt, 2) => {
+                            return self.emit_hof_keyed_finalize(
+                                &args[0],
+                                &args[1],
+                                OP_RSRT_BY_KEY,
+                            );
+                        }
+                        // `srt fn ctx xs` — closure-bind ascending sort. The
+                        // per-element call is fn(item, ctx); finalizer is
+                        // OP_SRT_BY_KEY.
+                        (Builtin::Srt, 3) => {
+                            return self.emit_hof_keyed_finalize_ctx(
+                                &args[0],
+                                &args[1],
+                                &args[2],
+                                OP_SRT_BY_KEY,
+                            );
+                        }
+                        // `rsrt fn ctx xs` — closure-bind descending sort.
+                        (Builtin::Rsrt, 3) => {
+                            return self.emit_hof_keyed_finalize_ctx(
+                                &args[0],
+                                &args[1],
+                                &args[2],
+                                OP_RSRT_BY_KEY,
                             );
                         }
                         // Builtins that fall through:
@@ -13341,6 +13418,26 @@ impl<'a> VM<'a> {
                     let out = srt_by_key_finalize(keys, vals);
                     reg_set!(a, out);
                 }
+                OP_RSRT_BY_KEY => {
+                    // PR B of ILO-45 finalizer for `rsrt 2 fn xs` / `rsrt 3 fn ctx xs`.
+                    // Mirrors OP_SRT_BY_KEY but with the comparator reversed.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_heap() || (vb.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("rsrt: internal keys reg is not a list"));
+                    }
+                    if !vc.is_heap() || (vc.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("rsrt: internal values reg is not a list"));
+                    }
+                    // SAFETY: TAG_LIST + is_heap() → live List/View Rc.
+                    let keys = slice_of(unsafe { vb.as_heap_ref() });
+                    let vals = slice_of(unsafe { vc.as_heap_ref() });
+                    let out = rsrt_by_key_finalize(keys, vals);
+                    reg_set!(a, out);
+                }
                 OP_GRP_BY_KEY => {
                     // Phase 2 PR3c finalizer for `grp 2 fn xs`. Same shape as
                     // OP_SRT_BY_KEY but the finalizer produces a Map and can
@@ -13705,6 +13802,15 @@ fn nanval_to_grouping_key(v: NanVal) -> Option<MapKey> {
 /// Used by both the VM dispatch arm and the Cranelift `jit_srt_by_key`
 /// wrapper so the two paths can't drift.
 fn srt_by_key_finalize(keys: &[NanVal], vals: &[NanVal]) -> NanVal {
+    srt_by_key_finalize_inner(keys, vals, false)
+}
+
+/// Descending variant used by `OP_RSRT_BY_KEY` (rsrt 2 / rsrt 3 native lift).
+fn rsrt_by_key_finalize(keys: &[NanVal], vals: &[NanVal]) -> NanVal {
+    srt_by_key_finalize_inner(keys, vals, true)
+}
+
+fn srt_by_key_finalize_inner(keys: &[NanVal], vals: &[NanVal], descending: bool) -> NanVal {
     debug_assert_eq!(
         keys.len(),
         vals.len(),
@@ -13720,20 +13826,24 @@ fn srt_by_key_finalize(keys: &[NanVal], vals: &[NanVal]) -> NanVal {
     let mut idx: Vec<usize> = (0..n).collect();
     let all_num = keys.iter().all(|k| k.is_number());
     let all_text = keys.iter().all(|k| k.is_string());
+    let flip = |o: std::cmp::Ordering| {
+        if descending { o.reverse() } else { o }
+    };
     if all_num {
         idx.sort_by(|&a, &b| {
             let ka = keys[a].as_number();
             let kb = keys[b].as_number();
-            ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+            flip(ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal))
         });
     } else if all_text {
         idx.sort_by(|&a, &b| {
             // SAFETY: all_text confirmed every key is a TAG_STR heap value.
-            unsafe { nanval_str_cmp(keys[a], keys[b]) }
+            flip(unsafe { nanval_str_cmp(keys[a], keys[b]) })
         });
     } else {
         // Mixed-type keys: tree walker returns Ordering::Equal (effectively
-        // a no-op stable sort). Preserve that behaviour exactly.
+        // a no-op stable sort). Preserve that behaviour exactly — and since
+        // Equal.reverse() is still Equal, the descending flag is a no-op.
         idx.sort_by(|_, _| std::cmp::Ordering::Equal);
     }
     let mut out: Vec<NanVal> = Vec::with_capacity(n);
@@ -19392,6 +19502,34 @@ pub(crate) extern "C" fn jit_srt_by_key(keys_val: u64, vals_val: u64, span_bits:
     let keys = slice_of(unsafe { vk.as_heap_ref() });
     let vals = slice_of(unsafe { vv.as_heap_ref() });
     srt_by_key_finalize(keys, vals).0
+}
+
+/// Cranelift helper for `OP_RSRT_BY_KEY` (PR B of ILO-45 rsrt native lift).
+/// Thin wrapper over `rsrt_by_key_finalize` so the Cranelift JIT and AOT
+/// paths share a single implementation with the VM dispatcher.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rsrt_by_key(keys_val: u64, vals_val: u64, span_bits: u64) -> u64 {
+    let vk = NanVal(keys_val);
+    let vv = NanVal(vals_val);
+    if !vk.is_heap() || (vk.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("rsrt: internal keys reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !vv.is_heap() || (vv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("rsrt: internal values reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    // SAFETY: TAG_LIST + is_heap() confirmed for both.
+    let keys = slice_of(unsafe { vk.as_heap_ref() });
+    let vals = slice_of(unsafe { vv.as_heap_ref() });
+    rsrt_by_key_finalize(keys, vals).0
 }
 
 /// Cranelift helper for `OP_GRP_BY_KEY` (Phase 2 PR3c grp 2 native lift).
