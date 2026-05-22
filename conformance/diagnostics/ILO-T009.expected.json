@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T009",
+  "long": "## ILO-T009: arithmetic operator type error\n\nAn arithmetic operator (`+`, `-`, `*`, `/`) was applied to operands\nof mismatched or wrong types.\n\n`+` works on `n + n`, `t + t`, or `L T + L T`.\n`-`, `*`, `/` require `n` operands.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "arithmetic operator type error"
+}

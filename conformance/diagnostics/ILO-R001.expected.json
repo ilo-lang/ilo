@@ -1,0 +1,7 @@
+{
+  "code": "ILO-R001",
+  "long": "## ILO-R001: undefined variable at runtime\n\nA variable was referenced that does not exist in the current scope.\nThis should normally be caught by the verifier (ILO-T004). Seeing\nthis at runtime indicates the program was run without verification,\nor a dynamic path was taken.\n",
+  "phase": "runtime",
+  "schemaVersion": 1,
+  "short": "undefined variable at runtime"
+}

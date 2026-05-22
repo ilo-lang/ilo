@@ -1,0 +1,22 @@
+-- use-basic-helper.ilo — reusable helpers imported by use-basic.ilo
+--
+-- Public functions (exported when imported):
+--   add1   n+1
+--   double n*2
+--
+-- Private function (module-internal):
+--   _doc-note — a private helper demonstrating the privacy convention.
+--               Private functions are excluded from `use alias:"..."` imports
+--               and cannot be named in `use "..." [...]` selective imports.
+--
+-- The `_` prefix marks module-private declarations.
+-- Private functions are excluded from named-module (`use alias:"path"`)
+-- imports and from selective imports (`use "path" [name]`).
+-- In flat imports (`use "path"`), they come through but are not part of
+-- the public interface and should be treated as internal implementation detail.
+
+_doc-note>t;"private helper — not exported via alias or selective import"
+
+add1 n:n>n;+n 1
+
+double n:n>n;*n 2
