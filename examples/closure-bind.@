@@ -21,10 +21,24 @@ prices pm:M t n syms:L t>L n;map look pm syms
 
 prices-demo>L n;m=mset mmap "a" 10;m=mset m "b" 20;prices m ["a","b","a"]
 
--- jit lacks HOF dispatch entirely (see regression_builtins_as_hof.rs).
--- vm + cranelift route closure-bind through the tree-bridge from PR 3c.
--- engine-skip: jit
+-- flt closure-bind: keep elements above a threshold.
+above x:n t:n>b;x > t
+keep-above t:n xs:L n>L n;flt above t xs
+above-demo>L n;keep-above 2 [1,2,3,4,5]
+
+-- fld closure-bind: weighted sum. fn signature is (acc, item, ctx).
+wadd acc:n item:n w:n>n;acc + item * w
+weighted xs:L n w:n>n;fld wadd w xs 0
+weighted-demo>n;weighted [1,2,3,4,5] 2
+
+-- PR A of ILO-45 lifted map/flt/fld closure-bind off the tree-bridge to
+-- native OP_CALL_DYN with argc=2 (map/flt) and argc=3 (fld). srt 3-arg
+-- closure-bind still bridges pending PR B's finalizer-opcode extension.
 -- run: main
 -- out: [c, a, b]
 -- run: prices-demo
 -- out: [10, 20, 10]
+-- run: above-demo
+-- out: [3, 4, 5]
+-- run: weighted-demo
+-- out: 30

@@ -677,12 +677,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // natively via OP_CALL_DYN + OP_ISERR short-circuit + OP_WRAPOK so
         // closure callbacks dispatch without a tree re-entry. See the
         // matching arm in the compiler.
-        // Closure-bind ctx variants. The fn receives an extra ctx arg the
-        // native emitters don't shape today — bridge keeps semantics aligned
-        // with the tree interpreter and adds VM/Cranelift coverage in PR 3c.
-        (Builtin::Map, 3) => true,
-        (Builtin::Flt, 3) => true,
-        (Builtin::Fld, 4) => true,
+        // Closure-bind ctx variants. PR A of ILO-45 (2026-05-22) lifted
+        // map/flt/fld off the bridge to native VM dispatch via 2- and 3-arg
+        // OP_CALL_DYN — Cranelift inherits via the existing OP_CALL_DYN
+        // codegen. srt 3 and rsrt 3 still bridge pending a finalizer-opcode
+        // extension (PR B).
         (Builtin::Srt, 3) => true,
         // rsrt fn ctx xs — closure-bind descending sort. Same bridge
         // contract as srt 3-arg.
@@ -4788,6 +4787,69 @@ impl RegCompiler {
                             self.next_reg = acc_reg + 1;
                             return acc_reg;
                         }
+                        // map fn ctx xs → closure-bind variant. Per-iter call is
+                        // 2-arg: fn(item, ctx). Reg window after res: arg0=item,
+                        // arg1=ctx, argc=2. OP_CALL_DYN's closure path auto-appends
+                        // any trailing captures after these two user args (see
+                        // src/vm/mod.rs:9785). Lifted off the tree-bridge in PR A
+                        // of ILO-45 — matches runtime/mod.rs:5737 call_args order.
+                        (Builtin::Map, 3) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let ctx_reg = self.compile_expr(&args[1]);
+                            let xs_reg = self.compile_expr(&args[2]);
+
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // OP_CALL_DYN reads R[A+1..=A+argc]; argc=2 needs three
+                            // contiguous regs: res, arg0 (item), arg1 (ctx).
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg0_reg = self.alloc_reg();
+                            assert!(
+                                arg0_reg == res_reg + 1,
+                                "map ctx HOF: arg0 reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg0_reg, nil_ki);
+                            let arg1_reg = self.alloc_reg();
+                            assert!(
+                                arg1_reg == arg0_reg + 1,
+                                "map ctx HOF: arg1 reg must follow arg0 reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg1_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg0_reg, item_reg, 0);
+                            self.emit_abc(OP_MOVE, arg1_reg, ctx_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 2);
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, res_reg);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
                         // flt fn xs → native HOF loop using OP_CALL_DYN.
                         // Same shape as `map` but:
                         //   - the call result drives a bool typecheck (OP_ISBOOL)
@@ -4931,6 +4993,82 @@ impl RegCompiler {
                             self.next_reg = acc_reg + 1;
                             return acc_reg;
                         }
+                        // flt fn ctx xs → closure-bind variant. Per-iter call is
+                        // 2-arg: fn(item, ctx) → bool. Same bool-check + conditional
+                        // append as flt 2. Lifted off the tree-bridge in PR A of
+                        // ILO-45.
+                        (Builtin::Flt, 3) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let ctx_reg = self.compile_expr(&args[1]);
+                            let xs_reg = self.compile_expr(&args[2]);
+
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg0_reg = self.alloc_reg();
+                            assert!(
+                                arg0_reg == res_reg + 1,
+                                "flt ctx HOF: arg0 reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg0_reg, nil_ki);
+                            let arg1_reg = self.alloc_reg();
+                            assert!(
+                                arg1_reg == arg0_reg + 1,
+                                "flt ctx HOF: arg1 reg must follow arg0 reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg1_reg, nil_ki);
+
+                            // Scratch for the bool typecheck.
+                            let isb_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, isb_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg0_reg, item_reg, 0);
+                            self.emit_abc(OP_MOVE, arg1_reg, ctx_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 2);
+
+                            self.emit_abc(OP_ISBOOL, isb_reg, res_reg, 0);
+                            let typeok_jump = self.emit_jmpt(isb_reg);
+                            let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+                                "flt: predicate must return bool".to_string(),
+                            )));
+                            self.emit_abx(OP_LOADK, arg0_reg, err_text_ki);
+                            self.emit_abc(OP_WRAPERR, arg0_reg, arg0_reg, 0);
+                            self.emit_abc(OP_PANIC_UNWRAP, 0, arg0_reg, 0);
+                            self.current.patch_jump(typeok_jump);
+
+                            let skip_append_jump = self.emit_jmpf(res_reg);
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, item_reg);
+                            self.current.patch_jump(skip_append_jump);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
                         // fld fn xs init → native HOF loop using OP_CALL_DYN.
                         // The accumulator carries the running value across
                         // iterations. Per-iter call is 2-arg: fn(acc, item).
@@ -4983,6 +5121,76 @@ impl RegCompiler {
                             self.emit_abc(OP_MOVE, arg1_reg, item_reg, 0);
                             self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 2);
                             // acc = res (refresh the accumulator)
+                            self.emit_abc(OP_MOVE, acc_reg, res_reg, 0);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
+                        // fld fn ctx xs init → closure-bind variant. Per-iter call
+                        // is 3-arg: fn(acc, item, ctx). Layout: res, arg0=acc,
+                        // arg1=item, arg2=ctx, argc=3. Lifted off the tree-bridge
+                        // in PR A of ILO-45.
+                        (Builtin::Fld, 4) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let ctx_reg = self.compile_expr(&args[1]);
+                            let xs_reg = self.compile_expr(&args[2]);
+                            let init_reg = self.compile_expr(&args[3]);
+
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abc(OP_MOVE, acc_reg, init_reg, 0);
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // OP_CALL_DYN reads R[A+1..=A+argc]; argc=3 needs four
+                            // contiguous regs: res, arg0 (acc), arg1 (item), arg2 (ctx).
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg0_reg = self.alloc_reg();
+                            assert!(
+                                arg0_reg == res_reg + 1,
+                                "fld ctx HOF: arg0 reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg0_reg, nil_ki);
+                            let arg1_reg = self.alloc_reg();
+                            assert!(
+                                arg1_reg == arg0_reg + 1,
+                                "fld ctx HOF: arg1 reg must follow arg0 reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg1_reg, nil_ki);
+                            let arg2_reg = self.alloc_reg();
+                            assert!(
+                                arg2_reg == arg1_reg + 1,
+                                "fld ctx HOF: arg2 reg must follow arg1 reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg2_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg0_reg, acc_reg, 0);
+                            self.emit_abc(OP_MOVE, arg1_reg, item_reg, 0);
+                            self.emit_abc(OP_MOVE, arg2_reg, ctx_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 3);
                             self.emit_abc(OP_MOVE, acc_reg, res_reg, 0);
 
                             self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
