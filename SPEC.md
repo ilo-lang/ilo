@@ -634,6 +634,7 @@ Called like functions, compiled to dedicated opcodes.
 | `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
+| `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
@@ -1167,7 +1168,7 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 
 ### Crypto primitives
 
-`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `hex-rev`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, endian conversions, and any time a secret is compared to a known value. All seven are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
 
 `sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
 
@@ -1176,6 +1177,14 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 `b64 s > t` encodes the UTF-8 bytes of `s` as standard base64 with `=` padding (RFC 4648 §4). Distinct from `b64u`: standard alphabet (`+`/`/`) and padded vs URL-safe (`-`/`_`) and stripped. `b64-dec s > R t t` is the inverse and returns `Err` on input outside the standard alphabet or on decoded bytes that aren't valid UTF-8.
 
 `hex s > t` encodes the UTF-8 bytes of `s` as a lowercase hex string. Every byte becomes exactly two chars, so `len (hex s)` is `2 * len s` for ASCII input.
+
+`hex-rev s > t` reverses the byte order of a hex-encoded string by swapping adjacent byte-pairs. Input must have even length (2 chars = 1 byte); odd-length input errors `ILO-T013` with a padding hint. Case is preserved: `"abCD"` reversed is `"CDab"`. Primary use case: Bitcoin txids are stored in wire little-endian order but displayed big-endian — `hex-rev txid` converts between the two. Double reversal is identity: `hex-rev (hex-rev s) == s`.
+
+```ilo
+hex-rev "12345678"      -- "78563412"  (4-byte little→big endian)
+hex-rev "deadbeef"      -- "efbeadde"
+hex-rev ""              -- ""           (empty is fine)
+```
 
 `ct-eq a:t b:t > b` is constant-time text equality. A naive `=` short-circuits on the first differing byte, leaking the prefix length through timing; `ct-eq` always scans the full byte range when lengths match, so a timing attacker can't binary-search the secret one byte at a time. Use it whenever you're comparing HMAC digests, session tokens, or API keys. Different-length inputs short-circuit to `false` — length isn't secret in any realistic protocol (HMAC digests are fixed-size).
 

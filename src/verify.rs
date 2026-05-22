@@ -686,6 +686,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64", &["t"], "t"),
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
+    ("hex-rev", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.

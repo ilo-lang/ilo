@@ -815,6 +815,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::B64, 1) => true,
         (Builtin::B64Dec, 1) => true,
         (Builtin::HexEnc, 1) => true,
+        (Builtin::HexRev, 1) => true,
         (Builtin::CtEq, 2) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
@@ -17046,6 +17047,10 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Rsum
             | Builtin::Ravg
             | Builtin::Rmin
+            // hex-rev raises ILO-T013 on odd-length input (not a whole number
+            // of bytes). Surface on Cranelift in lockstep rather than
+            // degenerating silently to nil.
+            | Builtin::HexRev
     )
 }
 

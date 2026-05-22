@@ -74,4 +74,4 @@ dur-parse! "-1h 30m"         -- -5400 (sticky sign)
 
 ## Crypto
 
-`sha256 s > t` SHA-256 lowercase hex (64 chars). `hmac-sha256 key msg > t` HMAC-SHA256 lowercase hex. `b64 s > t` / `b64-dec s > R t t` standard base64 (`=` padding; distinct from `b64u`/`b64u-dec` URL-safe no-pad). `hex s > t` lowercase hex of UTF-8 bytes. `ct-eq a b > b` constant-time text equality - use this to verify HMAC signatures or compare any secret; never `=`, which short-circuits and leaks timing.
+`sha256 s > t` SHA-256 lowercase hex (64 chars). `hmac-sha256 key msg > t` HMAC-SHA256 lowercase hex. `b64 s > t` / `b64-dec s > R t t` standard base64 (`=` padding; distinct from `b64u`/`b64u-dec` URL-safe no-pad). `hex s > t` lowercase hex of UTF-8 bytes. `hex-rev s > t` reverse byte order of hex-encoded string (byte-pair-wise; even length required, odd errors ILO-T013; case preserved; use for little↔big endian, e.g. Bitcoin txid). `ct-eq a b > b` constant-time text equality - use this to verify HMAC signatures or compare any secret; never `=`, which short-circuits and leaks timing.
