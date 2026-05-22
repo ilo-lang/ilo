@@ -161,8 +161,35 @@ pub fn resolve_pkg_path(path: &str) -> Result<PathBuf, String> {
 /// - `^MAJOR`, `^MAJOR.MINOR`, `^MAJOR.MINOR.PATCH`  — caret (compatible)
 /// - `~MAJOR.MINOR`, `~MAJOR.MINOR.PATCH`             — tilde (patch-compatible)
 /// - `MAJOR.MINOR.PATCH`                              — exact semver triple
+/// - `>=`, `>`, `<`, `<=`, `=` prefix                — comparison operators
+/// - `*`                                              — wildcard (any version)
+/// - `MAJOR.x`, `MAJOR.MINOR.x`                      — wildcard components
+/// - composite ranges with ` ` (and) or ` || ` (or)  — e.g. `>=1.2 <2`
 pub fn is_semver_constraint(ref_str: &str) -> bool {
+    // Caret / tilde.
     if ref_str.starts_with('^') || ref_str.starts_with('~') {
+        return true;
+    }
+    // Comparison operators.
+    if ref_str.starts_with(">=")
+        || ref_str.starts_with("<=")
+        || ref_str.starts_with('>')
+        || ref_str.starts_with('<')
+        || ref_str.starts_with('=')
+    {
+        return true;
+    }
+    // Bare wildcard.
+    if ref_str == "*" {
+        return true;
+    }
+    // Composite ranges: contains " || " or multiple space-separated constraints.
+    // A plain git ref never contains spaces or `||`.
+    if ref_str.contains("||") || ref_str.contains(' ') {
+        return true;
+    }
+    // Wildcard components like `1.x` or `1.2.x`.
+    if ref_str.contains(".x") || ref_str.contains(".X") || ref_str.contains(".*") {
         return true;
     }
     // Bare X.Y.Z — three numeric components.
@@ -180,10 +207,23 @@ pub fn is_semver_constraint(ref_str: &str) -> bool {
 /// message suitable for printing to stderr.
 pub fn resolve_semver_ref(url: &str, constraint_str: &str) -> Result<String, String> {
     // Parse constraint — add `=` prefix for bare X.Y.Z so semver accepts it.
-    let req_str = if constraint_str.starts_with('^') || constraint_str.starts_with('~') {
-        constraint_str.to_string()
-    } else {
+    // All other recognised constraint forms (operators, wildcards, composites)
+    // are passed through verbatim; the `semver` crate handles the full grammar.
+    let needs_eq_prefix = !constraint_str.starts_with('^')
+        && !constraint_str.starts_with('~')
+        && !constraint_str.starts_with('>')
+        && !constraint_str.starts_with('<')
+        && !constraint_str.starts_with('=')
+        && !constraint_str.starts_with('*')
+        && !constraint_str.contains("||")
+        && !constraint_str.contains(' ')
+        && !constraint_str.contains(".x")
+        && !constraint_str.contains(".X")
+        && !constraint_str.contains(".*");
+    let req_str = if needs_eq_prefix {
         format!("={constraint_str}")
+    } else {
+        constraint_str.to_string()
     };
     let req = VersionReq::parse(&req_str)
         .map_err(|e| format!("invalid semver constraint '{}': {}", constraint_str, e))?;
@@ -674,10 +714,27 @@ mod tests {
 
     #[test]
     fn semver_constraint_detection() {
+        // Original forms.
         assert!(is_semver_constraint("^1.2"));
         assert!(is_semver_constraint("^1"));
         assert!(is_semver_constraint("~1.2.3"));
         assert!(is_semver_constraint("1.2.3"));
+        // Comparison operators.
+        assert!(is_semver_constraint(">=1.2.0"));
+        assert!(is_semver_constraint(">=1.2"));
+        assert!(is_semver_constraint(">1.0.0"));
+        assert!(is_semver_constraint("<2.0.0"));
+        assert!(is_semver_constraint("<=1.9.9"));
+        assert!(is_semver_constraint("=1.0.0"));
+        // Wildcard forms.
+        assert!(is_semver_constraint("*"));
+        assert!(is_semver_constraint("1.x"));
+        assert!(is_semver_constraint("1.2.x"));
+        assert!(is_semver_constraint("1.*"));
+        // Composite ranges.
+        assert!(is_semver_constraint(">=1.2 <2"));
+        assert!(is_semver_constraint("1.0.0 || 2.0.0"));
+        assert!(is_semver_constraint(">=1.0.0 <2.0.0 || >=3.0.0"));
         // Not semver constraints:
         assert!(!is_semver_constraint("v1.2.3"));
         assert!(!is_semver_constraint("main"));
