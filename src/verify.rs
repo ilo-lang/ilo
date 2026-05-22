@@ -19,6 +19,10 @@ pub enum Ty {
     /// Function type: params then return. `F n n` = Fn(vec![Number], Number).
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
+    /// Structural record type inferred from an anonymous record literal `{f:v ...}`.
+    /// Two `AnonRecord` types are compatible when they have exactly the same field
+    /// names and compatible field types (order-independent).
+    AnonRecord(Vec<(String, Ty)>),
     Unknown,
 }
 
@@ -48,6 +52,10 @@ impl std::fmt::Display for Ty {
                 write!(f, " {ret}")
             }
             Ty::Named(name) => write!(f, "{name}"),
+            Ty::AnonRecord(fields) => {
+                let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+                write!(f, "{{{}}}", parts.join(" "))
+            }
             Ty::Unknown => write!(f, "_"),
         }
     }
@@ -239,6 +247,18 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
                 && compatible(ar, br)
         }
         (Ty::Named(a), Ty::Named(b)) => a == b,
+        // Two anonymous records unify when they have the same field names (order-independent)
+        // and compatible field types.
+        (Ty::AnonRecord(a_fields), Ty::AnonRecord(b_fields)) => {
+            if a_fields.len() != b_fields.len() {
+                return false;
+            }
+            let b_map: std::collections::HashMap<&str, &Ty> =
+                b_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+            a_fields
+                .iter()
+                .all(|(n, t)| b_map.get(n.as_str()).is_some_and(|bt| compatible(t, bt)))
+        }
         _ => false,
     }
 }
@@ -703,6 +723,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
+    // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
+    // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or
+    // non-hex input.
+    ("sha256-hex", &["t"], "t"),
+    ("sha256d", &["t"], "t"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.
@@ -4442,6 +4467,27 @@ impl VerifyContext {
             Stmt::Destructure { bindings, value } => {
                 let record_ty = self.infer_expr(func, scope, value, span);
                 match &record_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        let fields_ty = fields_ty.clone();
+                        for binding in bindings {
+                            if let Some((_, fty)) = fields_ty.iter().find(|(n, _)| n == binding) {
+                                scope_insert(scope, binding.clone(), fty.clone());
+                            } else {
+                                let field_names: Vec<String> =
+                                    fields_ty.iter().map(|(n, _)| n.clone()).collect();
+                                let hint = closest_match(binding, field_names.iter())
+                                    .map(|s| format!("did you mean '{s}'?"));
+                                self.err(
+                                    "ILO-T019",
+                                    func,
+                                    format!("no field '{binding}' on anonymous record"),
+                                    hint,
+                                    Some(span),
+                                );
+                                scope_insert(scope, binding.clone(), Ty::Unknown);
+                            }
+                        }
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name).cloned() {
                             for binding in bindings {
@@ -4621,6 +4667,7 @@ impl VerifyContext {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 let start_ty = self.infer_expr(func, scope, start, span);
@@ -4642,6 +4689,30 @@ impl VerifyContext {
                         None,
                         Some(span),
                     );
+                }
+                if let Some(step_expr) = step {
+                    let step_ty = self.infer_expr(func, scope, step_expr, span);
+                    if !compatible(&step_ty, &Ty::Number) {
+                        self.err(
+                            "ILO-T014",
+                            func,
+                            format!("range step must be n, got {step_ty}"),
+                            None,
+                            Some(span),
+                        );
+                    }
+                    // Reject literal zero or negative steps
+                    if let Expr::Literal(Literal::Number(n)) = step_expr {
+                        if *n <= 0.0 {
+                            self.err(
+                                "ILO-V001",
+                                func,
+                                format!("range step must be positive, got {n} — use a positive integer step (e.g. `by 2`)"),
+                                None,
+                                Some(span),
+                            );
+                        }
+                    }
                 }
                 scope.push(HashMap::new());
                 scope_insert(scope, binding.clone(), Ty::Number);
@@ -5381,6 +5452,16 @@ impl VerifyContext {
                 }
             }
 
+            Expr::AnonRecord { fields } => {
+                // Infer each field's type and return a structural AnonRecord type.
+                // No declaration required; shape is derived entirely from the literal.
+                let inferred: Vec<(String, Ty)> = fields
+                    .iter()
+                    .map(|(n, e)| (n.clone(), self.infer_expr(func, scope, e, span)))
+                    .collect();
+                Ty::AnonRecord(inferred)
+            }
+
             Expr::Record { type_name, fields } => {
                 if let Some(type_def) = self.types.get(type_name) {
                     let def_fields = type_def.fields.clone();
@@ -5460,6 +5541,24 @@ impl VerifyContext {
                     return Ty::Nil;
                 }
                 match &obj_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        if let Some((_, fty)) = fields_ty.iter().find(|(n, _)| n == field) {
+                            fty.clone()
+                        } else {
+                            let field_names: Vec<String> =
+                                fields_ty.iter().map(|(n, _)| n.clone()).collect();
+                            let hint = closest_match(field, field_names.iter())
+                                .map(|s| format!("did you mean '{s}'?"));
+                            self.err(
+                                "ILO-T019",
+                                func,
+                                format!("no field '{field}' on anonymous record"),
+                                hint,
+                                Some(span),
+                            );
+                            Ty::Unknown
+                        }
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name) {
                             if let Some((_, fty)) = type_def.fields.iter().find(|(n, _)| n == field)
@@ -5672,6 +5771,22 @@ ilo has no tuple type."
             Expr::With { object, updates } => {
                 let obj_ty = self.infer_expr(func, scope, object, span);
                 match &obj_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        // Build updated fields: carry through unchanged fields, replace updated ones.
+                        let def_fields = fields_ty.clone();
+                        let mut new_fields = def_fields.clone();
+                        for (fname, expr) in updates {
+                            if let Some(pos) = new_fields.iter().position(|(n, _)| n == fname) {
+                                let actual = self.infer_expr(func, scope, expr, span);
+                                new_fields[pos] = (fname.clone(), actual);
+                            } else {
+                                // New field being added via `with` — allowed for anonymous records
+                                let actual = self.infer_expr(func, scope, expr, span);
+                                new_fields.push((fname.clone(), actual));
+                            }
+                        }
+                        Ty::AnonRecord(new_fields)
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name) {
                             let def_fields = type_def.fields.clone();
@@ -9314,6 +9429,7 @@ mod tests {
         program.declarations.push(Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         });
         let result = verify(&program);

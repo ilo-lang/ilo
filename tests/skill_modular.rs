@@ -42,20 +42,20 @@ const SKILL_NAMES: &[&str] = &[
     "ilo-edit-loop",
 ];
 
-/// Conservative byte budget per module. cl100k_base averages ~3.4 bytes/token
-/// on dense reference-style markdown like ours, so 4_000 bytes ≈ 1,180 tokens
-/// in the worst case. The Python tiktoken job in CI enforces the precise
-/// per-module cap (1,000 tokens for category modules, 1,500 for the
-/// foundational `ilo-language`); this in-binary check is a defence-in-depth
-/// tripwire that catches drift even when CI is bypassed.
-const BYTE_BUDGET_PER_MODULE: usize = 8_000;
+/// Aggressive byte budget per module (ILO-382). cl100k_base averages ~3.4
+/// bytes/token on dense reference-style markdown like ours, so 6_500 bytes ≈
+/// ~1,900 tokens in the worst case. The Python tiktoken job in CI enforces the
+/// precise per-module caps (see `scripts/check-skill-tokens.py`); this in-binary
+/// check is a defence-in-depth tripwire that catches drift even when CI is
+/// bypassed. Set to actual largest module (ilo-builtins-io, ~6,230 bytes) plus
+/// ~270 bytes headroom.
+const BYTE_BUDGET_PER_MODULE: usize = 6_500;
 
-/// Total bytes across all twelve. ~31,200 bytes ≈ 9,000 tokens at ~3.4 bytes
-/// per cl100k_base token on our content; the tighter tiktoken job in CI
-/// enforces the actual 8,500-token cap. Leaving the byte tripwire a few
-/// hundred tokens of slack avoids spurious failures when a single-character
-/// edit lands locally without re-running the Python counter.
-const BYTE_BUDGET_TOTAL: usize = 52_000;
+/// Total bytes across all twelve (ILO-382 aggressive cap). Measured baseline
+/// is ~38,082 bytes; the tighter tiktoken job in CI enforces the 12,500-token
+/// aggregate cap. Leaving ~10% byte slack here avoids spurious failures when a
+/// small edit lands locally without re-running the Python counter.
+const BYTE_BUDGET_TOTAL: usize = 42_000;
 
 fn read_skill(name: &str) -> String {
     let p = repo_root().join("skills/ilo").join(format!("{name}.md"));
@@ -138,8 +138,8 @@ fn per_module_byte_budget_respected() {
         assert!(
             len <= BYTE_BUDGET_PER_MODULE,
             "{n}.md is {len} bytes, over the per-module budget of {BYTE_BUDGET_PER_MODULE}. \
-             Trim or split. The hard per-module token cap (1,000 for category modules, \
-             1,500 for ilo-language) is enforced by the tiktoken CI job."
+             Trim or split. Hard per-module token caps are enforced by the tiktoken CI job \
+             (see scripts/check-skill-tokens.py — aggressive caps set in ILO-382)."
         );
     }
 }
@@ -150,7 +150,7 @@ fn total_byte_budget_respected() {
     assert!(
         total <= BYTE_BUDGET_TOTAL,
         "total skills size is {total} bytes, over the aggregate budget of {BYTE_BUDGET_TOTAL}. \
-         The hard 8,500-token cap is enforced by the tiktoken CI job."
+         The hard 12,500-token aggregate cap is enforced by the tiktoken CI job."
     );
 }
 

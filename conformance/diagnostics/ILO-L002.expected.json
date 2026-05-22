@@ -1,0 +1,7 @@
+{
+  "code": "ILO-L002",
+  "long": "## ILO-L002: underscore in identifier\n\nilo uses hyphens as word separators in identifiers, not underscores.\n\n**Example that triggers this:**\n\n    my_func x:n>n;x\n\n**Fix:**\n\n    my-func x:n>n;x\n",
+  "phase": "lex",
+  "schemaVersion": 1,
+  "short": "underscore in identifier — use hyphens"
+}

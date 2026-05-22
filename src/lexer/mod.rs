@@ -32,6 +32,10 @@ pub enum Token {
     #[token("S")]
     SumType,
 
+    // Step keyword for range loops: `@i 0..n by 2{...}`
+    #[token("by")]
+    By,
+
     // Reserved keywords from other languages — not valid in ilo, emit friendly errors
     #[token("if")]
     KwIf,
@@ -205,6 +209,9 @@ impl Token {
     /// `TokenKind` variant name (`Greater`, `PipeOp`, `LBrace` ...).
     pub fn user_facing_name(&self) -> String {
         match self {
+            // Step keyword
+            Token::By => "`by`".into(),
+
             // Keywords
             Token::Type => "`type`".into(),
             Token::Tool => "`tool`".into(),
