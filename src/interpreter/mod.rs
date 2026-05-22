@@ -2655,6 +2655,483 @@ fn run_bisect(list_arg: &Value, target_arg: &Value) -> Result<Value> {
     Ok(Value::Number(lo as f64))
 }
 
+// Each builtin lives in its own #[inline(never)] helper so the call_function
+// dispatch frame stays off the Rust call stack for deep-recursion tests
+// (see #494 / #506 / #515 / ILO-341).
+
+#[inline(never)]
+fn median_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "median: cannot take median of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("median: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = nums.len();
+    let m = if n % 2 == 1 {
+        nums[n / 2]
+    } else {
+        (nums[n / 2 - 1] + nums[n / 2]) / 2.0
+    };
+    Ok(Value::Number(m))
+}
+
+#[inline(never)]
+fn quantile_run(items: &[Value], p: f64) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "quantile: cannot take quantile of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("quantile: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p = p.clamp(0.0, 1.0);
+    let n = nums.len();
+    if n == 1 {
+        return Ok(Value::Number(nums[0]));
+    }
+    let pos = p * (n - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    let frac = pos - lo as f64;
+    let q = nums[lo] + frac * (nums[hi] - nums[lo]);
+    Ok(Value::Number(q))
+}
+
+#[inline(never)]
+fn variance_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "variance: cannot take variance of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("variance: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let n = nums.len();
+    if n == 1 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "variance: at least 2 samples required".to_string(),
+        ));
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+    Ok(Value::Number(sse / (n - 1) as f64))
+}
+
+#[inline(never)]
+fn stdev_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "stdev: cannot take stdev of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("stdev: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let n = nums.len();
+    if n == 1 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "stdev: at least 2 samples required".to_string(),
+        ));
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+    Ok(Value::Number((sse / (n - 1) as f64).sqrt()))
+}
+
+#[inline(never)]
+fn rgx_run(pattern: &str, input: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern)
+        .map_err(|e| RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}")))?;
+    let result: Vec<Value> = if re.captures_len() > 1 {
+        re.captures(input)
+            .map(|caps| {
+                (1..caps.len())
+                    .filter_map(|i| {
+                        caps.get(i)
+                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        re.find_iter(input)
+            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+            .collect()
+    };
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxall_run(pattern: &str, input: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern).map_err(|e| {
+        RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
+    })?;
+    let result: Vec<Value> = if re.captures_len() > 1 {
+        re.captures_iter(input)
+            .map(|caps| {
+                let groups: Vec<Value> = (1..caps.len())
+                    .filter_map(|i| {
+                        caps.get(i)
+                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    })
+                    .collect();
+                Value::List(Arc::new(groups))
+            })
+            .collect()
+    } else {
+        re.find_iter(input)
+            .map(|m| {
+                Value::List(Arc::new(vec![Value::Text(Arc::new(
+                    m.as_str().to_string(),
+                ))]))
+            })
+            .collect()
+    };
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxall1_run(pattern: &str, input: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern).map_err(|e| {
+        RuntimeError::new("ILO-R009", format!("rgxall1: invalid regex pattern: {e}"))
+    })?;
+    let group_count = re.captures_len().saturating_sub(1);
+    if group_count >= 2 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "rgxall1: pattern has {group_count} capture groups; rgxall1 only supports 0 or 1. Use rgxall for L (L t) with every group preserved."
+            ),
+        ));
+    }
+    let result: Vec<Value> = if group_count == 1 {
+        re.captures_iter(input)
+            .filter_map(|caps| {
+                caps.get(1)
+                    .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+            })
+            .collect()
+    } else {
+        re.find_iter(input)
+            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+            .collect()
+    };
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxall_multi_run(pats: &Arc<Vec<Value>>, input: &Arc<String>) -> Result<Value> {
+    let mut result: Vec<Value> = Vec::new();
+    for (i, pat_val) in pats.iter().enumerate() {
+        let pattern = match pat_val {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: pats[{i}] must be a string pattern, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let re = regex::Regex::new(pattern).map_err(|e| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!("rgxall-multi: invalid regex pattern at index {i}: {e}"),
+            )
+        })?;
+        let group_count = re.captures_len().saturating_sub(1);
+        if group_count >= 2 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "rgxall-multi: pattern at index {i} has {group_count} capture groups; rgxall-multi only supports 0 or 1 per pattern. Use rgxall for L (L t) with every group preserved."
+                ),
+            ));
+        }
+        if group_count == 1 {
+            re.captures_iter(input.as_str())
+                .filter_map(|caps| {
+                    caps.get(1)
+                        .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                })
+                .for_each(|v| result.push(v));
+        } else {
+            re.find_iter(input.as_str())
+                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                .for_each(|v| result.push(v));
+        }
+    }
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxsub_run(pattern: &str, replacement: &str, subject: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern).map_err(|e| {
+        RuntimeError::new("ILO-R009", format!("rgxsub: invalid regex pattern: {e}"))
+    })?;
+    Ok(Value::Text(Arc::new(
+        re.replace_all(subject, replacement).into_owned(),
+    )))
+}
+
+#[inline(never)]
+fn matmul_run(a_rows: &[Value], b_rows: &[Value]) -> Result<Value> {
+    let mut a: Vec<Vec<f64>> = Vec::with_capacity(a_rows.len());
+    let mut a_cols: Option<usize> = None;
+    for row in a_rows.iter() {
+        match row {
+            Value::List(r) => {
+                match a_cols {
+                    None => a_cols = Some(r.len()),
+                    Some(n) if n != r.len() => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "matmul: ragged rows in first arg (expected {n} cols, got {})",
+                                r.len()
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+                let mut nums = Vec::with_capacity(r.len());
+                for v in r.iter() {
+                    match v {
+                        Value::Number(n) => nums.push(*n),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!("matmul: elements must be numbers, got {:?}", other),
+                            ));
+                        }
+                    }
+                }
+                a.push(nums);
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("matmul: rows must be lists, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let mut b: Vec<Vec<f64>> = Vec::with_capacity(b_rows.len());
+    let mut b_cols: Option<usize> = None;
+    for row in b_rows.iter() {
+        match row {
+            Value::List(r) => {
+                match b_cols {
+                    None => b_cols = Some(r.len()),
+                    Some(n) if n != r.len() => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "matmul: ragged rows in second arg (expected {n} cols, got {})",
+                                r.len()
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+                let mut nums = Vec::with_capacity(r.len());
+                for v in r.iter() {
+                    match v {
+                        Value::Number(n) => nums.push(*n),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!("matmul: elements must be numbers, got {:?}", other),
+                            ));
+                        }
+                    }
+                }
+                b.push(nums);
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("matmul: rows must be lists, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let a_rows_n = a.len();
+    let a_cols_n = a_cols.unwrap_or(0);
+    let b_rows_n = b.len();
+    let b_cols_n = b_cols.unwrap_or(0);
+    if a_cols_n != b_rows_n {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "matmul: shape mismatch (a is {a_rows_n}x{a_cols_n}, b is {b_rows_n}x{b_cols_n})"
+            ),
+        ));
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(a_rows_n);
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..a_rows_n {
+        let mut row: Vec<Value> = Vec::with_capacity(b_cols_n);
+        for j in 0..b_cols_n {
+            let mut s = 0.0_f64;
+            for k in 0..a_cols_n {
+                s += a[i][k] * b[k][j];
+            }
+            row.push(Value::Number(s));
+        }
+        out.push(Value::List(Arc::new(row)));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+#[inline(never)]
+fn ifft_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "ifft: input list must not be empty".to_string(),
+        ));
+    }
+    let mut re: Vec<f64> = Vec::with_capacity(items.len());
+    let mut im: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::List(pair) if pair.len() == 2 => {
+                let r = match &pair[0] {
+                    Value::Number(n) => *n,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            "ifft: pair elements must be numbers".to_string(),
+                        ));
+                    }
+                };
+                let i = match &pair[1] {
+                    Value::Number(n) => *n,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            "ifft: pair elements must be numbers".to_string(),
+                        ));
+                    }
+                };
+                re.push(r);
+                im.push(i);
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "ifft: each element must be a [real, imag] pair, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    let n = next_pow2(re.len());
+    re.resize(n, 0.0);
+    im.resize(n, 0.0);
+    cooley_tukey(&mut re, &mut im, true);
+    let result: Vec<Value> = re.into_iter().map(Value::Number).collect();
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn where_run(cond: &[Value], xs: &[Value], ys: &[Value]) -> Result<Value> {
+    if cond.len() != xs.len() || cond.len() != ys.len() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "where: length mismatch — cond={}, xs={}, ys={}; all three lists must be the same length",
+                cond.len(),
+                xs.len(),
+                ys.len()
+            ),
+        ));
+    }
+    let mut out = Vec::with_capacity(cond.len());
+    for (i, c) in cond.iter().enumerate() {
+        match c {
+            Value::Bool(true) => out.push(xs[i].clone()),
+            Value::Bool(false) => out.push(ys[i].clone()),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "where: cond element at index {} must be a bool, got {:?}",
+                        i, other
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -6787,113 +7264,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        // Extract a as Vec<Vec<f64>>
-        let mut a: Vec<Vec<f64>> = Vec::with_capacity(a_rows.len());
-        let mut a_cols: Option<usize> = None;
-        for row in a_rows.iter() {
-            match row {
-                Value::List(r) => {
-                    match a_cols {
-                        None => a_cols = Some(r.len()),
-                        Some(n) if n != r.len() => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "matmul: ragged rows in first arg (expected {n} cols, got {})",
-                                    r.len()
-                                ),
-                            ));
-                        }
-                        _ => {}
-                    }
-                    let mut nums = Vec::with_capacity(r.len());
-                    for v in r.iter() {
-                        match v {
-                            Value::Number(n) => nums.push(*n),
-                            other => {
-                                return Err(RuntimeError::new(
-                                    "ILO-R009",
-                                    format!("matmul: elements must be numbers, got {:?}", other),
-                                ));
-                            }
-                        }
-                    }
-                    a.push(nums);
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("matmul: rows must be lists, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let mut b: Vec<Vec<f64>> = Vec::with_capacity(b_rows.len());
-        let mut b_cols: Option<usize> = None;
-        for row in b_rows.iter() {
-            match row {
-                Value::List(r) => {
-                    match b_cols {
-                        None => b_cols = Some(r.len()),
-                        Some(n) if n != r.len() => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "matmul: ragged rows in second arg (expected {n} cols, got {})",
-                                    r.len()
-                                ),
-                            ));
-                        }
-                        _ => {}
-                    }
-                    let mut nums = Vec::with_capacity(r.len());
-                    for v in r.iter() {
-                        match v {
-                            Value::Number(n) => nums.push(*n),
-                            other => {
-                                return Err(RuntimeError::new(
-                                    "ILO-R009",
-                                    format!("matmul: elements must be numbers, got {:?}", other),
-                                ));
-                            }
-                        }
-                    }
-                    b.push(nums);
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("matmul: rows must be lists, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let a_rows_n = a.len();
-        let a_cols_n = a_cols.unwrap_or(0);
-        let b_rows_n = b.len();
-        let b_cols_n = b_cols.unwrap_or(0);
-        if a_cols_n != b_rows_n {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "matmul: shape mismatch (a is {a_rows_n}x{a_cols_n}, b is {b_rows_n}x{b_cols_n})"
-                ),
-            ));
-        }
-        let mut out: Vec<Value> = Vec::with_capacity(a_rows_n);
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..a_rows_n {
-            let mut row: Vec<Value> = Vec::with_capacity(b_cols_n);
-            for j in 0..b_cols_n {
-                let mut s = 0.0_f64;
-                for k in 0..a_cols_n {
-                    s += a[i][k] * b[k][j];
-                }
-                row.push(Value::Number(s));
-            }
-            out.push(Value::List(Arc::new(row)));
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return matmul_run(a_rows, b_rows);
     }
     if builtin == Some(Builtin::Matvec) && args.len() == 2 {
         // Out-of-line helper to keep this arm's frame off the giant
@@ -7185,34 +7556,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if cond.len() != xs.len() || cond.len() != ys.len() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "where: length mismatch — cond={}, xs={}, ys={}; all three lists must be the same length",
-                    cond.len(),
-                    xs.len(),
-                    ys.len()
-                ),
-            ));
-        }
-        let mut out = Vec::with_capacity(cond.len());
-        for (i, c) in cond.iter().enumerate() {
-            match c {
-                Value::Bool(true) => out.push(xs[i].clone()),
-                Value::Bool(false) => out.push(ys[i].clone()),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "where: cond element at index {} must be a bool, got {:?}",
-                            i, other
-                        ),
-                    ));
-                }
-            }
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return where_run(cond, xs, ys);
     }
     if builtin == Some(Builtin::Avg) && args.len() == 1 {
         let items = match &args[0] {
@@ -7254,38 +7598,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "median: cannot take median of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("median: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        // Per the NaN contract for math builtins (PR #162): if any input is
-        // NaN, propagate NaN rather than silently sorting it to an arbitrary
-        // position via `partial_cmp(...).unwrap_or(Equal)`.
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let n = nums.len();
-        let m = if n % 2 == 1 {
-            nums[n / 2]
-        } else {
-            (nums[n / 2 - 1] + nums[n / 2]) / 2.0
-        };
-        return Ok(Value::Number(m));
+        return median_run(items);
     }
     if builtin == Some(Builtin::Quantile) && args.len() == 2 {
         let items = match &args[0] {
@@ -7306,40 +7619,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "quantile: cannot take quantile of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("quantile: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        // NaN-propagation: if any input is NaN, return NaN (see median).
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let p = p.clamp(0.0, 1.0);
-        let n = nums.len();
-        if n == 1 {
-            return Ok(Value::Number(nums[0]));
-        }
-        let pos = p * (n - 1) as f64;
-        let lo = pos.floor() as usize;
-        let hi = pos.ceil() as usize;
-        let frac = pos - lo as f64;
-        let q = nums[lo] + frac * (nums[hi] - nums[lo]);
-        return Ok(Value::Number(q));
+        return quantile_run(items, p);
     }
     if builtin == Some(Builtin::Variance) && args.len() == 1 {
         let items = match &args[0] {
@@ -7351,38 +7631,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "variance: cannot take variance of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("variance: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let n = nums.len();
-        if n == 1 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "variance: at least 2 samples required".to_string(),
-            ));
-        }
-        // NaN-propagation: any NaN input → NaN result.
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
-        return Ok(Value::Number(sse / (n - 1) as f64));
+        return variance_run(items);
     }
     if builtin == Some(Builtin::Stdev) && args.len() == 1 {
         let items = match &args[0] {
@@ -7394,38 +7643,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "stdev: cannot take stdev of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("stdev: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let n = nums.len();
-        if n == 1 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "stdev: at least 2 samples required".to_string(),
-            ));
-        }
-        // NaN-propagation: any NaN input → NaN result.
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
-        return Ok(Value::Number((sse / (n - 1) as f64).sqrt()));
+        return stdev_run(items);
     }
     if builtin == Some(Builtin::Rgx) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -7446,28 +7664,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}"))
-        })?;
-        let result: Vec<Value> = if re.captures_len() > 1 {
-            // Has capture groups — return list of captured group strings
-            re.captures(input)
-                .map(|caps| {
-                    (1..caps.len())
-                        .filter_map(|i| {
-                            caps.get(i)
-                                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            // No capture groups — return list of all matches
-            re.find_iter(input)
-                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                .collect()
-        };
-        return Ok(Value::List(Arc::new(result)));
+        return rgx_run(pattern, input);
     }
     if builtin == Some(Builtin::Rgxall) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -7491,43 +7688,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
-        })?;
-        // Outer shape is always L (L t). Inner-list contents depend on the
-        // pattern:
-        // - No capture groups: inner list is [whole_match] (length 1).
-        // - With capture groups: inner list holds only the groups that
-        //   *participated* in this particular match, in declaration order.
-        //   For straight patterns like `(\w+)=(\d+)` that means N declared
-        //   groups = N inner-list entries on every match. For alternation
-        //   patterns like `(a)|(b)`, only the branch that fired contributes,
-        //   so the inner list can be shorter than the declared group count.
-        //   This matches the `rgx` family's existing filter_map semantics
-        //   and avoids the empty-string-sentinel ambiguity of an alternative
-        //   "always emit N slots" design.
-        let result: Vec<Value> = if re.captures_len() > 1 {
-            re.captures_iter(input)
-                .map(|caps| {
-                    let groups: Vec<Value> = (1..caps.len())
-                        .filter_map(|i| {
-                            caps.get(i)
-                                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                        })
-                        .collect();
-                    Value::List(Arc::new(groups))
-                })
-                .collect()
-        } else {
-            re.find_iter(input)
-                .map(|m| {
-                    Value::List(Arc::new(vec![Value::Text(Arc::new(
-                        m.as_str().to_string(),
-                    ))]))
-                })
-                .collect()
-        };
-        return Ok(Value::List(Arc::new(result)));
+        return rgxall_run(pattern, input);
     }
     if builtin == Some(Builtin::Rgxall1) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -7551,43 +7712,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgxall1: invalid regex pattern: {e}"))
-        })?;
-        // Single-capture-group convenience over rgxall.
-        // - 0 groups: returns the flat list of whole matches (L t).
-        // - 1 group: returns the flat list of capture-1 strings (L t),
-        //   skipping any match where group 1 did not participate
-        //   (parallels rgxall's filter_map semantics for non-participating
-        //   groups under alternation).
-        // - 2+ groups: runtime error pointing the user back at rgxall, which
-        //   returns L (L t) and preserves every group on every match.
-        //   We surface this at runtime rather than verify time because the
-        //   group-count check requires inspecting the literal pattern, and
-        //   patterns often arrive as values from bindings; the verifier
-        //   doesn't track regex group arity.
-        let group_count = re.captures_len().saturating_sub(1);
-        if group_count >= 2 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "rgxall1: pattern has {group_count} capture groups; rgxall1 only supports 0 or 1. Use rgxall for L (L t) with every group preserved."
-                ),
-            ));
-        }
-        let result: Vec<Value> = if group_count == 1 {
-            re.captures_iter(input)
-                .filter_map(|caps| {
-                    caps.get(1)
-                        .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                })
-                .collect()
-        } else {
-            re.find_iter(input)
-                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                .collect()
-        };
-        return Ok(Value::List(Arc::new(result)));
+        return rgxall1_run(pattern, input);
     }
     if builtin == Some(Builtin::RgxallMulti) && args.len() == 2 {
         // rgxall-multi pats:L t line:t > L t
@@ -7627,49 +7752,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut result: Vec<Value> = Vec::new();
-        for (i, pat_val) in pats.iter().enumerate() {
-            let pattern = match pat_val {
-                Value::Text(s) => s.as_str(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "rgxall-multi: pats[{i}] must be a string pattern, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            let re = regex::Regex::new(pattern).map_err(|e| {
-                RuntimeError::new(
-                    "ILO-R009",
-                    format!("rgxall-multi: invalid regex pattern at index {i}: {e}"),
-                )
-            })?;
-            let group_count = re.captures_len().saturating_sub(1);
-            if group_count >= 2 {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "rgxall-multi: pattern at index {i} has {group_count} capture groups; rgxall-multi only supports 0 or 1 per pattern. Use rgxall for L (L t) with every group preserved."
-                    ),
-                ));
-            }
-            if group_count == 1 {
-                re.captures_iter(input.as_str())
-                    .filter_map(|caps| {
-                        caps.get(1)
-                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                    })
-                    .for_each(|v| result.push(v));
-            } else {
-                re.find_iter(input.as_str())
-                    .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                    .for_each(|v| result.push(v));
-            }
-        }
-        return Ok(Value::List(Arc::new(result)));
+        return rgxall_multi_run(&pats, &input);
     }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
         let pattern = match &args[0] {
@@ -7708,12 +7791,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgxsub: invalid regex pattern: {e}"))
-        })?;
-        return Ok(Value::Text(Arc::new(
-            re.replace_all(subject, replacement).into_owned(),
-        )));
+        return rgxsub_run(pattern, replacement, subject);
     }
     if builtin == Some(Builtin::Flat) && args.len() == 1 {
         let items = match &args[0] {
@@ -7784,55 +7862,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "ifft: input list must not be empty".to_string(),
-            ));
-        }
-        let mut re: Vec<f64> = Vec::with_capacity(items.len());
-        let mut im: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::List(pair) if pair.len() == 2 => {
-                    let r = match &pair[0] {
-                        Value::Number(n) => *n,
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                "ifft: pair elements must be numbers".to_string(),
-                            ));
-                        }
-                    };
-                    let i = match &pair[1] {
-                        Value::Number(n) => *n,
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                "ifft: pair elements must be numbers".to_string(),
-                            ));
-                        }
-                    };
-                    re.push(r);
-                    im.push(i);
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "ifft: each element must be a [real, imag] pair, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            }
-        }
-        let n = next_pow2(re.len());
-        re.resize(n, 0.0);
-        im.resize(n, 0.0);
-        cooley_tukey(&mut re, &mut im, true);
-        let result: Vec<Value> = re.into_iter().map(Value::Number).collect();
-        return Ok(Value::List(Arc::new(result)));
+        return ifft_run(items);
     }
 
     // Dynamic dispatch: callee resolved to a FnRef at runtime
