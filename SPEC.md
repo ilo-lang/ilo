@@ -97,7 +97,7 @@ area s:shape > n
 - **Declaration**: `type Name = V1 | V2(payloadType) | ...` at top level.
 - **Construction**: `circle 5` (payload variant), `point` (payload-less variant used as value directly).
 - **Pattern match**: `?s{circle(r):...; square(side):...; point:...}` using `tag(binding):` or `tag:` arms.
-- **Exhaustiveness**: verifier checks all variants are covered (wildcard `_:` accepted).
+- **Exhaustiveness**: verifier (ILO-T024) checks all variants are covered; the error lists every missing variant by name and suggests the correct arm syntax (`tag(v): <expr>` for payload variants, `tag: <expr>` for payload-less). A wildcard `_:` arm satisfies exhaustiveness. Missing multiple variants produces a single diagnostic naming all of them.
 - **VM**: programs using discriminated unions fall back to the tree interpreter (JIT codegen deferred).
 
 ### Map type (`M k v`)

@@ -484,7 +484,12 @@ fn arm_needs_statements(arm: &MatchArm) -> bool {
     // reference `_`. Plain wildcards also bind `_` to the subject, but the
     // ternary path special-cases that by inlining the subject expression.
     match &arm.pattern {
-        Pattern::Ok(_) | Pattern::Err(_) | Pattern::TypeIs { .. } | Pattern::Variant { binding: Some(_), .. } => return true,
+        Pattern::Ok(_)
+        | Pattern::Err(_)
+        | Pattern::TypeIs { .. }
+        | Pattern::Variant {
+            binding: Some(_), ..
+        } => return true,
         Pattern::Wildcard if body_refs_underscore(&arm.body) => return true,
         _ => {}
     }

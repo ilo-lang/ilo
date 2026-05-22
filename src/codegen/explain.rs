@@ -129,11 +129,7 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                Some(annotate_line(
-                    &format!("type {name} = {vs}"),
-                    "sum type",
-                    0,
-                ))
+                Some(annotate_line(&format!("type {name} = {vs}"), "sum type", 0))
             }
         };
 

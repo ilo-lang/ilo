@@ -853,10 +853,7 @@ impl Parser {
             }
         }
         if variants.is_empty() {
-            return Err(self.error(
-                "ILO-P010",
-                "sum type requires at least one variant".into(),
-            ));
+            return Err(self.error("ILO-P010", "sum type requires at least one variant".into()));
         }
         let end = self.prev_span();
         Ok(Decl::SumType {

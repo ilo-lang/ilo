@@ -253,7 +253,10 @@ pub enum Pattern {
     /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
     TypeIs { ty: Type, binding: String },
     /// `Circle(r):` — match a named-sum variant, optionally bind payload
-    Variant { tag: String, binding: Option<String> },
+    Variant {
+        tag: String,
+        binding: Option<String>,
+    },
 }
 
 /// Auto-unwrap mode on `Expr::Call`. See `Expr::Call` for full semantics.

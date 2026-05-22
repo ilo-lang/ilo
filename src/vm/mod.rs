@@ -2292,12 +2292,7 @@ impl RegCompiler {
 
     /// Emit a 2-field variant record: { tag: <tag_idx as Number>, payload: <payload_reg or Nil> }.
     /// Returns the result register holding the new record.
-    fn emit_variant_record(
-        &mut self,
-        type_id: u16,
-        tag_idx: usize,
-        payload_reg: Option<u8>,
-    ) -> u8 {
+    fn emit_variant_record(&mut self, type_id: u16, tag_idx: usize, payload_reg: Option<u8>) -> u8 {
         // Allocate tag constant
         let tag_val = Value::Number(tag_idx as f64);
         let tag_ki = self.current.add_const(tag_val);
@@ -3210,9 +3205,7 @@ impl RegCompiler {
                         // Unknown variant tag — variant_map was not populated
                         // (e.g. the variant is from a type defined elsewhere).
                         self.first_error
-                            .get_or_insert(CompileError::UndefinedVariable {
-                                name: tag.clone(),
-                            });
+                            .get_or_insert(CompileError::UndefinedVariable { name: tag.clone() });
                     }
                 }
             }
@@ -3741,9 +3734,7 @@ impl RegCompiler {
             Expr::Ref(name) => {
                 if let Some(reg) = self.resolve_local(name) {
                     reg // FREE — no instruction needed!
-                } else if let Some(&(type_id, tag_idx, has_payload)) =
-                    self.variant_map.get(name)
-                {
+                } else if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(name) {
                     if !has_payload {
                         // 0-payload variant used as a bare value: emit the 2-field
                         // record (tag=tag_idx, payload=Nil) directly.
@@ -3753,9 +3744,8 @@ impl RegCompiler {
                         // constructor value). This is uncommon; fall through to the
                         // UndefinedVariable error path so callers get a clear message
                         // rather than silent wrong behaviour.
-                        self.first_error.get_or_insert(CompileError::UndefinedVariable {
-                            name: name.clone(),
-                        });
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: name.clone() });
                         0
                     }
                 } else if let Some(idx) = self.func_names.iter().position(|n| n == name) {
@@ -5619,9 +5609,7 @@ impl RegCompiler {
                 // Intercept calls like `circle 5` or `point` where `circle`/`point`
                 // are variant names registered in variant_map.  Emit inline record
                 // construction (OP_RECNEW) rather than a function call.
-                if let Some(&(type_id, tag_idx, has_payload)) =
-                    self.variant_map.get(function)
-                {
+                if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(function) {
                     let payload_reg = if has_payload {
                         if args.len() == 1 {
                             Some(self.compile_expr(&args[0]))
@@ -36120,7 +36108,10 @@ main>n
         );
         match v {
             Value::Number(n) => {
-                assert!((n - 87.53975_f64).abs() < 1e-4, "expected ~87.53975, got {n}");
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
             }
             _ => panic!("expected Number, got {v:?}"),
         }
@@ -36153,7 +36144,10 @@ main>n
         let val = run(&compiled, Some("main"), vec![]).unwrap();
         match val {
             Value::Number(n) => {
-                assert!((n - 87.53975_f64).abs() < 1e-4, "expected ~87.53975, got {n}");
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
             }
             _ => panic!("expected Number, got {val:?}"),
         }
@@ -36315,5 +36309,4 @@ mod aot_publish_tests {
             _ => panic!("expected list, got {v:?}"),
         }
     }
-
 }
