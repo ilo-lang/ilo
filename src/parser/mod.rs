@@ -848,6 +848,122 @@ statement boundary; bind the chain to a local first. For example, split \
         let start = self.peek_span();
         self.expect(&Token::Use)?;
 
+        // Detect conditional import form: `use ?<pred> "true-path" : "false-path"`.
+        // `?` must appear immediately after `use` with no other tokens in between.
+        if self.peek() == Some(&Token::Question) {
+            self.advance(); // consume `?`
+            // Expect a predicate name identifier.
+            let pred_name = match self.peek().cloned() {
+                Some(Token::Ident(name)) => {
+                    self.advance();
+                    name
+                }
+                Some(tok) => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!(
+                            "expected a predicate name (wasm/native/test) after `use ?`, got {}",
+                            tok.user_facing_name()
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        "expected a predicate name (wasm/native/test) after `use ?`, got EOF"
+                            .into(),
+                    ));
+                }
+            };
+            let predicate = match UsePredicate::from_str(&pred_name) {
+                Some(p) => p,
+                None => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!(
+                            "unknown `use ?` predicate `{pred_name}` — valid predicates: wasm, native, test"
+                        ),
+                    ));
+                }
+            };
+            // Expect true-branch path string.
+            let true_path = match self.peek().cloned() {
+                Some(Token::Text(p)) => {
+                    self.advance();
+                    p
+                }
+                Some(tok) => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!(
+                            "expected a string path after `use ?{pred_name}`, got {}",
+                            tok.user_facing_name()
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!("expected a string path after `use ?{pred_name}`, got EOF"),
+                    ));
+                }
+            };
+            // Expect `:` separator.
+            match self.peek().cloned() {
+                Some(Token::Colon) => {
+                    self.advance();
+                }
+                Some(tok) => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!(
+                            "expected `:` after true-branch path in `use ?{pred_name}`, got {}",
+                            tok.user_facing_name()
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!(
+                            "expected `:` after true-branch path in `use ?{pred_name}`, got EOF"
+                        ),
+                    ));
+                }
+            };
+            // Expect false-branch path string.
+            let false_path = match self.peek().cloned() {
+                Some(Token::Text(p)) => {
+                    self.advance();
+                    p
+                }
+                Some(tok) => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!(
+                            "expected a string path after `:` in `use ?{pred_name}`, got {}",
+                            tok.user_facing_name()
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!("expected a string path after `:` in `use ?{pred_name}`, got EOF"),
+                    ));
+                }
+            };
+            let end = self.peek_span();
+            return Ok(Decl::Use {
+                path: true_path,
+                only: None,
+                alias: None,
+                predicate: Some(predicate),
+                alt_path: Some(false_path),
+                span: start.merge(end),
+            });
+        }
+
         // Detect named-module form: `use alias:"path"` — ident immediately
         // followed by `:` then a string literal.
         // Distinguished from the plain form `use "path"` by the leading ident.
@@ -956,6 +1072,8 @@ statement boundary; bind the chain to a local first. For example, split \
             path,
             only,
             alias,
+            predicate: None,
+            alt_path: None,
             span: start.merge(end),
         })
     }
@@ -9139,6 +9257,84 @@ mod tests {
         assert!(
             errors.iter().any(|e| e.code == "ILO-P016"),
             "expected ILO-P016: {errors:?}"
+        );
+    }
+
+    // --- conditional use (ILO-399) ---
+
+    #[test]
+    fn parse_use_conditional_wasm() {
+        let prog = parse_str(r#"use ?wasm "wasm-mod.ilo" : "native-mod.ilo""#);
+        let Decl::Use {
+            path,
+            alt_path,
+            predicate,
+            only,
+            alias,
+            ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use, got {:?}", prog.declarations)
+        };
+        assert_eq!(path, "wasm-mod.ilo");
+        assert_eq!(alt_path.as_deref(), Some("native-mod.ilo"));
+        assert_eq!(*predicate, Some(UsePredicate::Wasm));
+        assert!(only.is_none());
+        assert!(alias.is_none());
+    }
+
+    #[test]
+    fn parse_use_conditional_native() {
+        let prog = parse_str(r#"use ?native "native.ilo" : "fallback.ilo""#);
+        let Decl::Use {
+            predicate,
+            path,
+            alt_path,
+            ..
+        } = &prog.declarations[0]
+        else {
+            panic!("expected Use")
+        };
+        assert_eq!(*predicate, Some(UsePredicate::Native));
+        assert_eq!(path, "native.ilo");
+        assert_eq!(alt_path.as_deref(), Some("fallback.ilo"));
+    }
+
+    #[test]
+    fn parse_use_conditional_test() {
+        let prog = parse_str(r#"use ?test "test-stubs.ilo" : "real.ilo""#);
+        let Decl::Use { predicate, .. } = &prog.declarations[0] else {
+            panic!("expected Use")
+        };
+        assert_eq!(*predicate, Some(UsePredicate::Test));
+    }
+
+    #[test]
+    fn parse_use_conditional_unknown_predicate_error() {
+        let (_, errors) = parse_str_errors(r#"use ?gpu "a.ilo" : "b.ilo""#);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-P016" && e.message.contains("unknown")),
+            "expected ILO-P016 unknown predicate, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_use_conditional_missing_false_branch_error() {
+        let (_, errors) = parse_str_errors(r#"use ?wasm "a.ilo""#);
+        assert!(
+            !errors.is_empty(),
+            "expected error for missing false branch"
+        );
+    }
+
+    #[test]
+    fn parse_use_conditional_missing_colon_error() {
+        let (_, errors) = parse_str_errors(r#"use ?wasm "a.ilo" "b.ilo""#);
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P016"),
+            "expected ILO-P016 for missing colon: {errors:?}"
         );
     }
 

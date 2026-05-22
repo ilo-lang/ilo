@@ -551,6 +551,8 @@ mod tests {
             path: "x.ilo".into(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: Span::UNKNOWN,
         });
         prog.declarations.push(Decl::Error {

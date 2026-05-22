@@ -1488,6 +1488,7 @@ fn compile_cmd(args: &[String]) -> i32 {
         base_dir.as_deref(),
         &mut visited,
         &mut import_diagnostics,
+        BuildTarget::default(),
     );
     if !import_diagnostics.is_empty() {
         for d in &import_diagnostics {
@@ -2251,6 +2252,34 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
     }
 }
 
+/// Build target used to evaluate conditional `use ?<pred>` predicates.
+///
+/// Passed to `resolve_imports` so that `use ?wasm "a" : "b"` picks the
+/// right branch at compile time without touching the runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BuildTarget {
+    /// Native host binary (default).
+    #[default]
+    Native,
+    /// WebAssembly (wasm32) target.
+    Wasm,
+    /// Test run (`ilo test`).
+    Test,
+}
+
+impl BuildTarget {
+    /// Evaluate a `UsePredicate` against this target: returns `true` when
+    /// the predicate matches (i.e. the "true" branch should be imported).
+    pub fn eval(self, pred: ast::UsePredicate) -> bool {
+        match (self, pred) {
+            (BuildTarget::Wasm, ast::UsePredicate::Wasm) => true,
+            (BuildTarget::Native, ast::UsePredicate::Native) => true,
+            (BuildTarget::Test, ast::UsePredicate::Test) => true,
+            _ => false,
+        }
+    }
+}
+
 /// Resolve all `Decl::Use` nodes in `decls` recursively, returning a flat
 /// merged list with imported declarations prepended and `Use` nodes stripped.
 ///
@@ -2258,6 +2287,7 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
 ///   `None` means inline code — `use` is not supported without a file context.
 /// - `visited`: canonical paths already in the import chain; circular imports are errors.
 /// - `diagnostics`: errors are pushed here (file-not-found, circular, parse failures).
+/// - `build_target`: evaluates `use ?<pred>` predicates at compile time.
 ///
 /// Privacy rule: declarations whose name starts with `_` are module-private and
 /// are never exported. They are stripped during import regardless of `only` or `alias`.
@@ -2266,6 +2296,7 @@ fn resolve_imports(
     base_dir: Option<&std::path::Path>,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
     diagnostics: &mut Vec<Diagnostic>,
+    build_target: BuildTarget,
 ) -> Vec<ast::Decl> {
     let mut result: Vec<ast::Decl> = Vec::new();
 
@@ -2274,9 +2305,24 @@ fn resolve_imports(
             path,
             only,
             alias,
+            predicate,
+            alt_path,
             span,
         } = decl
         {
+            // For conditional imports, select the right branch now.
+            let path = if let Some(pred) = predicate {
+                if build_target.eval(pred) {
+                    path
+                } else {
+                    // alt_path is guaranteed to be Some when predicate is Some
+                    // (enforced by the parser).
+                    alt_path.unwrap_or(path)
+                }
+            } else {
+                path
+            };
+
             let Some(dir) = base_dir else {
                 diagnostics.push(
                     Diagnostic::error(
@@ -2357,6 +2403,7 @@ fn resolve_imports(
                 imported_dir,
                 visited,
                 diagnostics,
+                build_target,
             );
             visited.remove(&canonical);
 
@@ -3456,6 +3503,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
             base_dir.as_deref(),
             &mut visited,
             &mut import_diagnostics,
+            BuildTarget::default(),
         );
         for d in import_diagnostics {
             report_diagnostic(&d, mode);
@@ -3684,6 +3732,7 @@ fn dispatch_run(
             base_dir.as_deref(),
             &mut visited,
             &mut import_diagnostics,
+            BuildTarget::default(),
         );
         for d in import_diagnostics {
             report_diagnostic(&d, mode);
@@ -6390,6 +6439,8 @@ mod tests {
             path: "lib.ilo".into(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -6428,6 +6479,8 @@ mod tests {
             path: "ilo_test_resolve_only_F2G7.ilo".into(),
             only: Some(vec!["dbl".into()]),
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6437,6 +6490,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
@@ -6462,6 +6516,8 @@ mod tests {
             path: "ilo_test_resolve_missing_H4K9.ilo".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6471,6 +6527,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(
@@ -6715,11 +6772,19 @@ mod tests {
             path: "something.ilo".into(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
         let mut diags = Vec::new();
-        let result = resolve_imports(vec![use_decl], None, &mut visited, &mut diags);
+        let result = resolve_imports(
+            vec![use_decl],
+            None,
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty());
         assert!(diags.iter().any(|d| d.code == Some("ILO-P017")));
         assert!(diags[0].message.contains("inline code"));
@@ -6731,6 +6796,8 @@ mod tests {
             path: "nonexistent_xyz_99999.ilo".into(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6740,6 +6807,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
         assert!(result.is_empty());
         assert!(
@@ -6760,7 +6828,13 @@ mod tests {
         };
         let mut visited = std::collections::HashSet::new();
         let mut diags = Vec::new();
-        let result = resolve_imports(vec![func_decl], None, &mut visited, &mut diags);
+        let result = resolve_imports(
+            vec![func_decl],
+            None,
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
         assert_eq!(result.len(), 1);
         assert!(diags.is_empty());
     }
@@ -6846,6 +6920,8 @@ mod tests {
             path: "ilo_unit_bad_parse_imports.ilo".into(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6855,6 +6931,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(
@@ -6882,6 +6959,8 @@ mod tests {
             path: "ilo_unit_trans_a_Q3R8.ilo".into(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6891,6 +6970,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -6917,6 +6997,8 @@ mod tests {
             path: "ilo_test_alias_rename_X9Y2.ilo".into(),
             only: None,
             alias: Some("m".into()),
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6926,6 +7008,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(diags.is_empty(), "no errors expected: {diags:?}");
@@ -6953,6 +7036,8 @@ mod tests {
             path: "ilo_test_alias_priv_W7Z4.ilo".into(),
             only: None,
             alias: Some("m".into()),
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6962,6 +7047,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(diags.is_empty(), "no errors expected: {diags:?}");
@@ -6992,6 +7078,8 @@ mod tests {
             path: "ilo_test_sel_priv_V3K8.ilo".into(),
             only: Some(vec!["_priv".into()]),
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -7001,6 +7089,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(result.is_empty(), "private name should produce no result");
@@ -7014,6 +7103,141 @@ mod tests {
         );
 
         std::fs::remove_file(lib_path).ok();
+    }
+
+    // ── resolve_imports: conditional use ?<pred> (ILO-399) ────────────────────
+
+    #[test]
+    fn resolve_imports_conditional_wasm_true_branch() {
+        // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
+        use std::io::Write;
+        let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
+        let native_path = "/tmp/ilo_cond_native_ILO399.ilo";
+        std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
+        std::fs::write(native_path, "native-fn>n;99").unwrap();
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_cond_wasm_ILO399.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: Some(ast::UsePredicate::Wasm),
+            alt_path: Some("ilo_cond_native_ILO399.ilo".into()),
+            span: ast::Span::UNKNOWN,
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Wasm,
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"wasm-fn"),
+            "expected wasm-fn, got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"native-fn"),
+            "native-fn should not be imported"
+        );
+
+        std::fs::remove_file(wasm_path).ok();
+        std::fs::remove_file(native_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_conditional_wasm_false_branch() {
+        // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Native → loads native.ilo
+        let wasm_path = "/tmp/ilo_cond2_wasm_ILO399.ilo";
+        let native_path = "/tmp/ilo_cond2_native_ILO399.ilo";
+        std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
+        std::fs::write(native_path, "native-fn>n;99").unwrap();
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_cond2_wasm_ILO399.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: Some(ast::UsePredicate::Wasm),
+            alt_path: Some("ilo_cond2_native_ILO399.ilo".into()),
+            span: ast::Span::UNKNOWN,
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Native, // default — not wasm
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"native-fn"),
+            "expected native-fn, got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"wasm-fn"),
+            "wasm-fn should not be imported"
+        );
+
+        std::fs::remove_file(wasm_path).ok();
+        std::fs::remove_file(native_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_conditional_test_predicate() {
+        // `use ?test "stub.ilo" : "real.ilo"` with BuildTarget::Test → loads stub
+        let stub_path = "/tmp/ilo_cond_stub_ILO399.ilo";
+        let real_path = "/tmp/ilo_cond_real_ILO399.ilo";
+        std::fs::write(stub_path, "stub-fn>n;0").unwrap();
+        std::fs::write(real_path, "real-fn>n;1").unwrap();
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_cond_stub_ILO399.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: Some(ast::UsePredicate::Test),
+            alt_path: Some("ilo_cond_real_ILO399.ilo".into()),
+            span: ast::Span::UNKNOWN,
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Test,
+        );
+
+        assert!(diags.is_empty(), "no errors: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"stub-fn"),
+            "expected stub-fn, got: {names:?}"
+        );
+
+        std::fs::remove_file(stub_path).ok();
+        std::fs::remove_file(real_path).ok();
+    }
+
+    #[test]
+    fn build_target_eval_all_predicates() {
+        assert!(BuildTarget::Wasm.eval(ast::UsePredicate::Wasm));
+        assert!(!BuildTarget::Wasm.eval(ast::UsePredicate::Native));
+        assert!(!BuildTarget::Wasm.eval(ast::UsePredicate::Test));
+        assert!(BuildTarget::Native.eval(ast::UsePredicate::Native));
+        assert!(!BuildTarget::Native.eval(ast::UsePredicate::Wasm));
+        assert!(!BuildTarget::Native.eval(ast::UsePredicate::Test));
+        assert!(BuildTarget::Test.eval(ast::UsePredicate::Test));
+        assert!(!BuildTarget::Test.eval(ast::UsePredicate::Wasm));
+        assert!(!BuildTarget::Test.eval(ast::UsePredicate::Native));
     }
 
     // ── report_diagnostic: all three output modes ─────────────────────────────
@@ -8077,6 +8301,8 @@ mod tests {
             path: path.to_string(),
             only: None,
             alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span::UNKNOWN,
         }
     }
@@ -8087,7 +8313,13 @@ mod tests {
         let decls = vec![make_use_decl("math.ilo")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
-        let result = resolve_imports(decls, None, &mut visited, &mut diagnostics);
+        let result = resolve_imports(
+            decls,
+            None,
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty(), "should return no decls");
         assert!(!diagnostics.is_empty(), "should emit error");
         assert!(diagnostics[0].message.contains("file path context"));
@@ -8100,7 +8332,13 @@ mod tests {
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        let result = resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("nonexistent_file_xyz.ilo"));
@@ -8118,7 +8356,13 @@ mod tests {
         visited.insert(canonical);
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        let result = resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("circular"));
@@ -8134,7 +8378,13 @@ mod tests {
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        let _result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        let _result = resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(!diagnostics.is_empty(), "should emit lex error diagnostic");
         std::fs::remove_file(path).ok();
     }
@@ -8156,7 +8406,13 @@ mod tests {
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(!diagnostics.is_empty());
     }
 
@@ -8362,6 +8618,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diagnostics,
+            BuildTarget::default(),
         );
 
         assert!(result.is_empty());
