@@ -6825,6 +6825,92 @@ pub(crate) fn jit_clear_call_stack() {
     JIT_CALL_STACK.with(|cell| cell.borrow_mut().clear());
 }
 
+/// JIT-to-Rust trampoline for `OP_STMT` trace events (ILO-407).
+///
+/// Emitted by Cranelift codegen at every `OP_STMT` boundary when a trace
+/// hook is active.  The four arguments are all `i64` so Cranelift can call
+/// this with `builder.ins().call(fref, &[result_bits, chunk_idx, debug_idx,
+/// span_bits])`.
+///
+/// * `result_bits` — the NanVal bit pattern of the statement's result
+///   register (`TAG_NIL` when `A == 255`).
+/// * `chunk_idx`   — index of the currently executing chunk inside
+///   `ACTIVE_PROGRAM.chunks`; used to look up `stmt_debug` and `spans`.
+/// * `debug_idx`   — `Bx` field of the `OP_STMT` instruction; indexes
+///   `chunk.stmt_debug` for the name→register snapshot.
+/// * `span_bits`   — packed span (`pack_span_bits`): high 32 = start,
+///   low 32 = end byte offset.
+///
+/// Bindings are reported with `Value::Nil` for every variable because the
+/// JIT trampoline does not have access to the live register file.  Line and
+/// statement text are resolved from `TRACE_SOURCE` exactly as the VM does.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_stmt_trace(
+    result_bits: u64,
+    chunk_idx: u64,
+    debug_idx: u64,
+    span_bits: u64,
+) -> u64 {
+    if !crate::interpreter::trace_hook_active() {
+        return 0;
+    }
+
+    // Resolve variable names from the active program's stmt_debug table.
+    let bindings: Vec<(String, crate::interpreter::Value)> = ACTIVE_PROGRAM.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: pointer is set by `with_active_registry` for the duration of
+        // the JIT dispatch and cleared before the program is dropped.
+        let program: &CompiledProgram = unsafe { &*ptr };
+        let ci = chunk_idx as usize;
+        let di = debug_idx as usize;
+        if let Some(chunk) = program.chunks.get(ci) {
+            if let Some(locals) = chunk.stmt_debug.get(di) {
+                return locals
+                    .iter()
+                    .map(|(name, _reg)| (name.clone(), crate::interpreter::Value::Nil))
+                    .collect();
+            }
+        }
+        Vec::new()
+    });
+
+    // Decode result NanVal → Value.
+    let result = NanVal(result_bits).to_value();
+
+    // Decode span_bits → (line, stmt_text) using TRACE_SOURCE.
+    let start = (span_bits >> 32) as usize;
+    let end = (span_bits & 0xFFFF_FFFF) as usize;
+    let span = crate::ast::Span { start, end };
+
+    let (line, stmt_text) = crate::interpreter::TRACE_SOURCE.with(|s| {
+        if let Some(ref source) = *s.borrow() {
+            if span != crate::ast::Span::UNKNOWN {
+                let sm = crate::ast::SourceMap::new(source);
+                let (ln, _) = sm.lookup(span.start);
+                let text = sm.line_text(source, ln).trim().to_string();
+                (ln, text)
+            } else {
+                (0usize, String::new())
+            }
+        } else {
+            (0usize, String::new())
+        }
+    });
+
+    crate::interpreter::fire_trace_hook(crate::interpreter::TraceEvent {
+        line,
+        stmt: stmt_text,
+        bindings,
+        result,
+    });
+
+    0
+}
+
 // Why a separate tag for ListView
 // ───────────────────────────────
 // Both `HeapObj::List` and `HeapObj::ListView` live in the same `HeapObj` enum,
@@ -36169,6 +36255,103 @@ main>n
         // Running without trace hook must not panic or error.
         let src = "f>n;x=10;+x 1";
         let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(11.0));
+    }
+}
+
+// ── ILO-407: JIT (Cranelift) trace tests ──────────────────────────────────────
+#[cfg(all(test, feature = "cranelift"))]
+mod jit_trace_tests {
+    //! Verify that OP_STMT fires `TraceEvent`s through the Cranelift JIT path.
+
+    use super::*;
+    use crate::interpreter::{TraceEvent, Value};
+    use std::sync::{Arc, Mutex};
+
+    fn parse_and_compile(src: &str) -> CompiledProgram {
+        let tokens = crate::lexer::lex(src).expect("lex");
+        let token_spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (mut prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        crate::ast::resolve_aliases(&mut prog);
+        prog.source = Some(src.to_string());
+        compile(&prog).expect("compile")
+    }
+
+    /// Smoke test: the JIT trace path fires one event per statement.
+    #[test]
+    fn jit_trace_fires_events() {
+        let src = "f>n;a=1;b=2;+a b";
+        let compiled = parse_and_compile(src);
+
+        let events: Arc<Mutex<Vec<TraceEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        let f_idx = compiled.func_index("f").expect("f not found") as usize;
+        let jit_fn = crate::vm::jit_cranelift::compile(
+            &compiled.chunks[f_idx],
+            &compiled.nan_constants[f_idx],
+            &compiled,
+        )
+        .expect("JIT compile");
+
+        // Install trace hook and source text.
+        use crate::interpreter::{TRACE_HOOK, TRACE_SOURCE};
+        TRACE_HOOK.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move |ev: TraceEvent| {
+                events_clone.lock().unwrap().push(ev);
+            }));
+        });
+        TRACE_SOURCE.with(|s| {
+            *s.borrow_mut() = Some(src.to_string());
+        });
+
+        // Execute via with_active_registry so ACTIVE_PROGRAM is set for the trampoline.
+        let _result = with_active_registry(&compiled, || {
+            crate::vm::jit_cranelift::call(&jit_fn, &[], Some("f"))
+        });
+
+        TRACE_HOOK.with(|h| *h.borrow_mut() = None);
+        TRACE_SOURCE.with(|s| *s.borrow_mut() = None);
+
+        let evs = events.lock().unwrap();
+        // Three statements: a=1, b=2, +a b
+        assert!(
+            !evs.is_empty(),
+            "expected trace events from JIT path, got none"
+        );
+        // The last event should be the result of +a b = 3.0
+        let last = evs.last().unwrap();
+        assert_eq!(last.result, Value::Number(3.0), "last event result mismatch: {evs:?}");
+    }
+
+    /// No-hook path must not panic.
+    #[test]
+    fn jit_trace_no_hook_no_panic() {
+        let src = "f>n;x=10;+x 1";
+        let compiled = parse_and_compile(src);
+        let f_idx = compiled.func_index("f").expect("f") as usize;
+        let jit_fn = crate::vm::jit_cranelift::compile(
+            &compiled.chunks[f_idx],
+            &compiled.nan_constants[f_idx],
+            &compiled,
+        )
+        .expect("JIT compile");
+        let result_bits = with_active_registry(&compiled, || {
+            crate::vm::jit_cranelift::call(&jit_fn, &[], Some("f")).unwrap()
+        });
+        let result = NanVal(result_bits).to_value();
         assert_eq!(result, Value::Number(11.0));
     }
 }

@@ -218,6 +218,8 @@ struct HelperFuncs {
     // Per-thread call-stack tracking for cross-engine error parity.
     push_call_frame: FuncId,
     pop_call_frame: FuncId,
+    // ILO-407: OP_STMT trace trampoline for the JIT path.
+    stmt_trace: FuncId,
 }
 
 /// Pack a `Span { start, end }` into a single i64 immediate for passing to
@@ -438,6 +440,11 @@ fn register_helpers(builder: &mut JITBuilder) {
             "jit_pop_call_frame",
             crate::vm::jit_pop_call_frame as *const u8,
         ),
+        // ILO-407: OP_STMT trace trampoline.
+        (
+            "jit_stmt_trace",
+            crate::vm::jit_stmt_trace as *const u8,
+        ),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -626,6 +633,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         make_closure: declare_helper(module, "jit_make_closure", 3, 1),
         push_call_frame: declare_helper(module, "jit_push_call_frame", 2, 1),
         pop_call_frame: declare_helper(module, "jit_pop_call_frame", 0, 1),
+        // ILO-407: OP_STMT trace trampoline — (result_bits, chunk_idx, debug_idx, span_bits) -> 0
+        stmt_trace: declare_helper(module, "jit_stmt_trace", 4, 1),
     }
 }
 
@@ -927,6 +936,7 @@ fn compile_function_body(
     helpers: &HelperFuncs,
     all_func_ids: &[FuncId],
     program: &CompiledProgram,
+    chunk_idx: usize,
 ) -> Option<()> {
     // Build function signature: (i64, i64, ...) -> i64
     let mut sig = module.make_signature();
@@ -5086,10 +5096,26 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
-            // ILO-343: OP_STMT is a VM-only trace boundary; JIT trace is a
-            // follow-up. Treat it as a no-op so JIT compilation proceeds.
+            // ILO-407: OP_STMT — emit a call to jit_stmt_trace so `ilo trace`
+            // produces output on the JIT path.
+            //
+            // Encoding: A = result register (255 = void/nil), Bx = debug_idx.
+            // The trampoline checks trace_hook_active() internally and is a
+            // fast no-op (single branch) when no hook is installed.
             crate::vm::OP_STMT => {
-                // no-op in JIT codegen
+                let debug_idx = (inst & 0xFFFF) as u64;
+                // Result value: use TAG_NIL when A == 255 (void statement).
+                let result_bits = if a_idx == 255 {
+                    builder.ins().iconst(I64, TAG_NIL as i64)
+                } else {
+                    builder.use_var(vars[a_idx])
+                };
+                let chunk_idx_val = builder.ins().iconst(I64, chunk_idx as i64);
+                let debug_idx_val = builder.ins().iconst(I64, debug_idx as i64);
+                let span_bits = pack_span_bits(chunk.spans.get(ip).copied().unwrap_or(crate::ast::Span::UNKNOWN));
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.stmt_trace);
+                builder.ins().call(fref, &[result_bits, chunk_idx_val, debug_idx_val, span_arg]);
             }
             _ => {
                 // Unknown opcode — bail out
@@ -5168,6 +5194,7 @@ fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFun
             &helpers,
             &func_ids,
             program,
+            i,
         )?;
     }
 

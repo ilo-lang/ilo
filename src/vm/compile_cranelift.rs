@@ -244,6 +244,8 @@ struct HelperFuncs {
     solve: FuncId,
     inv: FuncId,
     det: FuncId,
+    // ILO-407: OP_STMT trace trampoline — (result_bits, chunk_idx, debug_idx, span_bits) -> 0
+    stmt_trace: FuncId,
 }
 
 fn declare_helper(
@@ -449,6 +451,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         solve: declare_helper(module, "jit_solve", 3, 1),
         inv: declare_helper(module, "jit_inv", 2, 1),
         det: declare_helper(module, "jit_det", 2, 1),
+        // ILO-407: OP_STMT trace trampoline
+        stmt_trace: declare_helper(module, "jit_stmt_trace", 4, 1),
     }
 }
 
@@ -655,6 +659,7 @@ pub fn compile_to_binary(
             &helpers,
             Some(&func_ids),
             Some(program),
+            i,
         )?;
     }
 
@@ -1028,6 +1033,7 @@ fn compile_function_body(
     helpers: &HelperFuncs,
     all_func_ids: Option<&[FuncId]>,
     program: Option<&CompiledProgram>,
+    chunk_idx: usize,
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
     for _ in 0..chunk.param_count {
@@ -4426,11 +4432,28 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
-            // ILO-343: OP_STMT is a VM-only trace instruction; JIT trace
-            // is deferred to a follow-up ticket. Emit nothing here so
-            // existing Cranelift tests continue to pass.
+            // ILO-407: OP_STMT — emit a call to jit_stmt_trace so `ilo trace`
+            // produces output on the AOT path.
+            //
+            // Encoding: A = result register (255 = void/nil), Bx = debug_idx.
             crate::vm::OP_STMT => {
-                // no-op in JIT codegen
+                let debug_idx = (inst & 0xFFFF) as u64;
+                let result_bits = if a_idx == 255 {
+                    builder.ins().iconst(I64, TAG_NIL as i64)
+                } else {
+                    builder.use_var(vars[a_idx])
+                };
+                let chunk_idx_val = builder.ins().iconst(I64, chunk_idx as i64);
+                let debug_idx_val = builder.ins().iconst(I64, debug_idx as i64);
+                let span = chunk.spans.get(ip).copied().unwrap_or(crate::ast::Span::UNKNOWN);
+                let span_bits = {
+                    let start = span.start.min(u32::MAX as usize) as u64;
+                    let end = span.end.min(u32::MAX as usize) as u64;
+                    ((start << 32) | end) as i64
+                };
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.stmt_trace);
+                builder.ins().call(fref, &[result_bits, chunk_idx_val, debug_idx_val, span_arg]);
             }
             _ => {
                 return Err(format!("unsupported opcode {} at instruction {}", op, ip));
@@ -4855,6 +4878,7 @@ pub fn compile_to_bench_binary(
             &helpers,
             Some(&func_ids),
             Some(program),
+            i,
         )?;
     }
 
@@ -5259,6 +5283,7 @@ mod tests {
                 &helpers,
                 Some(&func_ids),
                 Some(&compiled),
+                i,
             )?;
         }
 
@@ -6359,6 +6384,7 @@ f a:t b:t>t;join a b"#,
                     &helpers,
                     Some(&func_ids),
                     Some(&compiled),
+                    i,
                 );
                 if result.is_err() {
                     break;
@@ -7014,6 +7040,7 @@ f a:t b:t>t;join a b"#,
             &helpers,
             Some(&all_func_ids),
             None, // <-- program=None exercises lines 911-914
+            f_idx,
         );
         assert!(
             result.is_ok(),
@@ -7079,6 +7106,7 @@ f a:t b:t>t;join a b"#,
             &helpers,
             None, // <-- all_func_ids=None exercises lines 2547-2580
             None,
+            0,
         );
         assert!(
             result.is_ok(),
@@ -7118,6 +7146,7 @@ f a:t b:t>t;join a b"#,
             &helpers,
             None, // <-- all_func_ids=None, zero args → exercises lines 2569-2580
             None,
+            f_idx,
         );
         assert!(
             result.is_ok(),
