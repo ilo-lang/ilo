@@ -852,6 +852,31 @@ mod tests {
     }
 
     #[test]
+<<<<<<< HEAD
+=======
+    fn compile_with_target() {
+        let cli = Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", "wasm32-wasip1"])
+            .unwrap();
+        if let Some(Cmd::Compile(c)) = cli.cmd {
+            assert_eq!(c.target.as_deref(), Some("wasm32-wasip1"));
+        }
+    }
+
+    #[test]
+    fn compile_target_flag_parses_all_supported() {
+        for triple in SUPPORTED_TARGETS {
+            let cli =
+                Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", triple]).unwrap();
+            if let Some(Cmd::Compile(c)) = cli.cmd {
+                assert_eq!(c.target.as_deref(), Some(*triple));
+            } else {
+                panic!("expected Compile for target {triple}");
+            }
+        }
+    }
+
+    #[test]
+>>>>>>> f577f0f6 (ci: align with fleet patches)
     fn graph_with_budget() {
         let cli = Cli::try_parse_from(["ilo", "graph", "f.ilo", "--budget", "100"]).unwrap();
         if let Some(Cmd::Graph(g)) = cli.cmd {
