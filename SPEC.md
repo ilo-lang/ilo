@@ -118,6 +118,31 @@ area s:shape > n
 - **Exhaustiveness**: verifier (ILO-T024) checks all variants are covered; the error lists every missing variant by name and suggests the correct arm syntax (`tag(v): <expr>` for payload variants, `tag: <expr>` for payload-less). A wildcard `_:` arm satisfies exhaustiveness. Missing multiple variants produces a single diagnostic naming all of them.
 - **VM**: programs using discriminated unions fall back to the tree interpreter (JIT codegen deferred).
 
+### Generic discriminated union types (`type Result<a,b> = ok(a) | err(b)`)
+
+Sum type declarations accept type parameters (ILO-402), enabling reusable polymorphic variants.
+
+```
+type result<a,b> = ok(a) | err(b)
+type option<a>   = some(a) | none
+type either<a,b> = left(a) | right(b)
+```
+
+- **Syntax**: `type Name<a b>` or `type Name<a,b>` — one or more single-letter type variables (commas optional).
+- **Type variables**: declared letters (including `n`, `t`, `b`) are treated as type variables in variant payloads, not as primitives.
+- **Erasure**: type variables are erased at runtime — no boxing or specialisation. The verifier accepts any concrete type for a type-variable payload.
+- **Usage**: construct and match exactly like non-generic sum types; the concrete type is inferred from context.
+
+```
+safe-div x:n y:n>result
+  =(y) 0{ret err "division by zero"}
+  ok /x y
+
+main>t
+  dv=safe-div 10 2
+  ?dv{ok(v):str v;err(msg):msg}   -- "5"
+```
+
 ### Map type (`M k v`)
 
 Dynamic key-value collection. Keys are typed: text (`t`) or integer (`n`). `Int(1)` and `Text("1")` are distinct keys.

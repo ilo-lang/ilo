@@ -4231,7 +4231,13 @@ impl VerifyContext {
 
         // Collect sum type declarations and register variant constructors as functions.
         for decl in &program.declarations {
-            if let Decl::SumType { name, variants, .. } = decl {
+            if let Decl::SumType {
+                name,
+                type_params,
+                variants,
+                ..
+            } = decl
+            {
                 if self.sum_types.contains_key(name)
                     || self.types.contains_key(name)
                     || self.aliases.contains_key(name)
@@ -4246,34 +4252,45 @@ impl VerifyContext {
                     continue;
                 }
                 self.sum_types.insert(name.clone(), variants.clone());
+                // Build a temporary alias map treating declared type params as Unknown,
+                // so `type Result<a,b> = ok(a) | err(b)` treats `a` and `b` as type variables
+                // even when they would otherwise be reserved (e.g. `b` = bool).
+                let mut type_var_aliases = self.aliases.clone();
+                for (var_name, _) in type_params.iter() {
+                    type_var_aliases.insert(var_name.clone(), Ty::Unknown);
+                }
                 // Register each variant constructor as a callable function.
                 // Payload-less variant: 0 params, returns Named(type_name).
                 // Payload variant:      1 param of the payload type, returns Named(type_name).
                 for v in variants {
+                    let original_payload: Vec<crate::ast::Type> = match &v.payload {
+                        Some(ty) => vec![ty.clone()],
+                        None => vec![],
+                    };
                     let vfn_params = match &v.payload {
                         Some(ty) => vec![(
                             "payload".to_string(),
-                            convert_type_with_aliases(ty, &self.aliases),
+                            convert_type_with_aliases(ty, &type_var_aliases),
                         )],
                         None => vec![],
                     };
                     let vfn_ret = Ty::Named(name.clone());
                     // Variant constructors shadow nothing important and are not user fns.
                     self.variant_constructors.insert(v.name.clone());
-                    let original_params: Vec<crate::ast::Type> = v
+                    let _original_params: Vec<crate::ast::Type> = v
                         .payload
                         .as_ref()
                         .map(|t| vec![t.clone()])
                         .unwrap_or_default();
-                    let original_return = crate::ast::Type::Named(name.clone());
+                    let _original_return = crate::ast::Type::Named(name.clone());
                     self.functions.insert(
                         v.name.clone(),
                         FuncSig {
                             params: vfn_params,
                             return_type: vfn_ret,
-                            original_params,
-                            original_return,
-                            type_bounds: std::collections::HashMap::new(),
+                            original_params: original_payload,
+                            original_return: crate::ast::Type::Named(name.clone()),
+                            type_bounds: type_params.iter().cloned().collect(),
                         },
                     );
                 }
@@ -11387,6 +11404,87 @@ mod tests {
         assert!(
             parse_and_verify("f x:n>n;?=x 0(todo \"zero case\")(+x 1)").is_ok(),
             "todo in ternary branch should typecheck"
+        );
+    }
+
+    // ── ILO-402: Generic sum types ────────────────────────────────────────────
+
+    /// `type either<a,b> = left(a) | right(b)` parses and verifies cleanly.
+    #[test]
+    fn generic_sum_type_either_parses() {
+        assert!(
+            parse_and_verify(
+                "type either<a,b> = left(a) | right(b)\n\
+             wrap-n x:n>either;left x\n\
+             wrap-t x:t>either;right x\n\
+             main>n;v=wrap-n 42;?v{left(x):x;right(x):0}"
+            )
+            .is_ok()
+        );
+    }
+
+    /// `type result<a,b> = ok(a) | err(b)` — `b` is a declared type var, not bool.
+    #[test]
+    fn generic_sum_type_result_b_is_type_var() {
+        assert!(
+            parse_and_verify(
+                "type result<a,b> = ok(a) | err(b)\n\
+             safe-div x:n y:n>result\n  =(y) 0{ret err \"div by zero\"}\n  ok /x y\n\
+             main>n;dv=safe-div 10 2;?dv{ok(v):v;err(msg):0}"
+            )
+            .is_ok()
+        );
+    }
+
+    /// Single type param: `type option<a> = some(a) | none`.
+    #[test]
+    fn generic_sum_type_single_param() {
+        assert!(
+            parse_and_verify(
+                "type option<a> = some(a) | none\n\
+             wrap x:n>option;some x\n\
+             main>n;v=wrap 5;?v{some(x):x;none:0}"
+            )
+            .is_ok()
+        );
+    }
+
+    /// Type param `a` used with payload of type `n`.
+    #[test]
+    fn generic_sum_type_payload_number() {
+        assert!(
+            parse_and_verify(
+                "type box<a> = box(a)\n\
+             pack x:n>box;box x\n\
+             main>n;v=pack 7;?v{box(x):x}"
+            )
+            .is_ok()
+        );
+    }
+
+    /// Type param `a` used with payload of type `t`.
+    #[test]
+    fn generic_sum_type_payload_text() {
+        assert!(
+            parse_and_verify(
+                "type box<a> = box(a)\n\
+             pack x:t>box;box x\n\
+             main>t;v=pack \"hi\";?v{box(x):x}"
+            )
+            .is_ok()
+        );
+    }
+
+    /// Non-generic sum type is unaffected (regression guard).
+    #[test]
+    fn generic_sum_type_non_generic_still_works() {
+        assert!(
+            parse_and_verify(
+                "type color = red | green | blue\n\
+             pick c:color>t;?c{red:\"r\";green:\"g\";blue:\"b\"}\n\
+             main>t;pick red"
+            )
+            .is_ok()
         );
     }
 }

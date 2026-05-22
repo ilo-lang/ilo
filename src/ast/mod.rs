@@ -238,8 +238,13 @@ pub enum Decl {
     },
 
     /// `type Name = Circle(n) | Square(n) | red` — named discriminated union
+    /// `type Result<a,b> = ok(a) | err(b)` — generic discriminated union
     SumType {
         name: String,
+        /// Generic type-variable declarations: `<a b>` or `<a,b>`.
+        /// Empty means non-generic (legacy behaviour).
+        #[serde(skip)]
+        type_params: Vec<(String, Bound)>,
         variants: Vec<Variant>,
         #[serde(skip)]
         span: Span,
