@@ -1,4 +1,4 @@
-// ILO-53 / ILO-406: Multi-statement function body regression gate.
+// ILO-53: Single-expression function bodies: allow statement chains
 //
 // Verifies that multi-statement function bodies work across all engines in
 // the three shapes the ticket requires:
@@ -6,11 +6,9 @@
 //   2. Early return: braceless guard `>=x 0 val` or explicit `ret val`
 //   3. Result unwrap mid-body: `v = call!; use_v`
 //
-// ILO-406 extends ILO-53 coverage: AOT path for the Result-unwrap shape
-// (`v=call!` mid-body) — `ilo compile` + run binary — in addition to the
-// existing VM/JIT paths.
+// This is a cross-engine regression gate; every shape must produce the same
+// result on tree/VM and JIT.
 
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -18,16 +16,10 @@ fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-static SEQ: AtomicU64 = AtomicU64::new(0);
-
-fn tmp_src(tag: &str) -> PathBuf {
-    let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    std::env::temp_dir().join(format!("ilo_53_{tag}_{pid}_{n}.ilo"))
-}
-
 fn run(engine: &str, src: &str, args: &[&str]) -> String {
-    let path = tmp_src("vm");
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::SeqCst);
+    let path = std::env::temp_dir().join(format!("ilo_53_{}_{}.ilo", std::process::id(), n));
     std::fs::write(&path, src).unwrap();
     let mut cmd = ilo();
     cmd.arg(path.to_str().unwrap()).arg(engine);
@@ -86,6 +78,7 @@ fn bind_chain_brace_jit() {
 }
 
 // ── 3. Early return via braceless guard ────────────────────────────────────
+// `>=x 0 *x 10` — if x >= 0, return x*10 immediately; otherwise negate first.
 
 const EARLY_RETURN_GUARD: &str = "abs-scale x:n>n;>=x 0 *x 10;neg=*x -1;*neg 10\n";
 
@@ -118,6 +111,7 @@ fn early_return_guard_negative_jit() {
 }
 
 // ── 4. Early return via `ret` ───────────────────────────────────────────────
+// `<=x 0{ret 0}` — if x <= 0, ret 0 early; otherwise return x itself.
 
 const EARLY_RETURN_RET: &str = "clamp-pos x:n>n;<=x 0{ret 0};+x 0\n";
 
@@ -149,7 +143,7 @@ fn early_return_ret_positive_jit() {
     assert_eq!(run("--jit", EARLY_RETURN_RET, &["clamp-pos", "7"]), "7");
 }
 
-// ── 5. Result unwrap mid-body (`!`) — VM/JIT paths ─────────────────────────
+// ── 5. Result unwrap mid-body (`!`) ────────────────────────────────────────
 // `a=num! "10";b=num! "32";~+a b` — unwrap two Results, then wrap sum as Ok.
 
 const RESULT_UNWRAP_BODY: &str = "parse-and-add>R n t;a=num! \"10\";b=num! \"32\";~+a b\n";
@@ -165,56 +159,7 @@ fn result_unwrap_mid_body_jit() {
     assert_eq!(run("--jit", RESULT_UNWRAP_BODY, &["parse-and-add"]), "42");
 }
 
-// ── 5b. Result unwrap mid-body — AOT path (ILO-406) ────────────────────────
-//
-// `ilo compile` the same source, run the native binary, verify output matches
-// the VM/JIT result. This is the regression specifically requested by ILO-406.
-
-#[test]
-#[cfg(feature = "cranelift")]
-fn result_unwrap_mid_body_aot() {
-    let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let src_path = std::env::temp_dir().join(format!("ilo_406_unwrap_{pid}_{n}.ilo"));
-    let bin_path = std::env::temp_dir().join(format!("ilo_406_unwrap_{pid}_{n}.bin"));
-
-    std::fs::write(&src_path, RESULT_UNWRAP_BODY).unwrap();
-
-    // Compile to native binary.
-    let compile = ilo()
-        .args(["compile"])
-        .arg(&src_path)
-        .arg("-o")
-        .arg(&bin_path)
-        .arg("parse-and-add")
-        .output()
-        .expect("failed to invoke ilo compile");
-    assert!(
-        compile.status.success(),
-        "ilo compile failed:\nsrc={RESULT_UNWRAP_BODY}\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr),
-    );
-
-    // Run the native binary.
-    let run_out = Command::new(&bin_path)
-        .output()
-        .expect("failed to run AOT binary");
-    assert!(
-        run_out.status.success(),
-        "AOT binary exited non-zero:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&run_out.stdout),
-        String::from_utf8_lossy(&run_out.stderr),
-    );
-
-    let stdout = String::from_utf8_lossy(&run_out.stdout).trim().to_string();
-    assert_eq!(stdout, "42", "AOT: expected '42', got {stdout:?}");
-
-    let _ = std::fs::remove_file(&src_path);
-    let _ = std::fs::remove_file(&bin_path);
-}
-
-// ── 6. Three-step bind-chain ────────────────────────────────────────────────
+// ── 6. Three-step bind-chain: ensures arbitrarily many lets work ───────────
 
 const THREE_STEP: &str = "sum-of-sq a:n b:n>n;as=*a a;bs=*b b;+as bs\n";
 

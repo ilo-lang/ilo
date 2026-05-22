@@ -38,9 +38,25 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
 - Labelled args (ILO-71): `dtfmt epoch:e fmt:"%Y"` — optional `label:value` form for any callable with declared parameter names. Labels resolve to positional by name; order is free. Mixed positional + labelled is allowed (positional fill from left; labels fill remaining slots by name). Unknown or duplicate labels surface `ILO-P019` at parse time. Works in both postfix and paren form: `f(b:2, a:1)` ≡ `f a:1 b:2`.
 
+**Two body forms — both fully supported:**
+
+```
+-- Inline: semicolons separate statements; last expression returns.
+add-and-double x:n y:n>n;s=+x y;*s 2
+
+-- Brace-block: explicit braces wrap the whole body (same semantics).
+add-and-double x:n y:n>n { s = +x y; *s 2 }
+```
+
+Multi-step transforms bind intermediate results as locals:
+
 ```
 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 ```
+
+Early return: braceless guard (`>=x 0 val` exits the function immediately when true); `ret val` exits from any depth including inside a loop or braced conditional.
+
+Result unwrap mid-body: `v=call!` extracts the Ok value and propagates Err out of the function before continuing.
 
 ---
 
