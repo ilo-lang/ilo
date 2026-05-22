@@ -837,9 +837,8 @@ mod tests {
 
     #[test]
     fn compile_with_target() {
-        let cli =
-            Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", "wasm32-wasip1"])
-                .unwrap();
+        let cli = Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", "wasm32-wasip1"])
+            .unwrap();
         if let Some(Cmd::Compile(c)) = cli.cmd {
             assert_eq!(c.target.as_deref(), Some("wasm32-wasip1"));
         }
