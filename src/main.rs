@@ -3312,6 +3312,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: args[m + 1..].to_vec(),
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3335,6 +3336,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3363,6 +3365,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3386,6 +3389,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3409,6 +3413,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3444,6 +3449,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         allow_read: None,
         allow_write: None,
         allow_run: None,
+        allow_env: None,
         rest,
     };
     dispatch_run(run_args, mode, explicit_json, no_hints, silent)
@@ -3659,7 +3665,8 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
     let any = r.allow_net.is_some()
         || r.allow_read.is_some()
         || r.allow_write.is_some()
-        || r.allow_run.is_some();
+        || r.allow_run.is_some()
+        || r.allow_env.is_some();
     if !any {
         return Arc::new(Caps::Permissive);
     }
@@ -3681,6 +3688,11 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
             .unwrap_or(Policy::All),
         run: r
             .allow_run
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+        env: r
+            .allow_env
             .as_deref()
             .map(Caps::parse_allow)
             .unwrap_or(Policy::All),
@@ -9589,6 +9601,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9617,6 +9630,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9649,6 +9663,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9678,6 +9693,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = false → hints emitted (to stderr, so just verify no panic)
@@ -9705,6 +9721,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = true → hints suppressed
@@ -9734,6 +9751,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9763,6 +9781,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -10267,6 +10286,104 @@ mod tests {
             ],
             &global,
         );
+        assert_eq!(code, 0);
+    }
+
+    // ── --allow-env ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn allow_env_permissive_mode_reads_path() {
+        // No --allow-env flag → permissive mode → env reads succeed.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: None,
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn allow_env_empty_list_blocks_reads() {
+        // --allow-env= (empty) → restricted mode → env returns Err value.
+        // The function signature is R t t; returning an Err is valid — the
+        // runner exits 1 only because the top-level result is Err, which is
+        // ilo's standard non-zero exit convention for unhandled Err results.
+        // The key assertion is that it doesn't panic and the message is printed.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: Some(String::new()),
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        // Exits 1 because the top-level Err value is ilo's non-zero exit convention,
+        // NOT because the program crashed — it correctly returned the blocked Err.
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn allow_env_specific_var_allowed() {
+        // --allow-env=PATH → PATH read succeeds.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: Some("PATH".to_string()),
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
     }
 }

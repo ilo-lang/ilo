@@ -88,6 +88,7 @@ fn allow_net_empty_blocks_get() {
         read: Policy::All,
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = "f>R t t;get \"https://example.com\"";
     let (tree, vm_val) = run_both(src, caps);
@@ -115,6 +116,7 @@ fn allow_net_empty_blocks_get_vm_message() {
         read: Policy::All,
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = "f>R t t;get \"https://example.com\"";
     let program = make_program(src);
@@ -136,6 +138,7 @@ fn allow_net_blocks_non_allowlisted_host() {
         read: Policy::All,
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = "f>R t t;get \"https://evil.example\"";
     let (tree, vm_val) = run_both(src, caps);
@@ -159,6 +162,7 @@ fn allow_read_blocks_outside_prefix() {
         read: Policy::List(vec!["/tmp".to_owned()]),
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = "f>R t t;rd \"/etc/passwd\"";
     let (tree, vm_val) = run_both(src, caps);
@@ -190,6 +194,7 @@ fn allow_read_permits_inside_prefix() {
         read: Policy::List(vec!["/tmp".to_owned()]),
         write: Policy::All,
         run: Policy::All,
+        env: Policy::All,
     };
     let src = format!("f>R t t;rd \"{path}\"");
     let (tree, vm_val) = run_both(&src, caps);
@@ -213,6 +218,7 @@ fn allow_write_blocks_outside_prefix() {
         read: Policy::All,
         write: Policy::List(vec!["/tmp/ilo_allowed".to_owned()]),
         run: Policy::All,
+        env: Policy::All,
     };
     let src = "f>R t t;wr \"/etc/evil.txt\" \"data\"";
     let (tree, vm_val) = run_both(src, caps);
@@ -244,6 +250,7 @@ fn allow_run_empty_blocks_run() {
         read: Policy::All,
         write: Policy::All,
         run: Policy::List(vec![]),
+        env: Policy::All,
     };
     let src = "f>R (M t t) t;run \"echo\" [\"hello\"]";
     // Only test via tree interpreter (run goes through tree-bridge in VM).
@@ -272,6 +279,7 @@ fn allow_run_permits_allowlisted_cmd() {
         read: Policy::All,
         write: Policy::All,
         run: Policy::List(vec!["echo".to_owned()]),
+        env: Policy::All,
     };
     let src = "f>R (M t t) t;run \"echo\" [\"hello\"]";
     let program = make_program(src);
@@ -342,6 +350,7 @@ fn one_flag_restricts_only_that_dimension() {
         read: Policy::All,         // read unrestricted
         write: Policy::All,        // write unrestricted
         run: Policy::All,          // run unrestricted
+        env: Policy::All,          // env unrestricted
     };
     assert!(
         caps.check_net("https://any.host").is_err(),
