@@ -1,0 +1,30 @@
+-- mget-or m k default: value at key k, or default if missing.
+--
+-- Unlike `mget m k ?? default`, which returns `O v` and requires the
+-- nil-coalesce operator, `mget-or` returns the value type directly — no
+-- `??` ceremony, no optional wrapper. The default type must match the map
+-- value type (enforced at verify time).
+
+-- Key present — returns the stored value, not the default.
+hit>n;m=mset mmap "alice" 99;mget-or m "alice" 0
+
+-- Key absent — returns the caller-supplied default.
+miss>n;m=mset mmap "alice" 99;mget-or m "carol" 0
+
+-- Text-valued map: absent key falls back to a text default.
+label>t;m=mset mmap "x" "found";mget-or m "y" "unknown"
+
+-- Numeric key map: integer key lookup with default.
+bynum>t;idx=mset mmap 7 "seven";mget-or idx 7 "none"
+bynum-miss>t;idx=mset mmap 7 "seven";mget-or idx 8 "none"
+
+-- run: hit
+-- out: 99
+-- run: miss
+-- out: 0
+-- run: label
+-- out: unknown
+-- run: bynum
+-- out: seven
+-- run: bynum-miss
+-- out: none
