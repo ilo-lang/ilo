@@ -32,6 +32,10 @@ pub enum Token {
     #[token("S")]
     SumType,
 
+    // Step keyword for range loops: `@i 0..n by 2{...}`
+    #[token("by")]
+    By,
+
     // Reserved keywords from other languages — not valid in ilo, emit friendly errors
     #[token("if")]
     KwIf,
@@ -69,6 +73,11 @@ pub enum Token {
     PipeOp,
     #[token("??")]
     NilCoalesce,
+    /// `<-` — use-chain bind operator. `x <- expr ; rest` desugars to
+    /// `?expr{~x: rest; ^e: ^e}`, flattening multi-step R-T-E chains.
+    /// Must precede the single-char `<` token so logos picks the longer match.
+    #[token("<-")]
+    ArrowLeft,
     // `!!` panic-unwrap. Must precede single-char `!` so logos picks the
     // longer match. Symmetric with `!` over R / O, but on Err / nil aborts
     // with diagnostic + exit 1 instead of propagating to the enclosing fn.
@@ -205,6 +214,9 @@ impl Token {
     /// `TokenKind` variant name (`Greater`, `PipeOp`, `LBrace` ...).
     pub fn user_facing_name(&self) -> String {
         match self {
+            // Step keyword
+            Token::By => "`by`".into(),
+
             // Keywords
             Token::Type => "`type`".into(),
             Token::Tool => "`tool`".into(),
@@ -242,6 +254,7 @@ impl Token {
             Token::PlusEq => "`+=`".into(),
             Token::PipeOp => "`>>`".into(),
             Token::NilCoalesce => "`??`".into(),
+            Token::ArrowLeft => "`<-`".into(),
             Token::BangBang => "`!!`".into(),
 
             // Single-char operators

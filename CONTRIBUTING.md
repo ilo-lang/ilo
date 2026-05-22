@@ -84,6 +84,54 @@ Key source files:
 
 See [SPEC.md](SPEC.md) for the full language specification. Changes to language syntax or semantics should update the spec.
 
+## Golden-file diagnostics
+
+ilo pins the JSON shape of its diagnostic output with golden snapshot files
+stored under `conformance/diagnostics/`. When you change a diagnostic message,
+add a `phase` field, or add a new error code, CI will fail on a diff unless
+you also update the matching snapshot.
+
+### Running the golden tests
+
+```
+cargo test --features golden
+```
+
+### Updating (blessing) snapshots
+
+If you intentionally changed a diagnostic's JSON shape, re-bless the affected
+golden files:
+
+```
+cargo test --features golden -- --bless
+```
+
+This rewrites every `conformance/diagnostics/<CODE>.expected.json` whose
+content has changed. Review the diff with `git diff conformance/` before
+committing — the snapshot is part of the stability contract.
+
+You can also bless a single code by running the specific test:
+
+```
+ILO_GOLDEN_BLESS=1 cargo test --features golden golden_ilo_t004
+```
+
+### Adding a new error code
+
+1. Add the entry to `src/diagnostic/registry.rs` with a `phase` field set to
+   the correct `Phase::*` variant.
+2. Run `cargo test --features golden -- --bless` to generate the initial
+   golden file.
+3. Commit both the registry change and the new `.expected.json` file.
+
+### Provenance surface
+
+`conformance/provenance-surface.json` maps every language feature to the
+compiler function that owns it and the fixture that exercises it. When you add
+a new feature or move code to a different function, update this file to keep
+the map accurate. The `provenance_surface_is_valid` golden test will catch
+structural problems.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).

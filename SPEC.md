@@ -190,6 +190,8 @@ run_d              -- ERROR (underscore not allowed in bindings)
 
 `runD` in the interactive CLI surfaces as `ILO-L003 unexpected token` with a suggestion to use `run-d` or `rund`. The constraint is intentional: a single lexical shape per identifier keeps the token stream predictable for agents and avoids style debates over camelCase vs snake_case vs kebab-case.
 
+**Hyphen vs subtraction.** A hyphen with no surrounding whitespace is always part of an identifier — `best-d` is one token, never `best - d`. Subtraction requires whitespace on at least the operator side: `- best d` (prefix form) or `best - d` (infix form). When an unbound kebab ident has every segment bound, `ILO-T004` adds a hint pointing at the prefix form. When an unbound kebab ident splits uniquely into two bound names (e.g. `zr-sq-zi-sq` → `zr-sq` and `zi-sq`), the hint shows both the prefix form (`- zr-sq zi-sq`) and the infix-with-spaces form (`zr-sq - zi-sq`).
+
 The only place capital letters and underscores are accepted is **after `.` or `.?`** at field-access position, so heterogeneous JSON keys from real APIs work without rewriting. See [Field names at dot-access](#field-names-at-dot-access) for the full list of post-dot relaxations (`r.URL`, `r.AccessKey`, `r.user_name`, etc.). Binding names (`AccessKey = ...`) and function names (`AccessKey x:n>n;...`) still error.
 
 ### Reserved words
@@ -229,7 +231,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
         flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
         mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
-        run sin slc spl srt str sum tan tau trm unq upr wra wrl zip
+        run sin slc spl srt str sum tan tau trm unq upr wra wrl wro zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
@@ -627,6 +629,8 @@ Called like functions, compiled to dedicated opcodes.
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `sha256-hex h` | SHA-256 of hex-decoded bytes of `h`, lowercase hex (64 chars). Errors (ILO-R009) on odd-length or non-hex input. Use for raw-binary hashing (wire formats, key material, Bitcoin scripts). | `t` |
+| `sha256d h` | double-SHA256 of hex-decoded bytes (`sha256(sha256(h))`), lowercase hex. Bitcoin Merkle protocol shape. Errors (ILO-R009) on odd-length or non-hex input. | `t` |
 | `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
 | `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
@@ -656,7 +660,8 @@ Called like functions, compiled to dedicated opcodes.
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
 | `wr path data "json"` | write any value as pretty JSON | `R t t` |
-| `wra path s` | append text to file (create if missing) | `R t t` |
+| `wra path s` | append text to file (create if missing); see also `wro` for overwrite | `R t t` |
+| `wro path s` | truncate file at path and write s (create if missing); see also `wra` for append | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
@@ -1163,9 +1168,13 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 
 ### Crypto primitives
 
-`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+`sha256`, `sha256-hex`, `sha256d`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, Bitcoin Merkle tree computation, and any time a secret is compared to a known value. All are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
 
 `sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`sha256-hex h > t` decodes `h` as a hex string and returns the SHA-256 digest of the raw bytes as lowercase hex (64 chars). Use when you need to hash binary data that is represented in hex — wire format keys, Bitcoin script pushdata, arbitrary byte sequences. Errors (ILO-R009) on odd-length or non-hex input. For ASCII input, `sha256-hex (hex s)` agrees with `sha256 s`.
+
+`sha256d h > t` applies double-SHA256 (`sha256(sha256(h))`) over the hex-decoded bytes of `h`, returning lowercase hex. This is the Bitcoin Merkle tree protocol shape: pairs of 32-byte txids are concatenated and double-hashed to produce each parent node. Errors (ILO-R009) on odd-length or non-hex input. `sha256d h` is exactly `sha256-hex (sha256-hex h)` but provided as a named builtin because the double-hash pattern is idiomatic in crypto protocols and the composition is easy to transpose incorrectly.
 
 `hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
 
@@ -1189,9 +1198,15 @@ b64-dec! "TWE="                          -- "Ma"
 
 -- Hex encode
 hex "abc"                                -- "616263"
+
+-- Raw-bytes SHA-256 (same result as sha256 for ASCII input)
+sha256-hex "616263"                      -- ba7816...15ad (= sha256 "abc")
+
+-- Bitcoin Merkle root of two txids (internal byte order, concatenated)
+sha256d (+ tx1 tx2)                      -- double-SHA256 of the 64-byte pair
 ```
 
-`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; `sha256-hex` and `sha256d` raise ILO-R009 on invalid hex; the remaining encoders and `ct-eq` are total.
 
 ---
 
@@ -1720,28 +1735,46 @@ find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;
 Split programs across files with `use`:
 
 ```
-use "path/to/file.@"           -- import all declarations
-use "path/to/file.@" [name1 name2]  -- import only named declarations
+use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
+use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
 ```
 
-All imported declarations merge into a flat shared namespace - no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+**Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
+
+**Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
+
+**Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
 
 ```
--- math.@
+-- math-lib.ilo
+_internal-helper n:n>n; +n 0   -- private — excluded from alias imports
 dbl n:n>n; *n 2
 half n:n>n; /n 2
 
--- main.@
-use "math.@"
-run n:n>n; dbl! half n
+-- main.ilo
+use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
+use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
+run n:n>n; m-dbl! half n
 ```
+
+### Module privacy
+
+Declarations whose name starts with `_` (underscore, immediately adjacent, e.g. `_helper`) are module-private:
+
+- **Excluded** from named-module imports (`use alias:"path"`) — not prefixed and not available to the importer.
+- **Blocked** in selective imports (`use "path" [_name]`) — requesting a private name is ILO-P019.
+- **Visible** in flat imports (`use "path"`) — they merge into the shared namespace as a convention; the importer can call them, but they are not considered part of the public API.
+
+Declaring a private function: `_helper-name params:type > return-type; body`
 
 ### Rules
 
 - Path is relative to the importing file's directory
 - Transitive: if `a.@` uses `b.@`, `b.@`'s declarations are visible to `main.@` when it uses `a.@`
 - Circular imports are an error (`ILO-P018`)
-- Scoped import with unknown name: `ILO-P019`
+- Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
 ### Error codes
@@ -1855,6 +1888,8 @@ ilo guarantees that **tail calls do not consume host-stack frames**. A function 
 The manifesto's "Constrained" rule (every feature must pay for itself in tokens) vetoed adding a `loop` keyword. Instead, tail-recursive accumulator patterns are the canonical idiom for iteration beyond what `@` foreach covers, and the TCO guarantee makes them safe at any depth.
 
 A call is in **tail position** when its return value is the function's return value: the last statement of the body, the expression of a `ret` statement, an arm of a tail-position `?` match, or the body of a braceless guard. Calls inside `@` foreach, `@` range, `wh` loops, or as operands of further computation are NOT in tail position.
+
+> **Recursive self-call discarded at non-tail position fires `ILO-T043`.** When a function calls itself before another statement runs, the recursive return is silently dropped — every call falls through to the later statements. The verifier emits `ILO-T043` with a hint pointing at the tail-position fix (move the recursive call to the body's last statement, wrap it in `ret`, or restructure via `?h cond then else`). The warning is narrowly scoped to self-calls (caller name == callee name); bare non-recursive user-fn calls at non-tail position may be side-effecting and do not warn. Surfaced 2026-05-21 by the interp1d persona: see `examples/recursive-tail-position.ilo` for the canonical fix shape.
 
 ```
 -- Tail-recursive countdown — runs to arbitrary depth.
@@ -2073,10 +2108,11 @@ Builtin alias hints appear at most once per program (the first long-form name fo
 ilo 'code' [args...]            -- inline program; default-runs the entry function
 ilo program.@ [func] [args]     -- if `func` is omitted and the file declares exactly
                                    one function, that function runs automatically
-ilo run program.@ [func] [a]    -- verb form; same dispatch as the bare positional
-ilo check program.@ [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
-ilo build program.@ -o out      -- AOT compile to a standalone binary (alias for `compile`)
-ilo program.@ --ast              -- print parsed AST as JSON and exit
+ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positional
+ilo check program.ilo [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
+ilo test [path] [--engine vm|jit|all]  -- run `-- run:` / `-- out:` / `-- err:` assertions in .ilo files (exit 0 on all-pass, 1 on any failure)
+ilo build program.ilo -o out     -- AOT compile to a standalone binary (alias for `compile`)
+ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
 ilo serv                          -- long-lived JSON request/response loop
@@ -2084,13 +2120,21 @@ ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; prote
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
 ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
+ilo run --allow-net[=HOSTS] <file>   -- restrict outbound net to comma-separated hosts (* = all, empty = none)
+ilo run --allow-read[=PATHS] <file>  -- restrict file reads to comma-separated path prefixes
+ilo run --allow-write[=PATHS] <file> -- restrict file writes to comma-separated path prefixes
+ilo run --allow-run[=CMDS] <file>    -- restrict subprocess spawning to comma-separated command names
 ```
+
+**Capability flags (`ILO-CAP-001`).** `ilo run --allow-net=HOSTS --allow-read=PATHS --allow-write=PATHS --allow-run=CMDS` gates IO builtins at the process level. Any `--allow-*` flag present switches the runtime from **permissive** (default — no restrictions, full backwards compatibility) to **restricted** (only listed targets are permitted). Denial returns a normal `R` Err value with code `ILO-CAP-001`; programs can pattern-match it. Capability matrix: `get`/`post`/`put`/`patch`/`del`/`fetch` → `--allow-net`; `rd`/`rd-lines`/`ls`/`lsr` → `--allow-read`; `wr`/`wr-lines`/`wr-app` → `--allow-write`; `run`/`run2` → `--allow-run`. Value syntax: omit = unrestricted; `*` = all permitted; empty (`--allow-net=`) = all blocked; comma list = only those targets. Matching: net = hostname extracted from URL, exact or `*.domain` wildcard; read/write = path-prefix with separator boundary; run = basename or full-path match. See `SANDBOX.md` for the operator guide and `examples/capability-sandbox.ilo` for a runnable demo.
 
 **Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards were installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
 **Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` - same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.
 
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
+
+**`ilo test`.** Runs the `-- run: <fn> <args>` / `-- out: <expected>` (or `-- err: <stderr>`) annotations embedded in `.ilo` source files - the same format the in-tree `tests/examples_engines.rs` integration harness already uses. A file path tests that one file; a directory walks `*.ilo` recursively. Each case runs as a subprocess (`ilo <file> --vm <args>`), output is asserted against the expected payload, and the result prints as `PASS  path::fn (line N)` / `FAIL  path::fn (line N) (got: X, want: Y)`. The final line reports `N passed, M failed`. Exit 0 if everything passed, 1 if any case failed or no annotations were found. The default engine is `--vm`; pass `--engine jit` or `--engine all` to widen the matrix. Per-file `-- engine-skip: vm jit` annotations skip the listed engines, matching the integration harness. Because every example under `examples/` uses this annotation format already, `ilo test examples/` doubles as a smoke test for the language itself and as a worked reference an agent can read when writing tests for its own programs.
 
 **`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 

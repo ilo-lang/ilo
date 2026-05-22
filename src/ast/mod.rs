@@ -135,12 +135,18 @@ pub enum Decl {
 
     /// `use "path/to/file.ilo"` — import all declarations from another file.
     /// `use "path/to/file.ilo" [name1 name2]` — import only named declarations.
+    /// `use alias:"path/to/file.ilo"` — import all public declarations, prefixed
+    ///   with `alias-` (e.g. `math-dbl`, `math-half`). Private (`_`-prefixed)
+    ///   symbols are always excluded from named-module imports.
     /// Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
         path: String,
         /// `None` = import all; `Some(names)` = import only those names.
         only: Option<Vec<String>>,
+        /// Named module alias: `use alias:"path"` sets this to `Some("alias")`.
+        /// When set, imported public symbols are renamed `alias-<name>`.
+        alias: Option<String>,
         #[serde(skip)]
         span: Span,
     },
@@ -187,11 +193,13 @@ pub enum Stmt {
         body: Vec<Spanned<Stmt>>,
     },
 
-    /// `@binding start..end{body}` — range iteration
+    /// `@binding start..end{body}` or `@binding start..end by step{body}` — range iteration
     ForRange {
         binding: String,
         start: Expr,
         end: Expr,
+        /// Optional step size (`by <expr>`). `None` means step of 1.
+        step: Option<Expr>,
         body: Vec<Spanned<Stmt>>,
     },
 
@@ -339,6 +347,13 @@ pub enum Expr {
         fields: Vec<(String, Expr)>,
     },
 
+    /// Anonymous record literal: `{field:val field:val}` — no typename required.
+    /// Type checker synthesises a structural type; runtime uses `"__anon"` as the
+    /// Value::Record type_name since engines only care about field names.
+    AnonRecord {
+        fields: Vec<(String, Expr)>,
+    },
+
     /// Match expression: `?expr{arms}` or `?{arms}` used as value
     Match {
         subject: Option<Box<Expr>>,
@@ -480,6 +495,16 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     // compat. Costs 1 extra char vs `rnd`, accepted for trap-avoidance.
     ("rand", "rnd"),
     ("random", "rnd"),
+    // `rand` is the universal short-form for random across C, Python (`random.random`
+    // shortened in muscle memory), Rust (`rand` crate), Go (`math/rand`), JS
+    // (`Math.random`), etc. Aliasing to canonical `rnd` cuts the round-vs-random
+    // confusion event-trace-analyser rerun11 surfaced: agents read `rnd` as
+    // "round" (drop-vowels of `round`) and reach for it when they want rounding.
+    // With `rand` available, the unambiguous choice for random is `rand` and
+    // for rounding is `rou`/`round`; `rnd` stays as the canonical for backward
+    // compat. Costs 1 extra char vs `rnd`, accepted for trap-avoidance.
+    ("rand", "rnd"),
+    ("random", "rnd"),
     // `rng` is a short-form alias for the canonical `range` builtin. Personas
     // working in numeric / simulation / regression code reach for it first
     // because `range a b` is load-bearing and the 5-char hit is paid
@@ -526,6 +551,18 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("readbuf", "rdb"),
     ("write", "wr"),
     ("writelines", "wrl"),
+    // Map ops — long-form hyphen aliases for the canonical short names.
+    // ilo identifiers use hyphens, not underscores, so only hyphen forms
+    // are valid surface syntax.
+    ("map-get", "mget"),
+    ("map-set", "mset"),
+    ("map-has", "mhas"),
+    ("map-del", "mdel"),
+    // Alias-of-alias: map-keys / map-values resolve to the canonical
+    // short forms `mkeys` / `mvals` directly (no two-hop needed since
+    // resolve_alias is a single table lookup).
+    ("map-keys", "mkeys"),
+    ("map-values", "mvals"),
 ];
 
 /// If `name` is a long-form alias, return the canonical short form.
@@ -593,10 +630,17 @@ fn resolve_aliases_stmt(stmt: &mut Stmt) {
             }
         }
         Stmt::ForRange {
-            start, end, body, ..
+            start,
+            end,
+            step,
+            body,
+            ..
         } => {
             resolve_aliases_expr(start);
             resolve_aliases_expr(end);
+            if let Some(s) = step {
+                resolve_aliases_expr(s);
+            }
             for s in body {
                 resolve_aliases_stmt(&mut s.node);
             }
@@ -650,7 +694,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(item);
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
             for (_, val) in fields {
                 resolve_aliases_expr(val);
             }
@@ -713,6 +757,12 @@ pub fn desugar_dot_var_index(program: &mut Program) {
             for p in fields {
                 record_fields.insert(p.name.clone());
             }
+        }
+        // Also collect field names from anonymous record literals so that
+        // `r.name` where `name` happens to be a local variable is NOT
+        // rewritten to `at r name` — anonymous records are still records.
+        if let Decl::Function { body, .. } = decl {
+            collect_anon_record_fields_stmts(body, &mut record_fields);
         }
     }
 
@@ -794,10 +844,14 @@ fn desugar_stmt(stmt: &mut Stmt, scope: &mut Vec<String>, rf: &std::collections:
             binding,
             start,
             end,
+            step,
             body,
         } => {
             desugar_expr(start, scope, rf);
             desugar_expr(end, scope, rf);
+            if let Some(st) = step {
+                desugar_expr(st, scope, rf);
+            }
             let depth = scope.len();
             scope.push(binding.clone());
             for s in body {
@@ -848,7 +902,7 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 desugar_expr(it, scope, rf);
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
             for (_, v) in fields {
                 desugar_expr(v, scope, rf);
             }
@@ -910,6 +964,102 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 unwrap: UnwrapMode::None,
             };
         }
+    }
+}
+
+/// Collect field names from all AnonRecord literals in a statement list.
+fn collect_anon_record_fields_stmts(
+    stmts: &[Spanned<Stmt>],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for stmt in stmts {
+        collect_anon_record_fields_stmt(&stmt.node, out);
+    }
+}
+
+fn collect_anon_record_fields_stmt(stmt: &Stmt, out: &mut std::collections::HashSet<String>) {
+    match stmt {
+        Stmt::Let { value, .. } => collect_anon_record_fields_expr(value, out),
+        Stmt::Expr(e) | Stmt::Return(e) => collect_anon_record_fields_expr(e, out),
+        Stmt::Break(Some(e)) => collect_anon_record_fields_expr(e, out),
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_stmts(body, out);
+            if let Some(eb) = else_body {
+                collect_anon_record_fields_stmts(eb, out);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_stmts(body, out);
+        }
+        Stmt::ForEach {
+            collection, body, ..
+        } => {
+            collect_anon_record_fields_expr(collection, out);
+            collect_anon_record_fields_stmts(body, out);
+        }
+        Stmt::Destructure { value, .. } => collect_anon_record_fields_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_anon_record_fields_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+    match expr {
+        Expr::AnonRecord { fields } => {
+            for (name, val) in fields {
+                out.insert(name.clone());
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::Record { fields, .. } => {
+            for (_, val) in fields {
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                collect_anon_record_fields_expr(arg, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_anon_record_fields_expr(left, out);
+            collect_anon_record_fields_expr(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_anon_record_fields_expr(operand, out),
+        Expr::Field { object, .. } => collect_anon_record_fields_expr(object, out),
+        Expr::Index { object, .. } => collect_anon_record_fields_expr(object, out),
+        Expr::With { object, updates } => {
+            collect_anon_record_fields_expr(object, out);
+            for (_, val) in updates {
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::List(items) => {
+            for item in items {
+                collect_anon_record_fields_expr(item, out);
+            }
+        }
+        Expr::Ok(e) | Expr::Err(e) => collect_anon_record_fields_expr(e, out),
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_expr(then_expr, out);
+            collect_anon_record_fields_expr(else_expr, out);
+        }
+        Expr::NilCoalesce { value, default } => {
+            collect_anon_record_fields_expr(value, out);
+            collect_anon_record_fields_expr(default, out);
+        }
+        _ => {}
     }
 }
 

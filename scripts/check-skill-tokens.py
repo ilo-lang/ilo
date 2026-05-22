@@ -3,16 +3,17 @@
 Enforce the modular-skill token budget.
 
 Each `skills/ilo/ilo-*.md` module must encode to <= 1,000 tokens under
-`cl100k_base`, with one exception: `ilo-language` is the foundational
-module every agent loads first, so it carries a higher 1,500-token cap
-to accommodate core syntax that doesn't split cleanly. The aggregate
-across all modules must be <= 8,500.
+`cl100k_base`. Modules that are currently above this baseline carry an
+explicit per-module override in `PER_MODULE_OVERRIDES`; those overrides are
+set to measured size + ~50-token headroom (aggressive cap, ILO-382). Growth
+past an override requires an editorial trim or a module split — not a bump.
+The aggregate across all modules must be <= 12,500.
 
 The budget exists because the whole point of splitting the monolithic
 ~16,000-token compact spec into modules was to let agents load only the
 slices their current task needs (typical: 1-2 modules ~ 2,000 tokens). If
-a category module drifts past 1,000 tokens, the per-task economics regress,
-so the guard is a CI gate, not advisory.
+a category module drifts, the per-task economics regress, so the guard is
+a CI gate, not advisory.
 
 `ilo-builtins` was split into four category files (core, math, io, text)
 to give headroom as the language grows (PR: skill-split-by-category).
@@ -60,7 +61,7 @@ PER_MODULE_OVERRIDES = {
     "ilo-builtins-io": 2000,
     "ilo-builtins-math": 1500,
 }
-TOTAL_LIMIT = 15000
+TOTAL_LIMIT = 12500
 
 
 def main() -> int:

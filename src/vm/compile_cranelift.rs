@@ -670,6 +670,24 @@ pub fn compile_to_binary(
     // Serialize the full CompiledProgram (chunks + AST + func_names + ...)
     // so the AOT runtime can publish ACTIVE_PROGRAM and ACTIVE_AST_PROGRAM
     // for HOF / closure dispatch (engine audit PR #413 gap #1).
+    //
+    // ILO-371 dispatch contract — every Cranelift path that invokes a
+    // user-supplied callback (OP_CALL_DYN, OP_GRP_BY_KEY, OP_SRT_BY_KEY,
+    // OP_UNIQ_BY_KEY, OP_UNIQBY, OP_PARTITION) must have ACTIVE_PROGRAM and
+    // ACTIVE_AST_PROGRAM populated for the duration of the call. For JIT
+    // this is guaranteed by `with_active_registry` wrapping the entry
+    // invocation. For AOT the program blob below is deserialised at binary
+    // start by `ilo_aot_publish_program` (called from `generate_main`),
+    // which installs the same TLS pointers. Without this, every helper that
+    // re-enters the VM for a user-fn callback hits the null-program guard and
+    // silently returns TAG_NIL — manifesting as `grp fn xs` → nil, `map
+    // lambda xs` → [nil, nil, ...], etc.
+    //
+    // See `tests/regression_cranelift_parity.rs` for reproducers of the
+    // three symptoms (grp-nil, mset-perf, main-prnt-drop) caught in persona
+    // dogfood run 2026-05-21. When adding a new HOF that may call back into
+    // user code, always verify it reads ACTIVE_PROGRAM before dereferencing
+    // the TLS pointer and returns TAG_NIL (not UB) when the guard fires.
     let program_blob = super::aot_blob::serialize_program(program)?;
 
     // Resolve per-param list-ness for the entry function from the retained
@@ -2096,6 +2114,14 @@ fn compile_function_body(
                 if nv.is_string() {
                     // AOT: string constants can't embed compile-time pointers.
                     // Extract the string, store as data section, call jit_string_const at runtime.
+                    // SAFETY: `nv.is_string()` was just checked true, so
+                    // the NanVal is a heap-pointer-tagged value whose pointer
+                    // field refers to a live `HeapObj::Str` owned by the
+                    // `CompiledProgram`'s constant pool.  The pool outlives
+                    // this compile pass.  Potential violation: if a NanVal
+                    // with a stale/freed heap pointer were placed in the
+                    // constant pool (e.g. after a future GC integration),
+                    // `as_heap_ref` would produce a dangling reference.
                     let s = unsafe { nv.as_heap_ref() };
                     let string_bytes = match s {
                         HeapObj::Str(st) => {

@@ -23,6 +23,7 @@ ilo build file.ilo --py       # Python source (.py)
 
 ### Added (from main)
 
+- `<-` use-chain bind operator (ILO-409). Inside a function body, `x <- expr ; rest` desugars to `?expr{~x: rest; ^e: ^e}`, flattening multi-step Result-returning chains. Eliminates the nested `?` match staircase that builds up when threading several `R`-returning calls (`parse`, `num`, `jpar`, ...) — each step gets its own line, the error arm propagates automatically, and the desugared AST is the existing `Stmt::Match` so the verifier, VM, and Cranelift JIT inherit it for free. Adapted from Gleam's `use` statement. Parser/lexer only; no AST changes, no runtime changes.
 - `ILO-P102` diagnostic for top-level `name=expr` bindings outside any function declaration. Catches the "forgot the `main>_;` wrapper" misparse that k-means and linear-regression personas hit when chaining imperative bindings at the top level. Without the wrapper the parser used to either die on the bare `=` (a bare `ILO-P003`) or, when a prior `name>type;body` decl was in scope, slurp the whole chain into that fn's body and emit a wall of misleading `ILO-T005` cascades anchored on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the `main>_;` wrapper. Parser-only change; identical output across VM and JIT.
 
 ### Fixed (from main)
