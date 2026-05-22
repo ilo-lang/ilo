@@ -4839,6 +4839,12 @@ impl VerifyContext {
                 };
                 scope_insert(scope, binding.clone(), bound_ty);
             }
+            Pattern::Or(alts) => {
+                // Bind from the first alternative only (or patterns share one body)
+                if let Some(first) = alts.first() {
+                    self.bind_pattern("", scope, first, subject_ty);
+                }
+            }
         }
     }
 

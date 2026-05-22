@@ -9281,6 +9281,15 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
                 None
             }
         }
+        Pattern::Or(alts) => {
+            // Matches if any alternative matches; bindings from the first matching alt.
+            for alt in alts {
+                if let Some(bindings) = match_pattern(alt, value) {
+                    return Some(bindings);
+                }
+            }
+            None
+        }
     }
 }
 

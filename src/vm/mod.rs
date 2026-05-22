@@ -997,6 +997,17 @@ impl Chunk {
         idx
     }
 
+    fn patch_jump_to(&mut self, jump_pos: usize, target: usize) {
+        let offset_i32 = target as i32 - jump_pos as i32 - 1;
+        assert!(
+            offset_i32 >= i16::MIN as i32 && offset_i32 <= i16::MAX as i32,
+            "jump offset {offset_i32} exceeds i16 range — function body too large (max ~32K instructions)"
+        );
+        let offset = offset_i32 as i16;
+        let inst = self.code[jump_pos];
+        self.code[jump_pos] = (inst & 0xFFFF0000) | (offset as u16 as u32);
+    }
+
     fn patch_jump(&mut self, jump_pos: usize) {
         let target = self.code.len();
         let offset_i32 = target as i32 - jump_pos as i32 - 1;
@@ -3085,6 +3096,75 @@ impl RegCompiler {
                     }
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
+                }
+
+                Pattern::Or(alts) => {
+                    // Emit: if alt1 matches OR alt2 matches OR ... → body, else skip.
+                    // Strategy: for each alt except the last, if it matches jump to body.
+                    // If the last alt doesn't match, jump to skip (past body).
+                    let mut to_body: Vec<usize> = Vec::new();
+                    for (i, alt) in alts.iter().enumerate() {
+                        let is_last = i == alts.len() - 1;
+                        match alt {
+                            Pattern::Literal(lit) => {
+                                let val = match lit {
+                                    Literal::Number(n) => Value::Number(*n),
+                                    Literal::Text(s) => Value::Text(Arc::new(s.clone())),
+                                    Literal::Bool(b) => Value::Bool(*b),
+                                    Literal::Nil => Value::Nil,
+                                };
+                                let const_reg = self.alloc_reg();
+                                let ki = self.current.add_const(val);
+                                self.emit_abx(OP_LOADK, const_reg, ki);
+                                let eq_reg = self.alloc_reg();
+                                self.emit_abc(OP_EQ, eq_reg, sub_reg, const_reg);
+                                if is_last {
+                                    // Last alt: if false skip to next arm
+                                    let skip = self.emit_jmpf(eq_reg);
+                                    // Patch all "to_body" jumps to here (body start)
+                                    let body_pos = self.current.code.len();
+                                    for tb in &to_body {
+                                        self.current.patch_jump_to(*tb, body_pos);
+                                    }
+                                    let body_result = self.compile_body(&arm.body);
+                                    if let Some(br) = body_result
+                                        && br != result_reg
+                                    {
+                                        self.emit_abc(OP_MOVE, result_reg, br, 0);
+                                    }
+                                    end_jumps.push(self.emit_jmp_placeholder());
+                                    self.current.patch_jump(skip);
+                                } else {
+                                    // Non-last: if true jump to body
+                                    to_body.push(self.emit_jmpt(eq_reg));
+                                }
+                            }
+                            Pattern::Wildcard => {
+                                // Wildcard always matches — patch to_body jumps then
+                                // fall through to body (no conditional needed).
+                                let body_pos = self.current.code.len();
+                                for tb in &to_body {
+                                    self.current.patch_jump_to(*tb, body_pos);
+                                }
+                                let bind_reg = self.alloc_reg();
+                                self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
+                                self.add_local("_", bind_reg);
+                                let body_result = self.compile_body(&arm.body);
+                                if let Some(br) = body_result
+                                    && br != result_reg
+                                {
+                                    self.emit_abc(OP_MOVE, result_reg, br, 0);
+                                }
+                                // This arm always matches — patch all end_jumps and return
+                                for j in end_jumps {
+                                    self.current.patch_jump(j);
+                                }
+                                return;
+                            }
+                            // Other pattern types in Or are not supported — skip silently
+                            _ => {}
+                        }
+                    }
                 }
             }
 
@@ -29390,6 +29470,48 @@ mod tests {
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(5.0)]),
             Value::Number(0.0)
+        );
+    }
+
+    // ── Or (|) patterns ─────────────────────────────────────────────────
+
+    #[test]
+    fn vm_or_pattern_first_alt_matches() {
+        // `?x{"a"|"b":"found";_:"miss"}` — subject matches first alternative
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Text(Arc::new("a".to_string()))]),
+            Value::Text(Arc::new("found".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_second_alt_matches() {
+        // subject matches second alternative
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Text(Arc::new("b".to_string()))]),
+            Value::Text(Arc::new("found".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_no_alt_matches() {
+        // subject matches neither alternative — falls to wildcard
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Text(Arc::new("c".to_string()))]),
+            Value::Text(Arc::new("miss".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_three_alts() {
+        // three alternatives, middle one matches
+        let source = r#"f x:n>t;?x{1|2|3:"low";_:"high"}"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(2.0)]),
+            Value::Text(Arc::new("low".to_string()))
         );
     }
 

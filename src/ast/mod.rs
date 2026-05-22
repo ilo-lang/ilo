@@ -243,6 +243,8 @@ pub enum Pattern {
     Wildcard,
     /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
     TypeIs { ty: Type, binding: String },
+    /// `pat1|pat2|...:` — matches if any alternative matches (OR pattern)
+    Or(Vec<Pattern>),
 }
 
 /// Auto-unwrap mode on `Expr::Call`. See `Expr::Call` for full semantics.
