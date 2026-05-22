@@ -337,6 +337,94 @@ fn permissive_caps_allow_everything() {
     assert!(caps.check_run("rm").is_ok());
 }
 
+// ── --allow-read: fs-metadata builtins (fsize/mtime/isfile/isdir) ─────────────
+
+/// `fsize` blocked by --allow-read → returns Err containing ILO-CAP-001.
+#[test]
+fn allow_read_blocks_fsize() {
+    let path = "/tmp/ilo_cap_fsize.txt";
+    std::fs::write(path, "hello").unwrap();
+    let caps = Caps::Restricted {
+        net: Policy::All,
+        read: Policy::List(vec![]),
+        write: Policy::All,
+        run: Policy::All,
+    };
+    let src = format!("f>R n t;fsize \"{path}\"");
+    let (tree, _vm_val) = run_both(&src, caps);
+    assert!(
+        is_err_value(&tree),
+        "tree: fsize should be blocked by read cap"
+    );
+    let msg = err_text(&tree);
+    assert!(
+        msg.contains("ILO-CAP-001"),
+        "expected ILO-CAP-001, got: {msg}"
+    );
+}
+
+/// `mtime` blocked by --allow-read → returns Err containing ILO-CAP-001.
+#[test]
+fn allow_read_blocks_mtime() {
+    let path = "/tmp/ilo_cap_mtime.txt";
+    std::fs::write(path, "hello").unwrap();
+    let caps = Caps::Restricted {
+        net: Policy::All,
+        read: Policy::List(vec![]),
+        write: Policy::All,
+        run: Policy::All,
+    };
+    let src = format!("f>R n t;mtime \"{path}\"");
+    let (tree, _vm_val) = run_both(&src, caps);
+    assert!(
+        is_err_value(&tree),
+        "tree: mtime should be blocked by read cap"
+    );
+    let msg = err_text(&tree);
+    assert!(
+        msg.contains("ILO-CAP-001"),
+        "expected ILO-CAP-001, got: {msg}"
+    );
+}
+
+/// `isfile` blocked by --allow-read → returns false (collapses to bool false).
+#[test]
+fn allow_read_blocks_isfile_returns_false() {
+    let path = "/tmp/ilo_cap_isfile.txt";
+    std::fs::write(path, "hello").unwrap();
+    let caps = Caps::Restricted {
+        net: Policy::All,
+        read: Policy::List(vec![]),
+        write: Policy::All,
+        run: Policy::All,
+    };
+    let src = format!("f>b;isfile \"{path}\"");
+    let (tree, _vm_val) = run_both(&src, caps);
+    assert_eq!(
+        tree,
+        Value::Bool(false),
+        "isfile should return false when blocked by read cap"
+    );
+}
+
+/// `isdir` blocked by --allow-read → returns false.
+#[test]
+fn allow_read_blocks_isdir_returns_false() {
+    let caps = Caps::Restricted {
+        net: Policy::All,
+        read: Policy::List(vec![]),
+        write: Policy::All,
+        run: Policy::All,
+    };
+    let src = "f>b;isdir \"/tmp\"";
+    let (tree, _vm_val) = run_both(src, caps);
+    assert_eq!(
+        tree,
+        Value::Bool(false),
+        "isdir should return false when blocked by read cap"
+    );
+}
+
 /// When any --allow-* flag is set, undefined dimensions default to Policy::All.
 #[test]
 fn one_flag_restricts_only_that_dimension() {

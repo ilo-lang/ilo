@@ -6437,6 +6437,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         return match std::fs::metadata(path.as_str()) {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(md) if md.is_dir() => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
@@ -6461,6 +6464,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         return match std::fs::metadata(path.as_str()) {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(md) => match md.modified() {
@@ -6487,6 +6493,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if env.caps.check_read(path.as_str()).is_err() {
+            return Ok(Value::Bool(false));
+        }
         let is = std::fs::metadata(path.as_str())
             .map(|m| m.is_file())
             .unwrap_or(false);
@@ -6504,6 +6513,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if env.caps.check_read(path.as_str()).is_err() {
+            return Ok(Value::Bool(false));
+        }
         let is = std::fs::metadata(path.as_str())
             .map(|m| m.is_dir())
             .unwrap_or(false);
