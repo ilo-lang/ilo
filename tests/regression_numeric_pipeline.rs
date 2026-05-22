@@ -92,7 +92,10 @@ fn zeros_rejects_negative() {
     let src = "f>L n;zeros -1";
     for e in engines() {
         let err = run_err(e, src, "f");
-        assert!(err.contains("zeros"), "engine={e} err missing 'zeros': {err}");
+        assert!(
+            err.contains("zeros"),
+            "engine={e} err missing 'zeros': {err}"
+        );
     }
 }
 
@@ -341,10 +344,7 @@ fn hist_rejects_zero_bins() {
     let src = "f>L n;hist [1,2,3] 0";
     for e in engines() {
         let err = run_err(e, src, "f");
-        assert!(
-            err.contains("hist"),
-            "engine={e} err missing 'hist': {err}"
-        );
+        assert!(err.contains("hist"), "engine={e} err missing 'hist': {err}");
     }
 }
 
