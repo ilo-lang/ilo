@@ -2893,9 +2893,15 @@ fn run_bitwise(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> {
 
     let name = b.name();
     let result: u32 = match b {
-        Builtin::Band => to_u32(&args[0], "first arg", name)? & to_u32(&args[1], "second arg", name)?,
-        Builtin::Bor  => to_u32(&args[0], "first arg", name)? | to_u32(&args[1], "second arg", name)?,
-        Builtin::Bxor => to_u32(&args[0], "first arg", name)? ^ to_u32(&args[1], "second arg", name)?,
+        Builtin::Band => {
+            to_u32(&args[0], "first arg", name)? & to_u32(&args[1], "second arg", name)?
+        }
+        Builtin::Bor => {
+            to_u32(&args[0], "first arg", name)? | to_u32(&args[1], "second arg", name)?
+        }
+        Builtin::Bxor => {
+            to_u32(&args[0], "first arg", name)? ^ to_u32(&args[1], "second arg", name)?
+        }
         Builtin::Bnot => !to_u32(&args[0], "arg", name)?,
         Builtin::Bshl => {
             let x = to_u32(&args[0], "first arg", name)?;
