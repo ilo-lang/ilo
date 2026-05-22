@@ -2750,9 +2750,8 @@ fn stdev_run(items: &[Value]) -> Result<Value> {
 
 #[inline(never)]
 fn rgx_run(pattern: &str, input: &str) -> Result<Value> {
-    let re = regex::Regex::new(pattern).map_err(|e| {
-        RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}"))
-    })?;
+    let re = regex::Regex::new(pattern)
+        .map_err(|e| RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}")))?;
     let result: Vec<Value> = if re.captures_len() > 1 {
         re.captures(input)
             .map(|caps| {
