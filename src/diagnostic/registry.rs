@@ -111,9 +111,9 @@ impl Phase {
 #[allow(dead_code)] // fields are used by tooling / --explain / golden tests
 pub struct ErrorEntry {
     pub code: &'static str,
-    pub phase: Phase,           // which compiler phase emits this code
-    pub short: &'static str,   // brief description for tooling / --list-errors
-    pub long: &'static str,    // full explanation for --explain
+    pub phase: Phase,        // which compiler phase emits this code
+    pub short: &'static str, // brief description for tooling / --list-errors
+    pub long: &'static str,  // full explanation for --explain
 }
 
 /// Documented namespace ranges. Used by the cross-engine regression test in
