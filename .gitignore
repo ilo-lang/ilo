@@ -1,5 +1,6 @@
 /target
 .cargo/
+!.cargo/config.toml
 npm/ilo.wasm
 .env
 __pycache__/

@@ -179,6 +179,17 @@ pub enum Builtin {
     // `pst-to url body timeout-ms > R t t` — like `pst` but with an explicit
     // per-request timeout. Same millisecond-to-second rounding as `get-to`.
     PstTo,
+    // `getx url > R (M t _) t` — like `get` but returns a rich Ok-map with
+    // keys `status` (n), `headers` (M t t), `body` (t). Optional 2nd arg is a
+    // request-headers map (M t t), same as `get`. Additive — does not change
+    // `get`'s shape. Unblocks conditional-request / cache-aware / cookie-
+    // following / redirect / pagination-Link workflows that need response
+    // metadata. Tree-bridge eligible: no FnRef args, returns Result.
+    Getx,
+    // `pstx url body > R (M t _) t` — like `pst` but returns the same rich
+    // Ok-map shape as `getx`. Optional 3rd arg is a request-headers map.
+    // Tree-bridge eligible.
+    Pstx,
     // HTTP verb cluster (#5z). Same shape as `pst`/`get`: optional 3rd-arg
     // `M t t` headers map; returns `R t t`. Tree-bridge eligible — no
     // dedicated VM opcodes, the tree interpreter performs the actual minreq
@@ -241,6 +252,17 @@ pub enum Builtin {
     Argmax,
     Argmin,
     Argsort,
+    // `bisect xs:L n target:n > n` — insertion point in a sorted list.
+    // Python `bisect.bisect_left` semantics: returns the leftmost index `i`
+    // such that `xs[0..i] < target <= xs[i..]`. Returns `0` for empty list,
+    // `len(xs)` when target is greater than every element, and the index of
+    // the first equal element when duplicates are present (leftmost wins on
+    // ties). Caller is responsible for the sortedness precondition - we do
+    // NOT validate it. O(log N) binary search; closes the verbose
+    // `flt fn xs` + len pattern that three sorted-array personas reached for
+    // (k-sorted-search, schedule-merge, range-bucket). Tree-bridge eligible:
+    // pure 2-arg, no FnRef, no Result wrapper. NaN target propagates as NaN.
+    Bisect,
 
     // Path manipulation (pure text ops, Unix forward-slash only).
     // POSIX dirname/basename semantics; pathjoin takes a list to avoid
@@ -329,6 +351,23 @@ pub enum Builtin {
     LastDom,
     NextBusinessDay,
     DayOfWeek,
+    // Rolling-window reducers (0.12.x). Numeric-list inputs, fixed window
+    // size `n`. Output length = `len xs - n + 1` (empty when `n > len`).
+    //
+    // `rsum n:n xs:L n > L n` — rolling sum via running-window: O(n) total,
+    // not O(n*w) like the naive `map (i:n>n;sum (slc xs i (+ i n))) ...`
+    // recipe.
+    // `ravg n:n xs:L n > L n` — rolling mean, same running-window strategy.
+    // `rmin n:n xs:L n > L n` — rolling minimum, O(n) amortised via a
+    // monotonic-deque idiom.
+    //
+    // `n=0` errors `ILO-R009`; `n > len xs` returns `[]` (Python/numpy
+    // convention). Tree-bridge eligible — pure number-list reducers, no
+    // FnRef args, no Result wrapper. Appended last to preserve every
+    // existing on-wire tag.
+    Rsum,
+    Ravg,
+    Rmin,
 }
 
 impl Builtin {
@@ -475,6 +514,8 @@ impl Builtin {
             "get-many" => Some(Builtin::GetMany),
             "get-to" => Some(Builtin::GetTo),
             "pst-to" => Some(Builtin::PstTo),
+            "getx" => Some(Builtin::Getx),
+            "pstx" => Some(Builtin::Pstx),
             "put" => Some(Builtin::Put),
             "pat" => Some(Builtin::Pat),
             "del" => Some(Builtin::Del),
@@ -497,6 +538,7 @@ impl Builtin {
             "argmax" => Some(Builtin::Argmax),
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
+            "bisect" => Some(Builtin::Bisect),
             "dirname" => Some(Builtin::Dirname),
             "basename" => Some(Builtin::Basename),
             "pathjoin" => Some(Builtin::Pathjoin),
@@ -521,6 +563,9 @@ impl Builtin {
             "last-dom" => Some(Builtin::LastDom),
             "next-business-day" => Some(Builtin::NextBusinessDay),
             "day-of-week" => Some(Builtin::DayOfWeek),
+            "rsum" => Some(Builtin::Rsum),
+            "ravg" => Some(Builtin::Ravg),
+            "rmin" => Some(Builtin::Rmin),
             _ => None,
         }
     }
@@ -664,6 +709,8 @@ impl Builtin {
             Builtin::GetMany => "get-many",
             Builtin::GetTo => "get-to",
             Builtin::PstTo => "pst-to",
+            Builtin::Getx => "getx",
+            Builtin::Pstx => "pstx",
             Builtin::Put => "put",
             Builtin::Pat => "pat",
             Builtin::Del => "del",
@@ -686,6 +733,7 @@ impl Builtin {
             Builtin::Argmax => "argmax",
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
+            Builtin::Bisect => "bisect",
             Builtin::Dirname => "dirname",
             Builtin::Basename => "basename",
             Builtin::Pathjoin => "pathjoin",
@@ -710,6 +758,9 @@ impl Builtin {
             Builtin::LastDom => "last-dom",
             Builtin::NextBusinessDay => "next-business-day",
             Builtin::DayOfWeek => "day-of-week",
+            Builtin::Rsum => "rsum",
+            Builtin::Ravg => "ravg",
+            Builtin::Rmin => "rmin",
         }
     }
 
@@ -1035,7 +1086,58 @@ impl Builtin {
         Builtin::B64Dec,
         Builtin::HexEnc,
         Builtin::CtEq,
+        // getx / pstx — HTTP variants that surface response status, headers,
+        // and body as a Map[Text, _] wrapped in Ok. Additive — the existing
+        // `get` / `pst` body-only signatures stay intact for token-cheap GETs
+        // that don't care about metadata. Tree-bridge eligible (returns
+        // Result, no FnRef args), so VM and Cranelift inherit without new
+        // opcodes. Appended last to preserve every prior on-wire tag.
+        Builtin::Getx,
+        Builtin::Pstx,
+        // Rolling-window reducers (#5bq). Pure number-list reducers with a
+        // fixed window size; output length = `len xs - n + 1`. O(n)
+        // amortised via running-sum (rsum/ravg) and monotonic-deque (rmin),
+        // not O(n*w) like the naive `slc + sum` recipe. Tree-bridge eligible:
+        // VM and Cranelift inherit through OP_CALL_BUILTIN_TREE at zero
+        // opcode cost. Appended last to preserve every existing on-wire tag.
+        Builtin::Rsum,
+        Builtin::Ravg,
+        Builtin::Rmin,
+        // `bisect xs target > n` — O(log N) insertion point in a sorted
+        // numeric list (Python `bisect_left` semantics). Tree-bridge
+        // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Bisect,
     ];
+
+    /// Stability tier for this builtin, sourced from `STABILITY.md`.
+    ///
+    /// - `"experimental"` — unreleased (above `0.12.1` in `CHANGELOG.md`).
+    ///   May be removed or changed without notice.
+    /// - `"provisional"` — shipped in a released version (0.12.1 or earlier).
+    ///   Signature may change pre-1.0; canonical short name is stable-ish.
+    ///
+    /// Used by `ilo spec --json ai` to emit per-item stability annotations.
+    pub fn stability(self) -> &'static str {
+        match self {
+            // Unreleased additions (above 0.12.1 in CHANGELOG.md → experimental).
+            Builtin::Matvec
+            | Builtin::Lstsq
+            | Builtin::JparList
+            | Builtin::GetTo
+            | Builtin::PstTo
+            | Builtin::TzOffset
+            | Builtin::Run2
+            | Builtin::RgxallMulti
+            | Builtin::Fmod
+            | Builtin::DtparseRel
+            | Builtin::DurParse
+            | Builtin::DurFmt => "experimental",
+
+            // Everything else shipped in 0.12.1 or earlier → provisional.
+            _ => "provisional",
+        }
+    }
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
     pub fn tag(self) -> u8 {
@@ -1322,6 +1424,8 @@ mod tests {
             "pst",
             "get-to",
             "pst-to",
+            "getx",
+            "pstx",
             "put",
             "pat",
             "del",
@@ -1388,6 +1492,10 @@ mod tests {
             "b64-dec",
             "hex",
             "ct-eq",
+            "rsum",
+            "ravg",
+            "rmin",
+            "bisect",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1600,6 +1708,8 @@ mod tests {
             "get-many",
             "get-to",
             "pst-to",
+            "getx",
+            "pstx",
             "put",
             "pat",
             "del",
@@ -1648,6 +1758,10 @@ mod tests {
             "b64-dec",
             "hex",
             "ct-eq",
+            "rsum",
+            "ravg",
+            "rmin",
+            "bisect",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

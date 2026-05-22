@@ -154,6 +154,64 @@ fn diagnostic_hint_multi_segment_no_subtract_form() {
 }
 
 #[test]
+fn diagnostic_hint_when_two_kebab_halves_collide_no_spaces() {
+    // The mandelbrot persona shape: `zr-sq - zi-sq` (subtraction between
+    // two two-segment kebab names) written without spaces collapses to
+    // a single 4-segment ident `zr-sq-zi-sq`. Neither `zr` nor `sq` is
+    // bound on its own, so the legacy all-segments check fails — but the
+    // unique split `zr-sq | zi-sq` does land on two bound names. Hint
+    // should call that out and show both the prefix and infix-with-spaces
+    // forms.
+    let err = run_err("f zr-sq:n zi-sq:n>n; - zr-sq-zi-sq 0", "f");
+    assert!(err.contains("ILO-T004"), "stderr: {err}");
+    assert!(
+        err.contains("'zr-sq-zi-sq' is a single identifier"),
+        "expected kebab clarification, stderr: {err}"
+    );
+    assert!(
+        err.contains("- zr-sq zi-sq"),
+        "expected prefix subtraction form, stderr: {err}"
+    );
+    assert!(
+        err.contains("zr-sq - zi-sq"),
+        "expected infix-with-spaces hint, stderr: {err}"
+    );
+}
+
+#[test]
+fn diagnostic_hint_collision_in_bare_ref_position() {
+    // Same shape but in bare reference position (no leading operator).
+    // The hint should still fire — the kebab confusion is symmetric in
+    // value position and operand position.
+    let err = run_err("f zr-sq:n zi-sq:n>n; zr-sq-zi-sq", "f");
+    assert!(err.contains("ILO-T004"), "stderr: {err}");
+    assert!(
+        err.contains("- zr-sq zi-sq"),
+        "expected prefix subtraction form, stderr: {err}"
+    );
+}
+
+#[test]
+fn diagnostic_hint_skips_collision_when_split_ambiguous() {
+    // If multiple split points yield bound halves, the binop reading
+    // isn't uniquely identifiable, so we don't recommend any specific
+    // pair. Fall back to plain atomic clarification when every single
+    // segment is also bound (legacy path).
+    let err = run_err("f>n;a=1;b=2;c=3;a-b=10;b-c=20;+a-b-c 0", "f");
+    assert!(err.contains("ILO-T004"), "stderr: {err}");
+    assert!(
+        err.contains("single identifier"),
+        "expected atomic clarification, stderr: {err}"
+    );
+    // No specific split should be recommended — both `a-b/c` and `a/b-c`
+    // would be plausible.
+    assert!(
+        !err.contains("'- a b-c'") && !err.contains("'- a-b c'"),
+        "should not pick a specific split when ambiguous: {err}"
+    );
+}
+
+#[test]
 fn diagnostic_falls_back_to_closest_match_when_half_unbound() {
     // If only one half resolves, the kebab-confusion theory doesn't
     // apply — fall back to the standard closest-match suggestion. Locks

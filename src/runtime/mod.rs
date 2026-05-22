@@ -6,6 +6,67 @@ use std::sync::Arc;
 
 pub mod json;
 
+// ── Trace hook ────────────────────────────────────────────────────────────────
+
+/// One trace event emitted after each statement executes.
+/// Schema matches the ILO-72 proposal:
+/// `{"schemaVersion":1,"line":N,"stmt":"...","bindings":{...},"result":...}`
+#[derive(Debug)]
+pub struct TraceEvent {
+    /// 1-based source line of the statement start, or 0 if unknown.
+    pub line: usize,
+    /// Source text of the statement (trimmed), or empty if unavailable.
+    pub stmt: String,
+    /// All variable bindings visible in the current scope after the statement.
+    pub bindings: Vec<(String, Value)>,
+    /// The value produced by the statement (Nil for side-effect statements).
+    pub result: Value,
+}
+
+// Thread-local trace sink. When `Some`, `eval_body` fires it after each
+// statement. Set to `Some` by `run_with_trace` and cleared on return.
+std::thread_local! {
+    #[allow(clippy::type_complexity)]
+    static TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(TraceEvent)>>> =
+        const { std::cell::RefCell::new(None) };
+
+    // Source text used to look up statement spans; set alongside TRACE_HOOK.
+    static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `program` with a per-statement trace callback.
+/// `on_event` is called after each statement in the entry function body.
+pub fn run_with_trace<F>(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    on_event: F,
+) -> Result<Value>
+where
+    F: FnMut(TraceEvent) + 'static,
+{
+    // Install the hook.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = Some(Box::new(on_event));
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = program.source.clone();
+    });
+
+    let result = run_with_env(program, func_name, args, Env::new());
+
+    // Always clear the hook, even on error.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = None;
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = None;
+    });
+
+    result
+}
+
 /// A typed key for `Value::Map` and `HeapObj::Map`.
 ///
 /// Two variants — `Text` for string keys and `Int` for integer keys.
@@ -672,6 +733,93 @@ pub(crate) fn ewm_compute(xs: &[f64], a: f64) -> Vec<f64> {
     for &x in &xs[1..] {
         prev = a * x + one_minus_a * prev;
         out.push(prev);
+    }
+    out
+}
+
+/// Rolling-sum over a window of size `n`. Output length = `xs.len() - n + 1`;
+/// empty when `n > xs.len()`. O(n) total via running-sum: one add and one
+/// subtract per step, not the O(n*w) `sum (slc xs i (i+n))` recipe.
+///
+/// `#[inline(never)]` for the same reason as `ewm_compute` — keep the loop
+/// out of the dispatcher's stack frame under deep persona workloads.
+#[inline(never)]
+pub(crate) fn rsum_compute(n: usize, xs: &[f64]) -> Vec<f64> {
+    let len = xs.len();
+    if n == 0 || n > len {
+        return Vec::new();
+    }
+    let out_len = len - n + 1;
+    let mut out: Vec<f64> = Vec::with_capacity(out_len);
+    // Seed the running sum from the first window.
+    let mut s: f64 = xs[..n].iter().sum();
+    out.push(s);
+    for i in n..len {
+        s += xs[i];
+        s -= xs[i - n];
+        out.push(s);
+    }
+    out
+}
+
+/// Rolling-average over a window of size `n`. Same shape as `rsum_compute`;
+/// each output is the running sum divided by `n`. O(n) total.
+#[inline(never)]
+pub(crate) fn ravg_compute(n: usize, xs: &[f64]) -> Vec<f64> {
+    let sums = rsum_compute(n, xs);
+    if sums.is_empty() {
+        return sums;
+    }
+    let denom = n as f64;
+    sums.into_iter().map(|s| s / denom).collect()
+}
+
+/// Rolling-min over a window of size `n` via the monotonic-deque idiom.
+/// Output length = `xs.len() - n + 1`; empty when `n > xs.len()`. Each
+/// element is pushed and popped at most once across the whole pass, so
+/// total work is O(xs.len()), not O(xs.len() * n) like a naive per-window
+/// `min` scan. NaN inputs sort as ">" everything else (consistent with
+/// `min xs`/`max xs`) so a single NaN in a window does not poison the
+/// output the way it does for `rsum`/`ravg`.
+#[inline(never)]
+pub(crate) fn rmin_compute(n: usize, xs: &[f64]) -> Vec<f64> {
+    let len = xs.len();
+    if n == 0 || n > len {
+        return Vec::new();
+    }
+    let out_len = len - n + 1;
+    let mut out: Vec<f64> = Vec::with_capacity(out_len);
+    // Deque stores indices into `xs`; values are strictly increasing
+    // along the deque (front is the current window's min). `partial_cmp`
+    // treats NaN as incomparable; we fall back to `Greater` so NaNs sink
+    // toward the back of the deque rather than masquerading as the min.
+    let mut dq: std::collections::VecDeque<usize> = std::collections::VecDeque::with_capacity(n);
+    for i in 0..len {
+        // Drop indices that have fallen out of the window.
+        while let Some(&front) = dq.front() {
+            if front + n <= i {
+                dq.pop_front();
+            } else {
+                break;
+            }
+        }
+        // Maintain monotonicity: pop any tail whose value is >= the new value.
+        while let Some(&back) = dq.back() {
+            let cmp = xs[back]
+                .partial_cmp(&xs[i])
+                .unwrap_or(std::cmp::Ordering::Greater);
+            if cmp != std::cmp::Ordering::Less {
+                dq.pop_back();
+            } else {
+                break;
+            }
+        }
+        dq.push_back(i);
+        if i + 1 >= n {
+            // Front of the deque is the index of the min in the current window.
+            let &front = dq.front().expect("deque non-empty after push");
+            out.push(xs[front]);
+        }
     }
     out
 }
@@ -2335,6 +2483,79 @@ fn day_of_week_impl(arg: &Value) -> Result<Value> {
     Ok(Value::Number(dow as f64))
 }
 
+/// `bisect xs:L n target:n > n` — Python `bisect_left` insertion point in
+/// a sorted numeric list. Returns the leftmost index `i` such that
+/// `xs[0..i] < target <= xs[i..]`. Empty list returns `0`; target greater
+/// than every element returns `len(xs)`; on ties the leftmost matching
+/// index wins. NaN target propagates as NaN (matches `argmax`/`argmin`).
+///
+/// Caller is responsible for the sortedness precondition; we do NOT
+/// validate it. The contract is that on a sorted input the result
+/// satisfies the inequality above; on an unsorted input the result is
+/// well-defined-but-meaningless rather than an error. Matches Python's
+/// `bisect` module which also documents but does not enforce sortedness.
+///
+/// `#[inline(never)]` matches the established per-builtin helper pattern
+/// (see `day_of_week_impl` above and the `vm_*` family) so the
+/// call_function dispatch frame stays compact.
+#[inline(never)]
+fn run_bisect(list_arg: &Value, target_arg: &Value) -> Result<Value> {
+    let items = match list_arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("bisect: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let target = match target_arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("bisect: target must be a number, got {:?}", other),
+            ));
+        }
+    };
+    // NaN target: propagate. No total order against NaN means every branch
+    // of the comparison is false; returning NaN matches the policy used by
+    // `argmax`/`argmin` and avoids an arbitrary lo/hi result.
+    if target.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    // Empty list: insertion point is always 0.
+    if items.is_empty() {
+        return Ok(Value::Number(0.0));
+    }
+    // Validate element types up-front so type errors surface before the
+    // search loop touches them — same shape as `argsort` above.
+    for item in items.iter() {
+        if !matches!(item, Value::Number(_)) {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("bisect: list elements must be numbers, got {:?}", item),
+            ));
+        }
+    }
+    // Classic bisect_left: half-open `[lo, hi)` window narrowed by strict
+    // `<` so equal elements land to the right of the inserted target.
+    let mut lo: usize = 0;
+    let mut hi: usize = items.len();
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let Value::Number(m) = items[mid] else {
+            unreachable!("validated above")
+        };
+        if m < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(Value::Number(lo as f64))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -2813,6 +3034,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         });
         let out: Vec<Value> = idxs.into_iter().map(|i| Value::Number(i as f64)).collect();
         return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Bisect) && args.len() == 2 {
+        return run_bisect(&args[0], &args[1]);
     }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
         // 1-arg list form: returns the min/max element of a list of numbers.
@@ -4375,6 +4599,123 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             #[cfg(not(feature = "http"))]
             {
                 let _ = (url, body, timeout_secs);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::Getx) && (args.len() == 1 || args.len() == 2) {
+        // getx url           — 1-arg, returns R (M t _) t
+        // getx url headers   — 2-arg, headers is M t t
+        // Ok-map keys: status (n), headers (M t t), body (t).
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("getx requires text (url), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 2 {
+            match &args[1] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("getx headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = minreq::get(url.as_str());
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => Ok(http_response_to_ok_map(&resp)),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::Pstx) && (args.len() == 2 || args.len() == 3) {
+        // pstx url body            — 2-arg, returns R (M t _) t
+        // pstx url body headers    — 3-arg, headers is M t t
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pstx requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 3 {
+            match &args[2] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("pstx headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = minreq::post(url.as_str()).with_body(body.as_str());
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => Ok(http_response_to_ok_map(&resp)),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, headers);
                 Ok(Value::Err(Box::new(Value::Text(
                     "http feature not enabled".to_string().into(),
                 ))))
@@ -6034,6 +6375,67 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .collect();
         return Ok(Value::List(Arc::new(out)));
     }
+    // Rolling-window reducers — rsum / ravg / rmin (n, xs).
+    if let Some(b) = builtin
+        && matches!(b, Builtin::Rsum | Builtin::Ravg | Builtin::Rmin)
+        && args.len() == 2
+    {
+        let name = b.name();
+        let n_f = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: first arg n must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if !n_f.is_finite() || n_f.fract() != 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "{name}: window size n must be a non-negative integer, got {}",
+                    n_f
+                ),
+            ));
+        }
+        if n_f <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: window size n must be >= 1, got {}", n_f),
+            ));
+        }
+        let n = n_f as usize;
+        let items = match &args[1] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item {
+                Value::Number(v) => nums.push(*v),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let computed = match b {
+            Builtin::Rsum => rsum_compute(n, &nums),
+            Builtin::Ravg => ravg_compute(n, &nums),
+            Builtin::Rmin => rmin_compute(n, &nums),
+            _ => unreachable!(),
+        };
+        let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
+        return Ok(Value::List(Arc::new(out)));
+    }
     if builtin == Some(Builtin::Where) && args.len() == 3 {
         // where cond xs ys > L a — parallel-list conditional select.
         // For each i: output[i] = xs[i] if cond[i] else ys[i].
@@ -6986,14 +7388,41 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         // statements are not in tail position by definition.
         let stmt_is_tail = is_tail && i + 1 == n;
         match eval_stmt(env, &spanned.node, stmt_is_tail) {
-            Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
-            Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
-            Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
+            Ok(Some(BodyResult::Return(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                return Ok(BodyResult::Return(v));
+            }
+            Ok(Some(BodyResult::Break(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                return Ok(BodyResult::Break(v));
+            }
+            Ok(Some(BodyResult::Continue)) => {
+                fire_trace_event(env, spanned, Value::Nil);
+                return Ok(BodyResult::Continue);
+            }
             Ok(Some(BodyResult::TailCall { callee, args })) => {
+                fire_trace_event(env, spanned, Value::Nil);
                 return Ok(BodyResult::TailCall { callee, args });
             }
-            Ok(Some(BodyResult::Value(v))) => last = v,
-            Ok(None) => {}
+            Ok(Some(BodyResult::Value(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                last = v;
+            }
+            Ok(None) => {
+                // For Let statements the assigned value is available in env.
+                // Use it as the result so the trace shows what was bound.
+                let result = if let Stmt::Let { name, .. } = &spanned.node {
+                    env.vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k == name)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(Value::Nil)
+                } else {
+                    Value::Nil
+                };
+                fire_trace_event(env, spanned, result);
+            }
             Err(mut e) => {
                 // Auto-unwrap propagation: convert to early return
                 if let Some(val) = e.propagate_value.take() {
@@ -7010,6 +7439,48 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         }
     }
     Ok(BodyResult::Value(last))
+}
+
+/// Fire the TRACE_HOOK (if installed) after a statement executes.
+/// Extracts line number from the span and collects current bindings.
+#[inline]
+fn fire_trace_event(env: &Env, spanned: &Spanned<Stmt>, result: Value) {
+    let has_hook = TRACE_HOOK.with(|h| h.borrow().is_some());
+    if !has_hook {
+        return;
+    }
+
+    let span = spanned.span;
+
+    // Resolve 1-based line number from the span.
+    let (line, stmt_text) = TRACE_SOURCE.with(|src| {
+        if let Some(ref source) = *src.borrow() {
+            let sm = crate::ast::SourceMap::new(source);
+            let (line, _col) = sm.lookup(span.start);
+            let text = sm.line_text(source, line).trim().to_string();
+            (line, text)
+        } else {
+            (0, String::new())
+        }
+    });
+
+    // Snapshot current bindings.
+    let bindings: Vec<(String, Value)> = env
+        .vars
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    TRACE_HOOK.with(|h| {
+        if let Some(ref mut hook) = *h.borrow_mut() {
+            hook(TraceEvent {
+                line,
+                stmt: stmt_text,
+                bindings,
+                result,
+            });
+        }
+    });
 }
 
 /// If `value` is the self-rebind accumulator shape `name = mset name k v`,
@@ -8350,6 +8821,39 @@ fn read_capped<R: std::io::Read>(
             Err(e) => return Err(format!("read error: {e}")),
         }
     }
+}
+
+/// Convert a `minreq::Response` to an ilo Ok-map with `status`, `headers`,
+/// and `body` keys. Body decoded as UTF-8; non-UTF-8 surfaces as Err.
+/// Shape: `R (M t _) t` — status:n, headers:M t t, body:t.
+#[cfg(feature = "http")]
+pub(crate) fn http_response_to_ok_map(resp: &minreq::Response) -> Value {
+    let body = match resp.as_str() {
+        Ok(b) => b.to_string(),
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "response is not valid UTF-8: {e}"
+            )))));
+        }
+    };
+    let mut headers_map: HashMap<MapKey, Value> = HashMap::with_capacity(resp.headers.len());
+    for (k, v) in resp.headers.iter() {
+        headers_map.insert(MapKey::Text(k.clone()), Value::Text(Arc::new(v.clone())));
+    }
+    let mut m: HashMap<MapKey, Value> = HashMap::with_capacity(3);
+    m.insert(
+        MapKey::Text("status".to_string()),
+        Value::Number(resp.status_code as f64),
+    );
+    m.insert(
+        MapKey::Text("headers".to_string()),
+        Value::Map(Arc::new(headers_map)),
+    );
+    m.insert(
+        MapKey::Text("body".to_string()),
+        Value::Text(Arc::new(body)),
+    );
+    Value::Ok(Box::new(Value::Map(Arc::new(m))))
 }
 
 pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
@@ -10120,11 +10624,22 @@ mod tests {
 
     #[test]
     fn interpret_braceless_guard_fibonacci() {
-        let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
-        assert_eq!(
-            run_str(source, Some("fib"), vec![Value::Number(10.0)]),
-            Value::Number(55.0)
-        );
+        // fib(10) recurses deeply enough to blow the 2 MiB default test-thread
+        // stack on some platforms. Run it on an explicit 8 MiB stack so the
+        // test passes independently of RUST_MIN_STACK. Mirrors the pattern used
+        // in tests/parser_depth_cap.rs.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
+                assert_eq!(
+                    run_str(source, Some("fib"), vec![Value::Number(10.0)]),
+                    Value::Number(55.0)
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("thread panicked");
     }
 
     #[test]

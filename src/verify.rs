@@ -227,6 +227,46 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
     }
 }
 
+/// Build a targeted hint for a ternary whose branches have mismatched
+/// types. The verifier emits ILO-T003 with this hint to nudge agents
+/// toward the cheapest fix rather than the generic
+/// "both branches must return the same type" advice.
+///
+/// Strategy:
+/// - number vs text → surface both conversion directions (`str` on
+///   the number side, `default-on-err (num …) <fallback>` on the
+///   text side, since `num` returns `R n t` and the agent needs to
+///   pick which intent matches the surrounding function);
+/// - everything else (bool/nil vs text, list vs map, two named
+///   records, `R T E` vs `n`, …) → fall back to restructure advice,
+///   because the only builtin scalar coercions in ilo are `str`
+///   (n→t) and `num` (t→R n t). Suggesting a coercion outside that
+///   pair would just trip ILO-T013 and mislead the agent.
+fn ternary_mismatch_hint(then_ty: &Ty, else_ty: &Ty) -> String {
+    // The available scalar coercions in ilo are intentionally narrow:
+    // - `str x:n>t` converts a number to text;
+    // - `num x:t|n>R n t` parses text into a Result number (needs `!`
+    //   or pattern-match to unwrap, errors on bad input).
+    // Bools and nil don't have a builtin scalar→text conversion, so
+    // the hint must not suggest `str` for those — it would just trip
+    // ILO-T013.
+
+    // number vs text — both directions are reachable. Surface both so
+    // the agent picks the direction matching intent.
+    if matches!(
+        (then_ty, else_ty),
+        (Ty::Number, Ty::Text) | (Ty::Text, Ty::Number)
+    ) {
+        return "both directions are available: `str <num-branch>` makes both text (cheapest if the function returns `t`), or parse the text side with `default-on-err (num <text-branch>) <fallback>` to make both number (since `num` returns `R n t`). Pick whichever matches intent, or restructure to wrap each branch in a list/record/`O T` to keep both shapes".to_string();
+    }
+
+    // Fallback covers everything else: bool/nil vs text (no scalar
+    // conversion), `L n` vs `M t n`, `R t e` vs `n`, two different
+    // `Named` records, etc. Suggest restructuring rather than offering
+    // a coercion that would just produce a follow-on type error.
+    "no scalar coercion bridges these types - restructure so both branches share a shape: wrap each in `[...]` (list of one), a record with a tagged field, or `O T` / `R T E` to model the two-shape case explicitly".to_string()
+}
+
 /// Validate a value being passed as a map key against the map's declared
 /// key type. Allowed scalar key types are `Text` and `Number`; both may be
 /// passed where the declared key type is `Unknown` (uninferred). Otherwise
@@ -260,23 +300,57 @@ fn kebab_subtract_hint<'a>(
     if parts.len() < 2 || parts.iter().any(|p| p.is_empty()) {
         return None;
     }
-    let all_resolved = parts.iter().all(|p| {
-        candidates.clone().any(|c| c == p) || is_builtin(p) || builtin_as_fn_ty(p).is_some()
-    });
-    if !all_resolved {
+    let resolves = |s: &str| -> bool {
+        candidates.clone().any(|c| c == s) || is_builtin(s) || builtin_as_fn_ty(s).is_some()
+    };
+    // 2-segment case: `best-d` where both halves are bound. Classic
+    // single-hyphen ambiguity — recommend the explicit prefix form.
+    if parts.len() == 2 {
+        if resolves(parts[0]) && resolves(parts[1]) {
+            return Some(format!(
+                "'{name}' is a single identifier (kebab-case); for subtraction write '- {a} {b}'",
+                a = parts[0],
+                b = parts[1],
+            ));
+        }
         return None;
     }
-    if parts.len() == 2 {
-        Some(format!(
-            "'{name}' is a single identifier (kebab-case); for subtraction write '- {a} {b}'",
-            a = parts[0],
-            b = parts[1],
-        ))
-    } else {
-        Some(format!(
-            "'{name}' is a single identifier (kebab-case); '-' inside an identifier never means subtraction"
-        ))
+    // 3+ segments. Two distinct confusions to disambiguate:
+    //
+    //   (a) every individual segment is bound — old behaviour, plain atomic
+    //       clarification. Rare in real code; firing the binop hint here
+    //       would be noisy (many split points, none clearly intended).
+    //
+    //   (b) a single split-point yields two kebab halves that ARE bound
+    //       (e.g. `zr-sq-zi-sq` → `zr-sq` and `zi-sq` from mandelbrot).
+    //       This is the high-signal "subtraction between two hyphenated
+    //       names with no spaces" case. If exactly one split produces a
+    //       bound pair, point at it; otherwise fall back to (a).
+    let mut pair_splits: Vec<(String, String)> = Vec::new();
+    for i in 1..parts.len() {
+        let lhs = parts[..i].join("-");
+        let rhs = parts[i..].join("-");
+        if resolves(&lhs) && resolves(&rhs) {
+            pair_splits.push((lhs, rhs));
+        }
     }
+    if pair_splits.len() == 1 {
+        let (lhs, rhs) = &pair_splits[0];
+        return Some(format!(
+            "'{name}' is a single identifier (kebab-case); '-' between bound names never means subtraction unless surrounded by spaces. For subtraction write '- {lhs} {rhs}' (prefix form) or '{lhs} - {rhs}' (infix with spaces)"
+        ));
+    }
+    // Either no clean split, or several. Use atomic clarification when at
+    // least every segment is bound (the legacy criterion); otherwise the
+    // kebab-confusion theory doesn't apply and we let the closest-match
+    // fallback take over.
+    let all_segments_resolved = parts.iter().all(|p| resolves(p));
+    if all_segments_resolved {
+        return Some(format!(
+            "'{name}' is a single identifier (kebab-case); '-' inside an identifier never means subtraction"
+        ));
+    }
+    None
 }
 
 /// Hint for the `name expr` shape when `name` is non-callable and the single
@@ -396,6 +470,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // get-to / pst-to — timeout variants. Third arg is timeout in milliseconds.
     ("get-to", &["t", "n"], "R t t"),
     ("pst-to", &["t", "t", "n"], "R t t"),
+    // getx / pstx — rich-response variants. Ok-map keys: status (n),
+    // headers (M t t), body (t). Mixed value types collapse to `M t _`.
+    ("getx", &["t"], "R (M t _) t"),
+    ("getx", &["t", "M t t"], "R (M t _) t"),
+    ("pstx", &["t", "t"], "R (M t _) t"),
+    ("pstx", &["t", "t", "M t t"], "R (M t _) t"),
     // HTTP verb cluster (#5z). Same shape as `pst` / `get` — optional `M t t`
     // headers map, returns `R t t`. `del`/`hd`/`opt` mirror `get`; `put`/`pat`
     // mirror `pst`.
@@ -524,6 +604,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cumsum", &["L n"], "L n"),
     ("cprod", &["L n"], "L n"),
     ("ewm", &["L n", "n"], "L n"),
+    // Rolling-window reducers (#5bq). All three take a window size `n:n`
+    // first, then the numeric list `xs:L n`. Output is `L n` of length
+    // `len xs - n + 1`.
+    ("rsum", &["n", "L n"], "L n"),
+    ("ravg", &["n", "L n"], "L n"),
+    ("rmin", &["n", "L n"], "L n"),
     // where cond:L b xs:L a ys:L a > L a — parallel-list conditional select.
     // Element type of xs/ys is preserved in the output (handled in the
     // per-builtin arm below; this entry feeds arity + suggestion paths).
@@ -572,6 +658,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("argmax", &["L n"], "n"),
     ("argmin", &["L n"], "n"),
     ("argsort", &["L n"], "L n"),
+    // bisect xs target > n — leftmost insertion point in a sorted numeric
+    // list (Python `bisect_left`). Returns `0` for empty list and `len xs`
+    // when target exceeds every element. Caller owns the sortedness
+    // precondition; bisect does not validate it.
+    ("bisect", &["L n", "n"], "n"),
     // Duration parse / format. Tree-bridge eligible, no FnRef args.
     // dur-parse returns R n t so malformed input surfaces as a typed error.
     // dur-fmt is total — always produces Text.
@@ -1934,6 +2025,81 @@ fn builtin_check_args(
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
+        "getx" => {
+            // getx url          — 1-arg
+            // getx url headers  — 2-arg: headers is M t t
+            // Ok-map shape: {status:n, headers:M t t, body:t} → M t _
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'getx' expects t (url), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'getx' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Unknown))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
+        "pstx" => {
+            // pstx url body           — 2-arg
+            // pstx url body headers   — 3-arg: headers is M t t
+            // Ok-map shape: {status:n, headers:M t t, body:t} → M t _
+            for (i, arg) in arg_types.iter().enumerate().take(2) {
+                if !compatible(arg, &Ty::Text) {
+                    let label = if i == 0 { "url" } else { "body" };
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'pstx' expects t ({label}), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(2) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'pstx' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Unknown))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
         "get-to" => {
             // get-to url timeout-ms — 2-arg; timeout-ms is n (milliseconds)
             if let Some(arg) = arg_types.first()
@@ -2849,6 +3015,48 @@ fn builtin_check_args(
                     span,
                     is_warning: false,
                 });
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "rsum" | "ravg" | "rmin" => {
+            // r{sum,avg,min} n:n xs:L n > L n — rolling-window reducers.
+            // Window-size arg checked first, then the numeric list.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' first arg n must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'{name}' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
             }
             (Ty::List(Box::new(Ty::Number)), errors)
         }
@@ -4104,6 +4312,47 @@ impl VerifyContext {
                     );
                 }
             }
+            // ILO-T043: recursive self-call at a discarded (non-tail) position is
+            // almost always a bug. The agent expects the recursive call to short-
+            // circuit, but ilo's functional semantics discard the return value of
+            // any non-tail expression statement. Per SPEC tail-call rules
+            // (~line 1805), a call is in tail position only when its return value
+            // IS the function's return value: last statement of the body, expr of
+            // `ret`, tail-position match arm, or braceless-guard body. Anywhere
+            // else, the return is silently dropped.
+            //
+            // Surfaced by the interp1d persona: `find-idx xs t i:n>n; =t i i;
+            // find-idx xs t +i 1; -1` always returns -1 because the recursive
+            // call is followed by `-1`, putting it at a non-tail position. The
+            // persona then mis-diagnosed the bug as "braceless guard broken"
+            // because no diagnostic fired. T043 fixes the signal gap.
+            //
+            // Narrowly scoped to recursive self-calls (caller == callee): bare
+            // calls to OTHER user fns at non-tail position are legitimate when
+            // the callee is side-effecting (logging, file I/O). We only have
+            // strong-enough confidence to warn when an agent recurses into the
+            // SAME function and throws away the value the recursion produced.
+            if !is_tail
+                && let Stmt::Expr(Expr::Call {
+                    function: callee, ..
+                }) = &spanned.node
+                && callee == func
+                && let Some(sig) = self.functions.get(callee)
+                && !matches!(sig.return_type, Ty::Nil)
+            {
+                self.warn(
+                    "ILO-T043",
+                    func,
+                    format!(
+                        "recursive call to '{callee}' is at a non-tail position and its return value is discarded"
+                    ),
+                    Some(
+                        "a call is only in tail position when it's the last statement of the body, an arm of a tail match, or the body of a braceless guard. To use the recursive result, restructure as `?h cond {result} {fallback}` or `=cond {recursive-call}`. To return early, write `ret <call>`."
+                            .to_string(),
+                    ),
+                    Some(spanned.span),
+                );
+            }
             last_ty = self.verify_stmt(func, scope, &spanned.node, spanned.span);
             if matches!(spanned.node, Stmt::Return(_) | Stmt::Break(_)) && i + 1 < stmts.len() {
                 let first_unreachable = stmts[i + 1].span;
@@ -4556,9 +4805,9 @@ impl VerifyContext {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "wr" {
                         args.len() == 2 || args.len() == 3
-                    } else if matches!(callee.as_str(), "get" | "del" | "hed" | "opt") {
+                    } else if matches!(callee.as_str(), "get" | "del" | "hed" | "opt" | "getx") {
                         args.len() == 1 || args.len() == 2
-                    } else if matches!(callee.as_str(), "pst" | "put" | "pat") {
+                    } else if matches!(callee.as_str(), "pst" | "put" | "pat" | "pstx") {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "padl" || callee == "padr" {
                         // padl s w  /  padl s w padchar
@@ -4577,11 +4826,14 @@ impl VerifyContext {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()
-                        } else if matches!(callee.as_str(), "rd" | "get" | "del" | "hed" | "opt") {
+                        } else if matches!(
+                            callee.as_str(),
+                            "rd" | "get" | "del" | "hed" | "opt" | "getx"
+                        ) {
                             "1 or 2".to_string()
                         } else if matches!(
                             callee.as_str(),
-                            "pst" | "put" | "pat" | "wr" | "padl" | "padr"
+                            "pst" | "put" | "pat" | "pstx" | "wr" | "padl" | "padr"
                         ) {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
@@ -5346,6 +5598,7 @@ ilo has no tuple type."
                 } else if compatible(&else_ty, &then_ty) {
                     else_ty
                 } else {
+                    let hint = ternary_mismatch_hint(&then_ty, &else_ty);
                     self.err(
                         "ILO-T003",
                         func,
@@ -5353,7 +5606,7 @@ ilo has no tuple type."
                             "ternary branches have different types: {} vs {}",
                             then_ty, else_ty
                         ),
-                        Some("both branches of a ternary must return the same type".to_string()),
+                        Some(hint),
                         Some(span),
                     );
                     then_ty

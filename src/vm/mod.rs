@@ -718,6 +718,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Argmax, 1) => true,
         (Builtin::Argmin, 1) => true,
         (Builtin::Argsort, 1) => true,
+        // bisect xs target > n — O(log N) sorted-list insertion point.
+        // Pure 2-arg (no FnRef, no I/O), returns a plain number (not Result).
+        // Tree-bridge keeps VM + Cranelift in lockstep with the tree
+        // interpreter at zero opcode cost. The body is a tight integer loop;
+        // dispatch overhead is dominated by the f64 comparisons.
+        (Builtin::Bisect, 2) => true,
         // rdin / rdinl — 0-arg stdin read primitives. No FnRef args. The
         // bridge lets VM + Cranelift inherit stdin reads without new opcodes.
         // On WASM targets the interpreter arm returns Err immediately, so the
@@ -746,6 +752,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // JIT/AOT pick them up at zero opcode cost.
         (Builtin::GetTo, 2) => true,
         (Builtin::PstTo, 3) => true,
+        // getx / pstx — rich-response variants returning R (M t _) t.
+        // Tree-bridge: no FnRef args, returns Result; the tree interpreter
+        // handles the minreq call and Map construction so VM and Cranelift
+        // inherit cross-engine parity without new opcodes.
+        (Builtin::Getx, 1) => true,
+        (Builtin::Getx, 2) => true,
+        (Builtin::Pstx, 2) => true,
+        (Builtin::Pstx, 3) => true,
         // HTTP verb cluster (#5z). Same bridge contract as `pst-to`/`get-to` —
         // returns Result, no FnRef args, the tree interpreter handles the
         // actual minreq call. VM and Cranelift inherit at zero opcode cost.
@@ -805,6 +819,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // recurrence. VM and Cranelift inherit cross-engine parity at zero
         // opcode cost.
         (Builtin::Ewm, 2) => true,
+        // Rolling-window reducers (#5bq). Pure number-list reducers — no
+        // FnRef args, no Result wrapper. Same bridge contract as the
+        // cumsum/cprod/ewm aggregate family; tree interpreter does the work.
+        // VM and Cranelift inherit cross-engine parity at zero opcode cost.
+        (Builtin::Rsum, 2) => true,
+        (Builtin::Ravg, 2) => true,
+        (Builtin::Rmin, 2) => true,
         // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
         // args, no Result wrapper. Tree interpreter performs the element-wise
         // select; VM and Cranelift inherit through the bridge at zero opcode
@@ -853,6 +874,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::DurParse
             | Builtin::GetTo
             | Builtin::PstTo
+            | Builtin::Getx
+            | Builtin::Pstx
             | Builtin::Put
             | Builtin::Pat
             | Builtin::Del
@@ -17434,6 +17457,12 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Linspace
             | Builtin::Ones
             | Builtin::Rep
+            // Rolling-window reducers (#5bq) raise ILO-R009 on window size 0,
+            // negative window size, or non-numeric list elements. Surface on
+            // Cranelift in lockstep rather than degenerating silently to nil.
+            | Builtin::Rsum
+            | Builtin::Ravg
+            | Builtin::Rmin
     )
 }
 

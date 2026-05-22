@@ -35,6 +35,8 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - `;` separates statements - no newlines required
 - Last expression is the return value (no `return` keyword)
 - Zero-arg call: `make-id()`
+- Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
+- Labelled args (ILO-71): `dtfmt epoch:e fmt:"%Y"` — optional `label:value` form for any callable with declared parameter names. Labels resolve to positional by name; order is free. Mixed positional + labelled is allowed (positional fill from left; labels fill remaining slots by name). Unknown or duplicate labels surface `ILO-P019` at parse time. Works in both postfix and paren form: `f(b:2, a:1)` ≡ `f a:1 b:2`.
 
 ```
 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
@@ -606,6 +608,10 @@ Called like functions, compiled to dedicated opcodes.
 | `pst url body` | HTTP POST with text body (renamed from `post` in 0.12.0) | `R t t` |
 | `pst url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
 | `pst-to url body timeout-ms` | HTTP POST with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
+| `getx url` | HTTP GET, rich response: Ok-map with `status` (n), `headers` (M t t), `body` (t). Non-2xx is still Ok with the status code surfaced, only transport failure is Err. Use for conditional requests, redirect following, pagination Link headers, rate-limit headers. | `R (M t _) t` |
+| `getx url headers` | as `getx`, with request headers (`M t t` map) | `R (M t _) t` |
+| `pstx url body` | HTTP POST with rich response. Same Ok-map shape as `getx`. | `R (M t _) t` |
+| `pstx url body headers` | as `pstx`, with request headers (`M t t` map) | `R (M t _) t` |
 | `put url body` | HTTP PUT with text body | `R t t` |
 | `put url body headers` | HTTP PUT with body and custom headers (`M t t` map) | `R t t` |
 | `pat url body` | HTTP PATCH with text body | `R t t` |
@@ -714,6 +720,9 @@ Called like functions, compiled to dedicated opcodes.
 | `cumsum xs` | running sum; output length matches input | `L n` |
 | `cprod xs` | running product; output length matches input | `L n` |
 | `ewm xs a` | exponential moving average: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`; `a` in `[0, 1]`, out-of-range errors `ILO-R009` | `L n` |
+| `rsum n xs` | rolling sum over a window of size `n`; output length `len xs - n + 1` (empty when `n > len xs`). O(n) total via running-sum, not O(n*w) like `map (i:n>n;sum (slc xs i (+ i n))) ...`. `n < 1` errors `ILO-R009` | `L n` |
+| `ravg n xs` | rolling mean over a window of size `n`; same shape + cost as `rsum`. `n < 1` errors `ILO-R009` | `L n` |
+| `rmin n xs` | rolling minimum over a window of size `n`; O(n) amortised via a monotonic deque, not O(n*w) like a per-window scan. `n < 1` errors `ILO-R009` | `L n` |
 | `where cond xs ys` | parallel-list conditional select (NumPy `np.where`): `output[i] = xs[i] if cond[i] else ys[i]`; all three lists same length (mismatch errors `ILO-R009`); element type of `xs`/`ys` preserved | `L a` |
 | `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
 | `median xs` | median of numeric list | `n` |
@@ -723,6 +732,7 @@ Called like functions, compiled to dedicated opcodes.
 | `argmax xs` | index of the maximum element (first occurrence wins on ties; errors on empty list) | `n` |
 | `argmin xs` | index of the minimum element (first occurrence wins on ties; errors on empty list) | `n` |
 | `argsort xs` | sorted-index permutation ascending - stable sort, indices of smallest to largest (empty list returns `[]`) | `L n` |
+| `bisect xs target` | O(log N) leftmost insertion point in a sorted numeric list (Python `bisect_left`): returns `i` such that `xs[0..i] < target <= xs[i..]`. Empty list returns `0`; target greater than every element returns `len xs`; ties resolve leftmost. Caller owns sortedness precondition - not validated. NaN target propagates as NaN. | `n` |
 | `setunion a b` | set union of two lists (deduped, sorted output) | `L a` |
 | `setinter a b` | set intersection (deduped, sorted) | `L a` |
 | `setdiff a b` | set difference `a - b` (deduped, sorted) | `L a` |
@@ -989,9 +999,24 @@ r=pst url body h -- POST with x-api-key header
 -- Explicit timeouts (milliseconds; rounds up to nearest second internally)
 r=get-to url 5000       -- GET with 5 s timeout; Err if exceeded
 r=pst-to url body 3000  -- POST with 3 s timeout
+
+-- Rich-response variants: getx / pstx return an Ok-map with status, headers,
+-- and body. Use these when you need status-code branching (304 Not Modified,
+-- 429 Too Many Requests), response-header access (ETag, Link, X-RateLimit-*),
+-- or redirect following. Existing `get` / `pst` body-only shapes are untouched.
+r=getx url                  -- R (M t _) t: Ok={status:n, headers:M t t, body:t}
+r=getx url h                -- with request headers (h is M t t)
+r=pstx url body             -- R (M t _) t: POST with rich response
+r=pstx url body h           -- with request headers
+
+-- Status-code branching: non-2xx surfaces as a status, not Err
+?r{~m:?(=(mget!! m "status") 304){"not modified"};^_:"transport err"}
+
+-- Header read: response header names are lowercased
+etag=mget!! (mget!! m "headers") "etag"
 ```
 
-Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`/`get-to`/`pst-to` return `Err("http feature not enabled")`.
+Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`/`get-to`/`pst-to`/`getx`/`pstx` return `Err("http feature not enabled")`.
 
 ### Process spawn
 
@@ -1383,6 +1408,8 @@ Each of the three operand slots accepts the same shapes as a prefix-binop operan
 
 **Condition must be `b`.** The verifier rejects (`ILO-T038`) any ternary whose cond doesn't type-check to `b` - number, text, function-ref, `R T E` without unwrap, etc. This catches the silent-truthy family of bugs where a non-bool cond would otherwise always take the then-branch at runtime. If the cond is more complex than a single ref or comparison, bind it first (`c=<expr>;?h c a b`) or use the brace-delimited ternary `?cond{then}{else}`. The original 0.12.0 bug that motivated this check: `?h (> p 0.5) 1 0` parsed the paren-grouped prefix-comparison as a zero-param inline lambda, lifted it into a synthetic decl, and silently always took the then-branch - both layers (parser disambiguator + verifier type-check) are now hardened against the family.
 
+**Branches must share a type.** ILO-T003 fires when the then- and else-branches have different known types. The hint is targeted: for `n` vs `t` it surfaces both directions (`str <num-branch>` to make both text, or `default-on-err (num <text-branch>) <fallback>` to make both number, since `num` returns `R n t`); for any other mismatch (bool vs text, list vs map, two named records, `R T E` vs `n`, …) it suggests restructuring rather than offering a coercion that would just trip ILO-T013. Common restructure shapes: wrap each branch in `[...]`, a record with a tagged field, or `O T` / `R T E` to model the two-shape case explicitly.
+
 ### Early Return
 
 `ret expr` explicitly returns from the current function:
@@ -1508,6 +1535,25 @@ send-email d.email "Notification" msg
 charge pid amt
 ```
 
+### Paren-form call syntax (ILO-51)
+
+Agents trained on Python/JS/Rust/TS often reach for parentheses by reflex. ilo accepts paren-form calls as sugar — both forms produce identical AST nodes:
+
+```
+spl(row, ",")     -- same as: spl row ","
+abs(x)            -- same as: abs x
+f(a, b, c)        -- same as: f a b c
+f(g(x), h(y))     -- nested paren-calls also work
+```
+
+**Disambiguation rule** — adjacency determines whether `(` starts a paren-call or a grouped-expr argument:
+- `f(x)` — `(` immediately adjacent to ident → paren-call: `Call { function: f, args: [x] }`
+- `f (x)` — space before `(` → postfix call with `(x)` as a grouped-expr argument (same AST for single-arg; differs for multi-arg where `f (a, b)` would be a parse error)
+
+**Trailing commas are accepted:** `f(a, b,)` is valid (Rust/JS convention).
+
+**Postfix stays canonical.** `ilo fmt` does not rewrite paren-form to postfix; both styles are accepted everywhere.
+
 ### Call Arguments
 
 Call arguments can be atoms or prefix expressions:
@@ -1569,6 +1615,14 @@ The `.field` / `.N` chain also applies to any parenthesised expression, so a cal
 (p with x:30).x        -- field access on a record-update
 map (i:n>n;(at rs i).2) ixs   -- inside an inline lambda body
 ```
+
+The chain also reattaches to a **multi-token call result without parens** when the trailing `.N` follows a literal arg at the call's last slot. The args loop stops at the leading `.` (Dot doesn't start an operand), and the trailing `.N` is reattached to the call expression rather than dangling:
+```
+spl "a.b.c" "." .0       -- (spl "a.b.c" ".").0 → "a"
+num spl "1.2.3" ".".1    -- num ((spl "1.2.3" ".").1) → 2 (wrapped)
+at rows 0 .1             -- (at rows 0).1
+```
+This is a pure syntax convenience — the runtime sees the same `Expr::Field` shape as the parenthesised form. Caveat: when the call's last arg is a bare ident, the `.N` glues to the ident (field access on the variable, the older shape) rather than the call result. Bind first or wrap in parens in that case: `r=at rows i;r.1` or `(at rows i).1`.
 
 Destructure:
 ```
@@ -2117,3 +2171,8 @@ fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 ```
 fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 ```
+
+
+## Stability
+
+See STABILITY.md at repo root for the per-surface stability matrix. Three tiers: stable (schemaVersion:1 envelope, ILO-error-codes, serv-protocol-phases, file-version-pragma, manifesto-principles, reserved-name-policy), provisional (builtin-signatures, cli-flag-names, error-message-prose, examples-corpus, ilo-test-surface), experimental (0.13-in-flight-features, aot-artifact-format, cranelift-jit-internals, extensions-dir, cargo-feature-flags). Stable surfaces are safe to pin across releases. Provisional surfaces carry a deprecation-window guarantee. Experimental surfaces may disappear without notice. `ilo spec --json ai` surfaces this matrix in the `stability` field of the JSON envelope, and per-item stability annotations on every builtin in the `builtins` array.

@@ -9,13 +9,11 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Core text ops
 
-`len str trm spl cat has`. `spl "a,b,c" ","` -> `["a","b","c"]`. `has s sub` -> bool.
+`len str trm spl cat has`. `spl "a,b,c" ","` -> `["a","b","c"]`. `has s sub` -> bool. `cat xs sep` joins a list - NOT two-string concat; use `+ a b` for that. `fmt` for templates.
 
 ## Case / padding / chars
 
-`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` = n copies of 1-char `c` (histogram bars).
-
-`padr "" n c` is the **repeat-character idiom** - use it for histogram bars, divider lines, indentation. `padr "" 10 "#"` -> `"##########"`. Cheaper than a loop.
+`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` is the repeat-character idiom (n copies of 1-char `c`): `padr "" 10 "#"` -> `"##########"`. Use it for histogram bars, divider lines.
 
 ## Regex
 

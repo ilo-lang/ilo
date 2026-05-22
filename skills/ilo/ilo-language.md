@@ -25,9 +25,9 @@ Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a
 
 `[a-z][a-z0-9]*(-[a-z0-9]+)*`, short (1-3 chars). No capitals/underscores except after `.` / `.?` for JSON keys (`r.URL`). Comments `-- to EOL`; `--x` is a comment (use `- -x 1`).
 
-## guards
+## guards & conditionals
 
-Flat early returns: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Braceless `cond expr` cheaper than `cond{expr}`. Bare comparison IS a guard; bind to return: `r=>a b;r`.
+Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body}` runs body NO early return; `cond{a}{b}` value no early return. Ternary: `?h a b` (`h`:bool), `?h cond a b` (`cond`:bool expr). `?h cond{...}` illegal - drop `?h` or drop braces. `!` negates all. Bare comparison IS a guard; bind to return a bool: `r=>a b;r`.
 
 ## match
 

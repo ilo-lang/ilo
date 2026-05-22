@@ -113,8 +113,14 @@ pub enum Cmd {
     /// Modular agent skills (ilo-language, ilo-builtins, ...).
     Skill(SkillArgs),
 
+    /// Run `-- run:` / `-- out:` / `-- err:` assertions in `.ilo` files.
+    Test(TestArgs),
+
     /// Print version.
     Version,
+
+    /// Trace program execution, emitting one JSON line per statement.
+    Trace(TraceArgs),
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -376,6 +382,28 @@ pub struct CheckArgs {
     pub strict: bool,
 }
 
+// ── Test ───────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct TestArgs {
+    /// File or directory to test. Directories are walked recursively for `*.ilo`.
+    /// Defaults to `examples/` when omitted, so `ilo test` on a freshly-cloned
+    /// repo does something useful without an explicit path argument.
+    pub path: Option<String>,
+
+    /// Engine to run each assertion on. `all` runs every engine and reports
+    /// per-engine PASS/FAIL. Defaults to `vm` (matches the in-tree harness).
+    #[arg(long, value_enum, default_value = "vm")]
+    pub engine: TestEngine,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestEngine {
+    Vm,
+    Jit,
+    All,
+}
+
 // ── Spec ───────────────────────────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
@@ -410,6 +438,21 @@ pub enum SkillCmd {
     Path { name: String },
     /// Print a skill with a formatted header.
     Show { name: String },
+}
+
+// ── Trace ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct TraceArgs {
+    /// Source file to trace.
+    pub source: String,
+
+    /// Entry function name (defaults to first function).
+    pub func: Option<String>,
+
+    /// Call arguments passed to the entry function.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub rest: Vec<String>,
 }
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────

@@ -2815,6 +2815,12 @@ fn main() {
                 print_build_help();
                 std::process::exit(1);
             }
+            "trace" => {
+                eprintln!("Usage: ilo trace <file.ilo> [func] [args...]");
+                std::process::exit(1);
+            }
+            // `ilo test` with no path arg is valid (defaults to `examples/`)
+            // and is handled in the runner; no usage stub needed here.
             _ => {}
         }
     }
@@ -2984,10 +2990,28 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 }
                 Some("ai") => {
                     if as_json {
+                        // Build per-item builtins array from the canonical ALL slice.
+                        let builtins_list: Vec<serde_json::Value> = ilo::builtins::Builtin::ALL
+                            .iter()
+                            .map(|b| {
+                                serde_json::json!({
+                                    "name": b.name(),
+                                    "stability": b.stability(),
+                                })
+                            })
+                            .collect();
                         let v = serde_json::json!({
                             "schemaVersion": 1,
                             "format": "ai-txt",
                             "content": compact_spec(),
+                            "stability": {
+                                "doc": "STABILITY.md",
+                                "tiers": ["stable", "provisional", "experimental"],
+                                "stable": ["schemaVersion:1", "ILO-error-codes", "serv-protocol-phases", "file-version-pragma", "manifesto-principles", "reserved-name-policy"],
+                                "provisional": ["builtin-signatures", "cli-flag-names", "error-message-prose", "examples-corpus", "ilo-test-surface"],
+                                "experimental": ["0.13-in-flight-features", "aot-artifact-format", "cranelift-jit-internals", "extensions-dir", "cargo-feature-flags"],
+                            },
+                            "builtins": builtins_list,
                         });
                         println!("{}", v);
                     } else {
@@ -3007,6 +3031,8 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
             }
         }
+        Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
+        Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
@@ -10211,6 +10237,53 @@ mod tests {
         let code = tools_cmd(&["--tools".to_string(), path.to_string()]);
         assert_eq!(code, 1);
         std::fs::remove_file(path).ok();
+    }
+
+    // ── spec --json ai: per-item stability annotations (ILO-340) ─────────────
+
+    #[test]
+    fn spec_json_ai_builtins_array_has_stability_fields() {
+        // Run `ilo spec --json ai` and verify the builtins array is present
+        // with name+stability on every entry.
+        let output = std::process::Command::new(
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("ilo"),
+        )
+        .args(["spec", "--json", "ai"])
+        .output();
+        // If the binary isn't available (CI test-lib mode) skip gracefully.
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(output.status.success());
+        let v: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("spec --json ai must be valid JSON");
+        let builtins = v["builtins"].as_array().expect("builtins must be an array");
+        assert!(
+            !builtins.is_empty(),
+            "builtins array must contain at least one entry"
+        );
+        for b in builtins {
+            let name = b["name"].as_str().expect("each builtin must have a name");
+            let stability = b["stability"]
+                .as_str()
+                .expect("each builtin must have a stability");
+            assert!(
+                stability == "provisional" || stability == "experimental",
+                "builtin {name} has unknown stability tier '{stability}'"
+            );
+        }
+        // Backward-compat: top-level stability summary must still be present.
+        assert!(
+            v["stability"]["doc"].as_str().is_some(),
+            "top-level stability.doc must still be present for backward compat"
+        );
     }
 
     // ── dispatch_bare_args: no-op case with func in rest matching func_names ──

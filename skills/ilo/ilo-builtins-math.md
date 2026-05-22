@@ -29,7 +29,19 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Statistics
 
-`sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod`.
+`sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod bisect`. `bisect xs target` is Python `bisect_left` (O(log N) sorted-list insertion point); caller owns sortedness.
+
+`quantile xs p > n` — sample quantile using linear interpolation; `p` is clamped to `[0, 1]`. `p=0` returns the minimum, `p=1` returns the maximum, `p=0.5` matches `median`. For a fractional index the result is linearly interpolated between the two surrounding sorted values.
+
+```
+xs = [3, 1, 4, 1, 5, 9, 2, 6]   -- unsorted input is fine
+
+quantile xs 0      -- 1   (minimum)
+quantile xs 1      -- 9   (maximum)
+quantile xs 0.5    -- 3.5 (median: avg of 4th and 5th sorted values 3 and 4)
+quantile xs 0.25   -- 1.75  (linear interp between sorted[1]=1 and sorted[2]=2)
+quantile xs 0.75   -- 5.25  (linear interp between sorted[5]=5 and sorted[6]=6)
+```
 
 ## Linear algebra
 
