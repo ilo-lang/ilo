@@ -10897,11 +10897,7 @@ mod tests {
     #[test]
     fn err_str_wrong_type() {
         // str now accepts text (identity) and number; bool triggers the error
-        let err = run_str_err(
-            r#"f x:_ >t;str x"#,
-            Some("f"),
-            vec![Value::Bool(true)],
-        );
+        let err = run_str_err(r#"f x:_ >t;str x"#, Some("f"), vec![Value::Bool(true)]);
         assert!(err.contains("str requires"));
     }
 

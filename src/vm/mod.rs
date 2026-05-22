@@ -22454,7 +22454,11 @@ mod tests {
     fn vm_str_text_passthrough() {
         // OP_STR on text is identity — returns the same string unchanged
         let source = "f x:t>t;str x";
-        let result = vm_run(source, Some("f"), vec![Value::Text(Arc::new("hello".to_string()))]);
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("hello".to_string()))],
+        );
         assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
     }
 
@@ -30225,11 +30229,7 @@ mod tests {
     #[test]
     fn vm_err_str_wrong_type() {
         // str now accepts text (identity) and number; bool triggers the error
-        let err = vm_run_err(
-            r#"f x:_ >t;str x"#,
-            Some("f"),
-            vec![Value::Bool(true)],
-        );
+        let err = vm_run_err(r#"f x:_ >t;str x"#, Some("f"), vec![Value::Bool(true)]);
         assert!(
             err.contains("str") || err.contains("number") || err.contains("type"),
             "got: {err}"
