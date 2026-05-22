@@ -5966,13 +5966,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
 
     if builtin == Some(Builtin::Env) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(key) => match std::env::var(key.as_str()) {
-                Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
-                Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                    "env var '{}' not set",
-                    key
-                )))))),
-            },
+            Value::Text(key) => {
+                if let Err(msg) = env.caps.check_env(key.as_str()) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+                }
+                match std::env::var(key.as_str()) {
+                    Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
+                    Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "env var '{}' not set",
+                        key
+                    )))))),
+                }
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("env requires text, got {:?}", other),
@@ -5986,6 +5991,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // for future failure modes (non-UTF-8 vars, sandboxed envs). std::env::vars()
     // silently skips non-UTF-8 entries today, so the snapshot is always Ok.
     if builtin == Some(Builtin::EnvAll) && args.is_empty() {
+        // env-all reads the entire environment; check capability using "*" sentinel.
+        if let Err(msg) = env.caps.check_env("*") {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let map: std::collections::HashMap<MapKey, Value> = std::env::vars()
             .map(|(k, v)| (MapKey::Text(k), Value::Text(Arc::new(v))))
             .collect();

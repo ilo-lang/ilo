@@ -11089,6 +11089,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_env(&key_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::env::var(&key_str) {
                         Ok(val) => NanVal::heap_ok(NanVal::heap_string(val)),
                         Err(_) => NanVal::heap_err(NanVal::heap_string(format!(
