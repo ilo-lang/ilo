@@ -5767,6 +5767,81 @@ impl RegCompiler {
                 }
             }
 
+            Expr::AnonRecord { fields } => {
+                // Anonymous record: synthesize a stable type name from the sorted
+                // field list so that two literals with the same shape share one
+                // registry entry (matching the structural unification the verifier
+                // promises). The name is internal — agents never see it.
+                let mut sorted_names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                sorted_names.sort_unstable();
+                let type_name = format!("__anon_{}", sorted_names.join("_"));
+                let fields_owned: Vec<(String, _)> = fields.clone();
+                // Delegate to the same logic as named Record by building an
+                // owned Vec and reusing the same bytecode path inline.
+                let type_id = match self.type_registry.name_to_id.get(&type_name) {
+                    Some(&id) => id,
+                    None => {
+                        let field_names: Vec<String> =
+                            fields_owned.iter().map(|(n, _)| n.clone()).collect();
+                        self.type_registry
+                            .register(type_name.clone(), field_names, 0)
+                    }
+                };
+                let canonical_order: Vec<String> =
+                    self.type_registry.types[type_id as usize].fields.clone();
+                let source_fields: HashMap<&str, &Expr> =
+                    fields_owned.iter().map(|(n, e)| (n.as_str(), e)).collect();
+                let n = canonical_order.len();
+                let pre_reg = self.next_reg as usize;
+                let fits_contiguous = n <= 255 && type_id <= 255 && pre_reg + 2 * n < 255;
+                assert!(
+                    type_id <= 255,
+                    "type_id {} exceeds 8-bit limit in OP_RECNEW",
+                    type_id
+                );
+                if fits_contiguous {
+                    let ordered_regs: Vec<u8> = canonical_order
+                        .iter()
+                        .map(|fname| {
+                            let expr = source_fields[fname.as_str()];
+                            self.compile_expr(expr)
+                        })
+                        .collect();
+                    let a = self.alloc_reg();
+                    let fields_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + ordered_regs.len() <= 255,
+                        "register overflow: anonymous record literal requires too many register slots"
+                    );
+                    self.next_reg += ordered_regs.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
+                    }
+                    for (i, &field_reg) in ordered_regs.iter().enumerate() {
+                        let target = fields_base + i as u8;
+                        if field_reg != target {
+                            self.emit_abc(OP_MOVE, target, field_reg, 0);
+                        }
+                    }
+                    let bx = (type_id << 8) | ordered_regs.len() as u16;
+                    self.emit_abx(OP_RECNEW, a, bx);
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                } else {
+                    let a = self.alloc_reg();
+                    self.emit_abx(OP_RECNEW_EMPTY, a, type_id);
+                    let after_result = self.next_reg;
+                    for (i, fname) in canonical_order.iter().enumerate() {
+                        let expr = source_fields[fname.as_str()];
+                        let val_reg = self.compile_expr(expr);
+                        self.emit_abc(OP_RECSETFIELD, a, val_reg, i as u8);
+                        self.next_reg = after_result;
+                    }
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                }
+            }
+
             Expr::Record { type_name, fields } => {
                 // Look up or auto-register type in registry
                 let type_id = match self.type_registry.name_to_id.get(type_name) {

@@ -1,0 +1,75 @@
+-- ILO-54: Anonymous record literals — no typedef required.
+--
+-- Exercises: construction, field access, pass-to-fn, return-from-fn,
+-- destructure, and `with` update.
+
+-- Pass anonymous record to a function
+greet x:_>t
+  x.name
+
+-- Return anonymous record from a function
+make-point ax:n ay:n>_
+  {x:ax y:ay}
+
+-- Basic construction and field access
+access-name>t
+  r = {name:"alice" age:30}
+  r.name
+
+access-age>n
+  r = {name:"alice" age:30}
+  r.age
+
+-- Pass anonymous record to a function
+pass-to-fn>t
+  greet {name:"bob"}
+
+-- Return anonymous record from a function and access fields
+return-x>n
+  p = make-point 3 4
+  p.x
+
+return-y>n
+  p = make-point 3 4
+  p.y
+
+-- Destructure anonymous record
+destruct-name>t
+  r = {name:"alice" age:30}
+  {name;age} = r
+  name
+
+destruct-age>n
+  r = {name:"alice" age:30}
+  {name;age} = r
+  age
+
+-- Update via with
+with-name>t
+  r = {name:"alice" age:30}
+  r2 = r with name:"carol"
+  r2.name
+
+with-age>n
+  r = {name:"alice" age:30}
+  r2 = r with name:"carol"
+  r2.age
+
+-- run: access-name
+-- out: alice
+-- run: access-age
+-- out: 30
+-- run: pass-to-fn
+-- out: bob
+-- run: return-x
+-- out: 3
+-- run: return-y
+-- out: 4
+-- run: destruct-name
+-- out: alice
+-- run: destruct-age
+-- out: 30
+-- run: with-name
+-- out: carol
+-- run: with-age
+-- out: 30
