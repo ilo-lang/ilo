@@ -154,10 +154,7 @@ pub fn resolve_semver_ref(url: &str, constraint_str: &str) -> Result<String, Str
         .map_err(|e| format!("git ls-remote failed: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!(
-            "git ls-remote returned non-zero for {}",
-            url
-        ));
+        return Err(format!("git ls-remote returned non-zero for {}", url));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -173,9 +170,7 @@ pub fn resolve_semver_ref(url: &str, constraint_str: &str) -> Result<String, Str
         if tag_ref.ends_with("^{}") {
             continue;
         }
-        let tag_name = tag_ref
-            .strip_prefix("refs/tags/")
-            .unwrap_or(tag_ref);
+        let tag_name = tag_ref.strip_prefix("refs/tags/").unwrap_or(tag_ref);
 
         // Accept `v1.2.3` or `1.2.3`.
         let version_str = tag_name.strip_prefix('v').unwrap_or(tag_name);
@@ -194,8 +189,12 @@ pub fn resolve_semver_ref(url: &str, constraint_str: &str) -> Result<String, Str
         }
     }
 
-    best.map(|(_, tag)| tag)
-        .ok_or_else(|| format!("no tag found matching semver constraint '{}'", constraint_str))
+    best.map(|(_, tag)| tag).ok_or_else(|| {
+        format!(
+            "no tag found matching semver constraint '{}'",
+            constraint_str
+        )
+    })
 }
 
 // ── `ilo add` ──────────────────────────────────────────────────────────────────
@@ -259,18 +258,16 @@ fn add_recursive(spec: &str, visited: &mut HashSet<String>, stack: &mut Vec<Stri
     // `resolved_owned` keeps the heap allocation alive for the lifetime of
     // the borrow in `git_ref`.
     let resolved_owned: Option<String> = match git_ref {
-        Some(r) if is_semver_constraint(r) => {
-            match resolve_semver_ref(&url, r) {
-                Ok(tag) => {
-                    println!("resolved semver '{}' → {}", r, tag);
-                    Some(tag)
-                }
-                Err(e) => {
-                    eprintln!("error: {}", e);
-                    return 1;
-                }
+        Some(r) if is_semver_constraint(r) => match resolve_semver_ref(&url, r) {
+            Ok(tag) => {
+                println!("resolved semver '{}' → {}", r, tag);
+                Some(tag)
             }
-        }
+            Err(e) => {
+                eprintln!("error: {}", e);
+                return 1;
+            }
+        },
         _ => None,
     };
     let git_ref: &str = match &resolved_owned {
@@ -470,11 +467,7 @@ fn extract_use_pkg_slugs(source: &str) -> Vec<String> {
         }
 
         // Truncate to owner/repo (drop any sub-path).
-        let slug = path
-            .splitn(3, '/')
-            .take(2)
-            .collect::<Vec<_>>()
-            .join("/");
+        let slug = path.splitn(3, '/').take(2).collect::<Vec<_>>().join("/");
 
         if slug.contains('/') {
             slugs.push(slug);
