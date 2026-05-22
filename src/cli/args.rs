@@ -340,6 +340,16 @@ pub struct GraphArgs {
 
 // ── Compile ────────────────────────────────────────────────────────────────────
 
+/// Supported cross-compilation targets for `ilo compile --target`.
+pub const SUPPORTED_TARGETS: &[&str] = &[
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip1",
+];
+
 #[derive(Args, Debug)]
 pub struct CompileArgs {
     /// Source file or inline code.
@@ -355,6 +365,14 @@ pub struct CompileArgs {
     /// Benchmark binary mode.
     #[arg(long)]
     pub bench: bool,
+
+    /// Cross-compilation target triple.
+    /// Supported: aarch64-apple-darwin, x86_64-apple-darwin,
+    /// x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
+    /// x86_64-pc-windows-msvc, wasm32-wasip1.
+    /// Requires the target to be installed via `rustup target add <triple>`.
+    #[arg(long, value_name = "TRIPLE")]
+    pub target: Option<String>,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
@@ -814,6 +832,29 @@ mod tests {
         let cli = Cli::try_parse_from(["ilo", "compile", "prog.ilo", "entry"]).unwrap();
         if let Some(Cmd::Compile(c)) = cli.cmd {
             assert_eq!(c.func.as_deref(), Some("entry"));
+        }
+    }
+
+    #[test]
+    fn compile_with_target() {
+        let cli =
+            Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", "wasm32-wasip1"])
+                .unwrap();
+        if let Some(Cmd::Compile(c)) = cli.cmd {
+            assert_eq!(c.target.as_deref(), Some("wasm32-wasip1"));
+        }
+    }
+
+    #[test]
+    fn compile_target_flag_parses_all_supported() {
+        for triple in SUPPORTED_TARGETS {
+            let cli =
+                Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", triple]).unwrap();
+            if let Some(Cmd::Compile(c)) = cli.cmd {
+                assert_eq!(c.target.as_deref(), Some(*triple));
+            } else {
+                panic!("expected Compile for target {triple}");
+            }
         }
     }
 
