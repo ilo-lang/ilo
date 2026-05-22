@@ -1140,7 +1140,9 @@ impl Parser {
                 let value = self.parse_expr_inner()?;
                 labelled_pairs.push((label, value));
                 match self.peek() {
-                    Some(Token::Comma) => { self.advance(); }
+                    Some(Token::Comma) => {
+                        self.advance();
+                    }
                     Some(Token::RParen) => break,
                     _ => {
                         return Err(self.error_hint(
@@ -1214,7 +1216,9 @@ impl Parser {
                         code: "ILO-P019",
                         position: self.pos,
                         span,
-                        message: format!("`{fname}` has {n} parameters but received too many positional args"),
+                        message: format!(
+                            "`{fname}` has {n} parameters but received too many positional args"
+                        ),
                         hint: None,
                     });
                 }
@@ -1228,7 +1232,9 @@ impl Parser {
                         code: "ILO-P019",
                         position: self.pos,
                         span,
-                        message: format!("unknown label `{label}` for `{fname}`; known parameters: {known}"),
+                        message: format!(
+                            "unknown label `{label}` for `{fname}`; known parameters: {known}"
+                        ),
                         hint: Some(format!("Use one of the declared parameter names: {known}")),
                     });
                 };
@@ -1238,7 +1244,9 @@ impl Parser {
                             code: "ILO-P019",
                             position: self.pos,
                             span,
-                            message: format!("label `{label}` conflicts with positional argument at slot {idx} of `{fname}`"),
+                            message: format!(
+                                "label `{label}` conflicts with positional argument at slot {idx} of `{fname}`"
+                            ),
                             hint: None,
                         });
                     }
@@ -1252,7 +1260,11 @@ impl Parser {
                 }
                 result[idx] = Some(value);
             }
-            let final_args: Vec<Expr> = result.into_iter().take_while(|s| s.is_some()).flatten().collect();
+            let final_args: Vec<Expr> = result
+                .into_iter()
+                .take_while(|s| s.is_some())
+                .flatten()
+                .collect();
             return Ok(final_args);
         }
 
@@ -3730,9 +3742,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 message: format!(
                     "labelled args used on `{func_name}` but its parameter names are unknown"
                 ),
-                hint: Some(
-                    "labelled args require a function with declared parameters".to_string(),
-                ),
+                hint: Some("labelled args require a function with declared parameters".to_string()),
             });
         };
 
@@ -3773,9 +3783,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     message: format!(
                         "unknown label `{label}` for `{func_name}`; known parameters: {known}"
                     ),
-                    hint: Some(format!(
-                        "Use one of the declared parameter names: {known}"
-                    )),
+                    hint: Some(format!("Use one of the declared parameter names: {known}")),
                 });
             };
             if result[idx].is_some() {
@@ -3783,9 +3791,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     code: "ILO-P019",
                     position: self.pos,
                     span,
-                    message: format!(
-                        "duplicate argument for parameter `{label}` of `{func_name}`"
-                    ),
+                    message: format!("duplicate argument for parameter `{label}` of `{func_name}`"),
                     hint: None,
                 });
             }
