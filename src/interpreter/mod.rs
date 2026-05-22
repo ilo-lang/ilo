@@ -14768,6 +14768,7 @@ mod tests {
                 alias: None,
                 predicate: None,
                 alt_path: None,
+                reexport: false,
                 span: Span { start: 0, end: 0 },
             },
         );

@@ -1,0 +1,12 @@
+-- use-reexport-outer.ilo — facade module that re-exports names from inner
+--
+-- `use re:"path" [names]` imports the listed names AND adds them to this
+-- module's public surface, so consumers of outer can import them directly.
+--
+-- This file is NOT the entry point. It is imported by use-reexport-main.ilo.
+
+-- Re-export foo and bar from inner so consumers see them as part of outer's API.
+use re:"use-reexport-inner.ilo" [foo bar]
+
+-- baz is outer's own function — also exported.
+baz n:n>n;+n 10

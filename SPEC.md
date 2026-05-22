@@ -1815,9 +1815,10 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 Split programs across files with `use`:
 
 ```
-use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo"               -- flat import: all declarations (including _-private ones by convention)
 use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
-use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
+use alias:"path/to/file.ilo"         -- named-module import: public declarations prefixed with alias-
+use re:"path/to/file.ilo" [name1 name2] -- re-export: import AND expose those names to consumers
 ```
 
 **Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
@@ -1825,6 +1826,8 @@ use alias:"path/to/file.ilo"        -- named-module import: public declarations 
 **Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
 
 **Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
+
+**Re-export** (`re:"path" [names]`) imports the listed names and also adds them to this module's public surface so consumers can import them from this module directly. Requires a `[...]` list; `re:` without a list is an error.
 
 ```
 -- math-lib.ilo
@@ -1836,6 +1839,13 @@ half n:n>n; /n 2
 use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
 use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
 run n:n>n; m-dbl! half n
+
+-- facade.ilo
+use re:"math-lib.ilo" [dbl half] -- re-export: dbl and half are part of facade's public API
+extra n:n>n; +n 100
+
+-- consumer.ilo
+use "facade.ilo" [dbl extra]    -- dbl came from math-lib but is visible via re-export
 ```
 
 ### Module privacy
@@ -1854,6 +1864,7 @@ Declaring a private function: `_helper-name params:type > return-type; body`
 - Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
 - Circular imports are an error (`ILO-P018`)
 - Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Re-export form (`re:"path"`) requires a `[...]` list
 - Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
