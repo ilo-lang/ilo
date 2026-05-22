@@ -2726,6 +2726,16 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                                 })
                             })
                             .collect();
+                        // Build per-item flags array from the static CLI_FLAGS registry.
+                        let flags_list: Vec<serde_json::Value> = cli::args::CLI_FLAGS
+                            .iter()
+                            .map(|f| {
+                                serde_json::json!({
+                                    "name": f.name,
+                                    "stability": f.stability,
+                                })
+                            })
+                            .collect();
                         let v = serde_json::json!({
                             "schemaVersion": 1,
                             "format": "ai-txt",
@@ -2738,6 +2748,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                                 "experimental": ["0.13-in-flight-features", "aot-artifact-format", "cranelift-jit-internals", "extensions-dir", "cargo-feature-flags"],
                             },
                             "builtins": builtins_list,
+                            "flags": flags_list,
                         });
                         println!("{}", v);
                     } else {
@@ -10210,6 +10221,51 @@ mod tests {
             v["stability"]["doc"].as_str().is_some(),
             "top-level stability.doc must still be present for backward compat"
         );
+    }
+
+    // ── spec --json ai: per-item flags stability annotations (ILO-350) ──────────
+
+    #[test]
+    fn spec_json_ai_flags_array_has_stability_fields() {
+        // Run `ilo spec --json ai` and verify the flags array is present
+        // with name+stability on every entry, and all stabilities are known tiers.
+        let output = std::process::Command::new(
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("ilo"),
+        )
+        .args(["spec", "--json", "ai"])
+        .output();
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(output.status.success());
+        let v: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("spec --json ai must be valid JSON");
+        let flags = v["flags"].as_array().expect("flags must be an array");
+        assert!(!flags.is_empty(), "flags array must contain at least one entry");
+        for f in flags {
+            let name = f["name"].as_str().expect("each flag must have a name");
+            let stability = f["stability"]
+                .as_str()
+                .expect("each flag must have a stability");
+            assert!(
+                stability == "stable" || stability == "provisional" || stability == "experimental",
+                "flag {name} has unknown stability tier '{stability}'"
+            );
+            assert!(
+                name.starts_with("--"),
+                "flag name '{name}' must start with '--'"
+            );
+        }
+        // Verify that --json flag is present (it's a core global flag).
+        let has_json_flag = flags.iter().any(|f| f["name"].as_str() == Some("--json"));
+        assert!(has_json_flag, "flags array must include --json");
     }
 
     // ── dispatch_bare_args: no-op case with func in rest matching func_names ──

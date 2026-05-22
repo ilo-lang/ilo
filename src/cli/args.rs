@@ -462,6 +462,70 @@ impl Global {
     }
 }
 
+// ── CLI flag stability registry ────────────────────────────────────────────────
+
+/// A CLI flag entry with its long-form name and stability tier.
+#[derive(Debug, Clone, Copy)]
+pub struct CliFlag {
+    /// Long flag name as it appears on the CLI (e.g. `--json`).
+    pub name: &'static str,
+    /// Stability tier: `"stable"`, `"provisional"`, or `"experimental"`.
+    pub stability: &'static str,
+}
+
+/// All public CLI flags with their stability annotations.
+///
+/// Stability tiers follow `STABILITY.md`:
+/// - `"stable"` — committed, will not be removed or renamed pre-1.0.
+/// - `"provisional"` — shipped and usable, but the exact spelling may change.
+/// - `"experimental"` — unreleased or subject to removal without notice.
+///
+/// Used by `ilo spec --json ai` to emit per-flag stability annotations.
+pub const CLI_FLAGS: &[CliFlag] = &[
+    // ── Global output-mode flags ───────────────────────────────────────────────
+    CliFlag { name: "--ansi",             stability: "provisional" },
+    CliFlag { name: "--text",             stability: "provisional" },
+    CliFlag { name: "--json",             stability: "provisional" },
+    CliFlag { name: "--no-hints",         stability: "provisional" },
+    CliFlag { name: "--silent",           stability: "provisional" },
+    CliFlag { name: "--max-ast-depth",    stability: "provisional" },
+    CliFlag { name: "--max-runtime",      stability: "provisional" },
+    CliFlag { name: "--max-output-bytes", stability: "provisional" },
+    // ── run: engine flags ─────────────────────────────────────────────────────
+    CliFlag { name: "--vm",               stability: "provisional" },
+    CliFlag { name: "--jit",              stability: "experimental" },
+    CliFlag { name: "--run-llvm",         stability: "experimental" },
+    // ── run: execution flags ──────────────────────────────────────────────────
+    CliFlag { name: "--bench",            stability: "provisional" },
+    CliFlag { name: "--emit",             stability: "experimental" },
+    CliFlag { name: "--explain",          stability: "provisional" },
+    CliFlag { name: "--dense",            stability: "provisional" },
+    CliFlag { name: "--expanded",         stability: "provisional" },
+    CliFlag { name: "--ast",              stability: "experimental" },
+    CliFlag { name: "--tools",            stability: "provisional" },
+    CliFlag { name: "--mcp",              stability: "provisional" },
+    CliFlag { name: "--allow-net",        stability: "experimental" },
+    CliFlag { name: "--allow-read",       stability: "experimental" },
+    CliFlag { name: "--allow-write",      stability: "experimental" },
+    CliFlag { name: "--allow-run",        stability: "experimental" },
+    // ── check flags ───────────────────────────────────────────────────────────
+    CliFlag { name: "--strict",           stability: "provisional" },
+    // ── compile/build flags ───────────────────────────────────────────────────
+    // -o is a short flag; skip (spec focuses on long flags)
+    // ── graph flags ───────────────────────────────────────────────────────────
+    CliFlag { name: "--fn",               stability: "provisional" },
+    CliFlag { name: "--reverse",          stability: "provisional" },
+    CliFlag { name: "--subgraph",         stability: "provisional" },
+    CliFlag { name: "--budget",           stability: "provisional" },
+    CliFlag { name: "--dot",              stability: "provisional" },
+    // ── tools flags ───────────────────────────────────────────────────────────
+    CliFlag { name: "--format",           stability: "provisional" },
+    CliFlag { name: "--human",            stability: "provisional" },
+    CliFlag { name: "--ilo",              stability: "provisional" },
+    CliFlag { name: "--full",             stability: "provisional" },
+    CliFlag { name: "--graph",            stability: "provisional" },
+];
+
 // ── Unknown-flag guard ─────────────────────────────────────────────────────────
 
 /// Reject any token in `args` that looks like a clean long flag (`--word`,
@@ -1185,6 +1249,34 @@ mod tests {
     fn empty_args_ok() {
         let args: Vec<String> = vec![];
         assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    // ── CLI_FLAGS registry ────────────────────────────────────────────────────
+
+    #[test]
+    fn cli_flags_all_have_valid_stability() {
+        for f in CLI_FLAGS {
+            assert!(
+                f.stability == "stable" || f.stability == "provisional" || f.stability == "experimental",
+                "flag {} has unknown stability tier '{}'",
+                f.name,
+                f.stability
+            );
+            assert!(f.name.starts_with("--"), "flag name '{}' must start with '--'", f.name);
+        }
+    }
+
+    #[test]
+    fn cli_flags_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for f in CLI_FLAGS {
+            assert!(seen.insert(f.name), "duplicate CLI flag '{}' in CLI_FLAGS", f.name);
+        }
+    }
+
+    #[test]
+    fn cli_flags_is_non_empty() {
+        assert!(!CLI_FLAGS.is_empty());
     }
 
     #[test]
