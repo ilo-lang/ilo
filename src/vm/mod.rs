@@ -2834,11 +2834,22 @@ impl RegCompiler {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 // Evaluate start and end once
                 let start_reg = self.compile_expr(start);
                 let end_reg = self.compile_expr(end);
+
+                // Evaluate step (or use constant 1)
+                let step_reg = if let Some(step_expr) = step {
+                    self.compile_expr(step_expr)
+                } else {
+                    let one_ki = self.current.add_const(Value::Number(1.0));
+                    let r = self.alloc_reg();
+                    self.emit_abx(OP_LOADK, r, one_ki);
+                    r
+                };
 
                 let last_reg = self.alloc_reg();
                 let nil_ki = self.current.add_const(Value::Nil);
@@ -2849,8 +2860,6 @@ impl RegCompiler {
                 let counter_reg = self.alloc_reg();
                 self.emit_abc(OP_MOVE, counter_reg, start_reg, 0);
                 self.add_local(binding, counter_reg);
-
-                let one_ki = self.current.add_const(Value::Number(1.0));
 
                 // Loop top: check counter < end
                 let loop_top = self.current.code.len();
@@ -2888,14 +2897,8 @@ impl RegCompiler {
                     }
                 }
 
-                // counter += 1 (use ADDK_N when counter is known numeric)
-                if self.reg_is_num[counter_reg as usize] && one_ki <= 255 {
-                    self.emit_abc(OP_ADDK_N, counter_reg, counter_reg, one_ki as u8);
-                } else {
-                    let one_reg = self.alloc_reg();
-                    self.emit_abx(OP_LOADK, one_reg, one_ki);
-                    self.emit_abc(OP_ADD, counter_reg, counter_reg, one_reg);
-                }
+                // counter += step
+                self.emit_abc(OP_ADD, counter_reg, counter_reg, step_reg);
 
                 // Jump back to loop top
                 self.emit_jump_to(loop_top);

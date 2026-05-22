@@ -4625,6 +4625,7 @@ impl VerifyContext {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 let start_ty = self.infer_expr(func, scope, start, span);
@@ -4646,6 +4647,30 @@ impl VerifyContext {
                         None,
                         Some(span),
                     );
+                }
+                if let Some(step_expr) = step {
+                    let step_ty = self.infer_expr(func, scope, step_expr, span);
+                    if !compatible(&step_ty, &Ty::Number) {
+                        self.err(
+                            "ILO-T014",
+                            func,
+                            format!("range step must be n, got {step_ty}"),
+                            None,
+                            Some(span),
+                        );
+                    }
+                    // Reject literal zero or negative steps
+                    if let Expr::Literal(Literal::Number(n)) = step_expr {
+                        if *n <= 0.0 {
+                            self.err(
+                                "ILO-V001",
+                                func,
+                                format!("range step must be positive, got {n} — use a positive integer step (e.g. `by 2`)"),
+                                None,
+                                Some(span),
+                            );
+                        }
+                    }
                 }
                 scope.push(HashMap::new());
                 scope_insert(scope, binding.clone(), Ty::Number);
