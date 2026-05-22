@@ -1906,7 +1906,10 @@ statement boundary; bind the chain to a local first. For example, split \
                 }
                 self.advance(); // consume "defer"
                 let expr = self.parse_expr()?;
-                Ok(Stmt::Defer { expr, kind: DeferKind::Always })
+                Ok(Stmt::Defer {
+                    expr,
+                    kind: DeferKind::Always,
+                })
             }
             Some(Token::Ident(name)) if name == "errdefer" => {
                 if self.token_at(self.pos + 1) == Some(&Token::Eq) {
@@ -1918,7 +1921,10 @@ statement boundary; bind the chain to a local first. For example, split \
                 }
                 self.advance(); // consume "errdefer"
                 let expr = self.parse_expr()?;
-                Ok(Stmt::Defer { expr, kind: DeferKind::OnError })
+                Ok(Stmt::Defer {
+                    expr,
+                    kind: DeferKind::OnError,
+                })
             }
             Some(Token::LBrace) if self.is_destructure_pattern() => self.parse_destructure(),
             // `_=expr` — explicit discard bind. Evaluates expr for side effects

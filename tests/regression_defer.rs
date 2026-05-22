@@ -17,7 +17,15 @@ fn run_tree(src: &str, func: &str, args: Vec<Value>) -> Value {
     let tokens = lexer::lex(src).expect("lex");
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (mut program, parse_errors) = parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse errors: {:?}", parse_errors);
@@ -30,7 +38,15 @@ fn run_vm(src: &str, func: &str, args: Vec<Value>) -> Value {
     let tokens = lexer::lex(src).expect("lex");
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (mut program, parse_errors) = parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse errors: {:?}", parse_errors);
@@ -200,7 +216,15 @@ fn ast_defer_kind_always_parsed() {
     let tokens = lexer::lex(src).expect("lex");
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, errs) = parser::parse(token_spans);
     assert!(errs.is_empty());
@@ -208,7 +232,10 @@ fn ast_defer_kind_always_parsed() {
     if let ast::Decl::Function { body, .. } = decl {
         assert!(matches!(
             body[0].node,
-            ast::Stmt::Defer { kind: ast::DeferKind::Always, .. }
+            ast::Stmt::Defer {
+                kind: ast::DeferKind::Always,
+                ..
+            }
         ));
     } else {
         panic!("expected Function decl");
@@ -221,7 +248,15 @@ fn ast_defer_kind_onerror_parsed() {
     let tokens = lexer::lex(src).expect("lex");
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, errs) = parser::parse(token_spans);
     assert!(errs.is_empty());
@@ -229,7 +264,10 @@ fn ast_defer_kind_onerror_parsed() {
     if let ast::Decl::Function { body, .. } = decl {
         assert!(matches!(
             body[0].node,
-            ast::Stmt::Defer { kind: ast::DeferKind::OnError, .. }
+            ast::Stmt::Defer {
+                kind: ast::DeferKind::OnError,
+                ..
+            }
         ));
     } else {
         panic!("expected Function decl");
@@ -244,7 +282,15 @@ fn defer_reserved_as_identifier_is_parse_error() {
     let tokens = lexer::lex(src).expect("lex");
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (_, errs) = parser::parse(token_spans);
     assert!(
@@ -259,7 +305,15 @@ fn errdefer_reserved_as_identifier_is_parse_error() {
     let tokens = lexer::lex(src).expect("lex");
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (_, errs) = parser::parse(token_spans);
     assert!(
