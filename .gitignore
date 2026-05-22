@@ -29,6 +29,8 @@ rust_out
 
 # Research / scratch docs (subagents leave reports here; not tracked)
 docs/
+# Tracked documentation files are explicitly exempted below:
+!docs/deploying.md
 
 # E2E test artefacts (subagent-produced logs; not tracked)
 tests/e2e/

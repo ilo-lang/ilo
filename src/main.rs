@@ -2779,6 +2779,14 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             0
         }
         Some(cli::Cmd::Compile(c)) | Some(cli::Cmd::Build(c)) => {
+            // Validate --target against the supported list before dispatching.
+            if let Some(ref t) = c.target {
+                if !cli::args::SUPPORTED_TARGETS.contains(&t.as_str()) {
+                    let list = cli::args::SUPPORTED_TARGETS.join(", ");
+                    eprintln!("error: unsupported target '{t}'. Supported targets: {list}");
+                    return 1;
+                }
+            }
             let mut args: Vec<String> = vec![c.source];
             if let Some(ref o) = c.output {
                 args.push("-o".into());
@@ -2789,6 +2797,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             if cli.global.explicit_json() {
                 args.push("--json".into());
+            }
+            if let Some(ref t) = c.target {
+                args.push("--target".into());
+                args.push(t.clone());
             }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
