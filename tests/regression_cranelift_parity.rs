@@ -44,10 +44,8 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn tmp_paths(tag: &str) -> (PathBuf, PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let src =
-        std::env::temp_dir().join(format!("ilo-371-parity-{tag}-{pid}-{n}.ilo"));
-    let bin =
-        std::env::temp_dir().join(format!("ilo-371-parity-{tag}-{pid}-{n}.bin"));
+    let src = std::env::temp_dir().join(format!("ilo-371-parity-{tag}-{pid}-{n}.ilo"));
+    let bin = std::env::temp_dir().join(format!("ilo-371-parity-{tag}-{pid}-{n}.bin"));
     (src, bin)
 }
 
@@ -78,7 +76,9 @@ fn run_aot(src_path: &PathBuf, bin_path: &PathBuf, entry: &str) -> (String, i32)
         "ilo compile failed: stderr={:?}",
         String::from_utf8_lossy(&compile.stderr),
     );
-    let out = Command::new(bin_path).output().expect("failed to run AOT binary");
+    let out = Command::new(bin_path)
+        .output()
+        .expect("failed to run AOT binary");
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (stdout, out.status.code().unwrap_or(-1))
 }
@@ -163,12 +163,7 @@ fn grp_closure_inline_lambda_key_cross_engine() {
 fn main_underscore_prnt_at_tail_cross_engine() {
     // Simplest case: `main>_; prnt "hello"` — the canonical entry point.
     // Must print exactly once on all engines.
-    assert_all_engines(
-        "main-prnt-tail",
-        "main>_;prnt \"hello\"\n",
-        "main",
-        "hello",
-    );
+    assert_all_engines("main-prnt-tail", "main>_;prnt \"hello\"\n", "main", "hello");
 }
 
 #[test]
