@@ -14370,6 +14370,8 @@ mod tests {
                 path: "x.ilo".to_string(),
                 only: None,
                 alias: None,
+                predicate: None,
+                alt_path: None,
                 span: Span { start: 0, end: 0 },
             },
         );

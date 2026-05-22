@@ -369,8 +369,19 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                 indent(out, level + 1);
                 out.push_str(&format!("const {} = {};\n", js_name(binding), subj_str));
             }
-            Pattern::Or(_alts) => {
-                // Or-patterns not yet supported in JS codegen; treat as wildcard
+            Pattern::Or(alts) => {
+                let kw = if i == 0 { "if" } else { "else if" };
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} === {}", subj_str, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "true".to_string(),
+                        _ => "false".to_string(),
+                    })
+                    .collect();
+                out.push_str(&format!("{} ({}) {{\n", kw, conds.join(" || ")));
             }
         }
         emit_body(out, &arm.body, level + 1, true);
@@ -496,8 +507,14 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             };
             format!("((..._a) => {}(..._a{}))", js_name(fn_name), cap_str)
         }
-        Expr::Todo(inner) => emit_expr(out, level, inner),
-        Expr::Panic(inner) => emit_expr(out, level, inner),
+        Expr::Todo(reason) => {
+            let msg = emit_expr(out, level, reason);
+            format!("(() => {{ throw new Error('TODO: ' + {}); }})()", msg)
+        }
+        Expr::Panic(reason) => {
+            let msg = emit_expr(out, level, reason);
+            format!("(() => {{ throw new Error('PANIC: ' + {}); }})()", msg)
+        }
     }
 }
 
@@ -782,9 +799,23 @@ fn emit_match_expr(
                 indent(&mut body, level + 1);
                 body.push_str("}\n");
             }
-            Pattern::Or(_alts) => {
-                // Or-patterns not yet supported in JS codegen; treat as wildcard
+            Pattern::Or(alts) => {
+                let kw = if i == 0 { "if" } else { "else if" };
+                let conds: Vec<String> = alts
+                    .iter()
+                    .map(|alt| match alt {
+                        Pattern::Literal(lit) => {
+                            format!("{} === {}", subj_var, emit_literal(lit))
+                        }
+                        Pattern::Wildcard => "true".to_string(),
+                        _ => "false".to_string(),
+                    })
+                    .collect();
+                indent(&mut body, level + 1);
+                body.push_str(&format!("{} ({}) {{\n", kw, conds.join(" || ")));
                 emit_body(&mut body, &arm.body, level + 2, true);
+                indent(&mut body, level + 1);
+                body.push_str("}\n");
             }
         }
     }

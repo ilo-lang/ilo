@@ -92,6 +92,29 @@ pub struct Param {
     pub ty: Type,
 }
 
+/// Compile-time predicate for conditional `use` — `use ?wasm "a.ilo" : "b.ilo"`.
+///
+/// `wasm`   — true when building for wasm32 (`--target wasm`).
+/// `native` — true when building for a native host (`--target native`, default).
+/// `test`   — true when running under `ilo test` (`--target test`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsePredicate {
+    Wasm,
+    Native,
+    Test,
+}
+
+impl UsePredicate {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "wasm" => Some(Self::Wasm),
+            "native" => Some(Self::Native),
+            "test" => Some(Self::Test),
+            _ => None,
+        }
+    }
+}
+
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Decl {
@@ -138,6 +161,9 @@ pub enum Decl {
     /// `use alias:"path/to/file.ilo"` — import all public declarations, prefixed
     ///   with `alias-` (e.g. `math-dbl`, `math-half`). Private (`_`-prefixed)
     ///   symbols are always excluded from named-module imports.
+    /// `use ?wasm "wasm-mod.ilo" : "native-mod.ilo"` — conditional import:
+    ///   import `path` when the predicate is true for the current build target,
+    ///   otherwise import `alt_path`. Resolved before verification.
     /// Resolved before verification; replaced by the imported declarations in
     /// the merged program. Stripped by the verifier/codegen as a safety net.
     Use {
@@ -147,6 +173,12 @@ pub enum Decl {
         /// Named module alias: `use alias:"path"` sets this to `Some("alias")`.
         /// When set, imported public symbols are renamed `alias-<name>`.
         alias: Option<String>,
+        /// Conditional form: `use ?<pred> "true-path" : "false-path"`.
+        /// When `Some`, `path` is the true-branch and `alt_path` is the
+        /// false-branch. `only` and `alias` are disallowed in this form.
+        predicate: Option<UsePredicate>,
+        /// The false-branch path for conditional imports. `None` for unconditional.
+        alt_path: Option<String>,
         #[serde(skip)]
         span: Span,
     },
