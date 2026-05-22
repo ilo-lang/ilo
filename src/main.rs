@@ -912,6 +912,377 @@ fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> 
     Ok(vec![])
 }
 
+// ── `ilo httpd` subcommand ────────────────────────────────────────────────────
+//
+// Serves HTTP requests by calling a user-defined ilo handler function.
+//
+// Handler signature (ilo source):
+//   type Request{method:t;path:t;headers:M t t;body:t}
+//   type Response{status:n;headers:M t t;body:t}
+//   handler req:Request>Response; ...
+//
+// One thread is spawned per accepted connection (minimal thread-per-request
+// pool). No async runtime is required — the ilo interpreter is synchronous.
+//
+// TODO(ILO-59): add --allow-net cap check once the cap-flags PR lands.
+
+fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    // ── Load and compile the handler program once ─────────────────────────────
+    let source = match std::fs::read_to_string(handler_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read handler file '{}': {}", handler_file, e);
+            return 1;
+        }
+    };
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            let d = Diagnostic::from(&e).with_source(source.clone());
+            eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
+            return 1;
+        }
+    };
+    let token_spans: Vec<_> = tokens
+        .into_iter()
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
+        .collect();
+
+    let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
+    program.source = Some(source.clone());
+
+    if !parse_errors.is_empty() {
+        for e in &parse_errors {
+            let d = Diagnostic::from(e).with_source(source.clone());
+            eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
+        }
+        return 1;
+    }
+
+    let vr = verify::verify(&program);
+    for w in &vr.warnings {
+        eprint!(
+            "{}",
+            AnsiRenderer { use_color: true }
+                .render(&Diagnostic::from(w).with_source(source.clone()))
+        );
+    }
+    if !vr.errors.is_empty() {
+        for e in &vr.errors {
+            eprint!(
+                "{}",
+                AnsiRenderer { use_color: true }
+                    .render(&Diagnostic::from(e).with_source(source.clone()))
+            );
+        }
+        return 1;
+    }
+
+    let program = Arc::new(program);
+    let func = func_name.to_string();
+
+    // ── Bind the TCP listener ─────────────────────────────────────────────────
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: cannot bind to {}: {}", addr, e);
+            return 1;
+        }
+    };
+    eprintln!("ilo httpd listening on http://0.0.0.0:{}", port);
+
+    // ── Accept loop: one thread per connection ────────────────────────────────
+    for stream in listener.incoming() {
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("accept error: {}", e);
+                continue;
+            }
+        };
+        let program = Arc::clone(&program);
+        let func = func.clone();
+
+        std::thread::spawn(move || {
+            if let Err(e) = handle_http_connection(stream, &program, &func) {
+                eprintln!("connection error: {}", e);
+            }
+        });
+    }
+    0
+}
+
+/// Parse one HTTP/1.1 request from `stream`, call the ilo handler, write the response.
+fn handle_http_connection(
+    stream: std::net::TcpStream,
+    program: &ast::Program,
+    func_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Write};
+
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut writer = stream;
+
+    // ── Parse request line ────────────────────────────────────────────────────
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    let request_line = request_line.trim_end();
+
+    let mut parts = request_line.splitn(3, ' ');
+    let method = parts.next().unwrap_or("GET").to_string();
+    let path = parts.next().unwrap_or("/").to_string();
+    // HTTP version ignored for simplicity.
+
+    // ── Parse headers ─────────────────────────────────────────────────────────
+    let mut raw_headers: Vec<(String, String)> = Vec::new();
+    let mut content_length: usize = 0;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_lowercase();
+            let val = v.trim().to_string();
+            if key == "content-length" {
+                content_length = val.parse().unwrap_or(0);
+            }
+            raw_headers.push((key, val));
+        }
+    }
+
+    // ── Read body ─────────────────────────────────────────────────────────────
+    let body = if content_length > 0 {
+        let mut buf = vec![0u8; content_length];
+        use std::io::Read;
+        reader.read_exact(&mut buf)?;
+        String::from_utf8_lossy(&buf).into_owned()
+    } else {
+        String::new()
+    };
+
+    // ── Build ilo Request record ───────────────────────────────────────────────
+    use interpreter::MapKey;
+    use interpreter::Value;
+
+    let mut hdr_map: HashMap<interpreter::MapKey, Value> = HashMap::new();
+    for (k, v) in &raw_headers {
+        hdr_map.insert(
+            MapKey::Text(k.clone()),
+            Value::Text(std::sync::Arc::new(v.clone())),
+        );
+    }
+
+    let mut req_fields: HashMap<String, Value> = HashMap::new();
+    req_fields.insert(
+        "method".to_string(),
+        Value::Text(std::sync::Arc::new(method.clone())),
+    );
+    req_fields.insert(
+        "path".to_string(),
+        Value::Text(std::sync::Arc::new(path.clone())),
+    );
+    req_fields.insert(
+        "headers".to_string(),
+        Value::Map(std::sync::Arc::new(hdr_map)),
+    );
+    req_fields.insert("body".to_string(), Value::Text(std::sync::Arc::new(body)));
+
+    let req_val = Value::Record {
+        type_name: "Request".to_string(),
+        fields: req_fields,
+    };
+
+    // ── Call handler ──────────────────────────────────────────────────────────
+    let result = interpreter::run(program, Some(func_name), vec![req_val]);
+
+    // ── Extract Response record ───────────────────────────────────────────────
+    let resp = match result {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format!("handler error: {}", e);
+            eprintln!("{}", msg);
+            let body = format!("Internal Server Error: {}\n", e);
+            let resp_bytes = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            writer.write_all(resp_bytes.as_bytes())?;
+            eprintln!("{} {} {} -> 500", peer, method, path);
+            return Ok(());
+        }
+    };
+
+    // Unwrap Result wrappers (handler may return R Response t)
+    let resp = match resp {
+        Value::Ok(inner) => *inner,
+        Value::Err(e) => {
+            let body = format!("Handler returned Err: {}\n", e);
+            let resp_bytes = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            writer.write_all(resp_bytes.as_bytes())?;
+            eprintln!("{} {} {} -> 500 (Err)", peer, method, path);
+            return Ok(());
+        }
+        other => other,
+    };
+
+    // Body shape: either a plain string or a list of chunks for chunked transfer.
+    enum BodyShape {
+        Plain(String),
+        Chunked(Vec<String>),
+    }
+
+    let (status, resp_headers, body_shape) = match &resp {
+        Value::Record { fields, .. } => {
+            let status = match fields.get("status") {
+                Some(Value::Number(n)) => *n as u16,
+                _ => 200,
+            };
+            // body may be:
+            //   Text   → plain body (existing behaviour)
+            //   List   → chunked: each element is a chunk
+            //   FnRef/Closure → call it (no args) expecting a List, then chunk
+            let body_shape = match fields.get("body") {
+                Some(Value::Text(s)) => BodyShape::Plain((**s).clone()),
+                Some(Value::List(items)) => {
+                    let chunks = items.iter().map(|v| v.to_string()).collect();
+                    BodyShape::Chunked(chunks)
+                }
+                Some(Value::FnRef(name)) => {
+                    match interpreter::run(program, Some(name.as_str()), vec![]) {
+                        Ok(Value::List(items)) => {
+                            let chunks = items.iter().map(|v| v.to_string()).collect();
+                            BodyShape::Chunked(chunks)
+                        }
+                        Ok(other) => BodyShape::Plain(other.to_string()),
+                        Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
+                    }
+                }
+                Some(Value::Closure { fn_name, .. }) => {
+                    match interpreter::run(program, Some(fn_name.as_str()), vec![]) {
+                        Ok(Value::List(items)) => {
+                            let chunks = items.iter().map(|v| v.to_string()).collect();
+                            BodyShape::Chunked(chunks)
+                        }
+                        Ok(other) => BodyShape::Plain(other.to_string()),
+                        Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
+                    }
+                }
+                Some(other) => BodyShape::Plain(other.to_string()),
+                None => BodyShape::Plain(String::new()),
+            };
+            let resp_headers: Vec<(String, String)> = match fields.get("headers") {
+                Some(Value::Map(m)) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let ks = match k {
+                            MapKey::Text(s) => s.clone(),
+                            MapKey::Int(n) => n.to_string(),
+                        };
+                        let vs = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => other.to_string(),
+                        };
+                        (ks, vs)
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            (status, resp_headers, body_shape)
+        }
+        // Handler returned bare text — wrap as 200 OK text/plain
+        Value::Text(s) => (200u16, vec![], BodyShape::Plain((**s).clone())),
+        other => (200u16, vec![], BodyShape::Plain(other.to_string())),
+    };
+
+    let status_text = match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+
+    let has_content_type = resp_headers
+        .iter()
+        .any(|(k, _)| k.to_lowercase() == "content-type");
+
+    match body_shape {
+        BodyShape::Plain(resp_body) => {
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str(&format!("Content-Length: {}\r\n", resp_body.len()));
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            writer.write_all(resp_body.as_bytes())?;
+        }
+        BodyShape::Chunked(chunks) => {
+            // RFC 7230 §4.1 chunked transfer encoding.
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str("Transfer-Encoding: chunked\r\n");
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            for chunk in &chunks {
+                let data = chunk.as_bytes();
+                if !data.is_empty() {
+                    writer.write_all(format!("{:x}\r\n", data.len()).as_bytes())?;
+                    writer.write_all(data)?;
+                    writer.write_all(b"\r\n")?;
+                }
+            }
+            // Terminating chunk
+            writer.write_all(b"0\r\n\r\n")?;
+        }
+    }
+
+    eprintln!("{} {} {} -> {}", peer, method, path, status);
+    Ok(())
+}
+
 // ── `ilo serv` subcommand ──────────────────────────────────────────────────
 
 /// Render a `Diagnostic` as a `serde_json::Value` for inclusion in serve responses.
@@ -3126,6 +3497,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 cli::args::SkillCmd::Path { name } => skill_path_cmd(&name, as_json),
                 cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
             }
+        }
+        Some(cli::Cmd::Httpd(h)) => {
+            let func = h.func.as_deref().unwrap_or("handler");
+            httpd_cmd(h.port, &h.handler, func)
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
@@ -11204,5 +11579,129 @@ mod tests {
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
+    }
+
+    // ── handle_http_connection: chunked transfer encoding ────────────────────
+
+    /// Spin up a loopback listener, send a minimal HTTP request, capture the
+    /// raw response, and verify Transfer-Encoding: chunked is present along
+    /// with the expected chunk data.
+    #[test]
+    fn httpd_chunked_response_writes_chunked_encoding() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        // Handler: returns a Response with body as a list (chunk mode).
+        // ilo source: handler that returns a record whose body is a list.
+        // We use a zero-arg function reference as the body value.
+        let src = r#"
+body-chunks>L t
+  ["hello" " " "world"]
+
+type rsp{status:n;body:_}
+handler req:_>rsp
+  rsp status:200 body:body-chunks
+"#;
+        let program = Arc::new(make_program(src));
+
+        // Bind a loopback listener on an OS-assigned port.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Spawn the handler thread.
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+
+        // Send a minimal HTTP/1.1 request.
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+
+        jh.join().unwrap();
+
+        // Verify Transfer-Encoding: chunked header is present.
+        assert!(
+            response.contains("Transfer-Encoding: chunked"),
+            "expected chunked header, got:\n{}",
+            response
+        );
+        // Verify the chunked body contains the expected text.
+        assert!(
+            response.contains("hello"),
+            "expected 'hello' in body:\n{}",
+            response
+        );
+        assert!(
+            response.contains("world"),
+            "expected 'world' in body:\n{}",
+            response
+        );
+        // Verify the terminating chunk is present.
+        assert!(
+            response.ends_with("0\r\n\r\n"),
+            "expected terminating chunk:\n{}",
+            response
+        );
+        // Content-Length must NOT be present in chunked responses.
+        assert!(
+            !response.contains("Content-Length"),
+            "Content-Length must be absent in chunked response:\n{}",
+            response
+        );
+    }
+
+    /// Plain body (Text) responses continue to use Content-Length (regression guard).
+    #[test]
+    fn httpd_plain_response_uses_content_length() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        let src = r#"
+type rsp{status:n;body:t}
+handler req:_>rsp
+  rsp status:200 body:"hello plain"
+"#;
+        let program = Arc::new(make_program(src));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        jh.join().unwrap();
+
+        assert!(
+            response.contains("Content-Length: 11"),
+            "expected Content-Length:\n{}",
+            response
+        );
+        assert!(
+            !response.contains("Transfer-Encoding"),
+            "must not have TE:\n{}",
+            response
+        );
+        assert!(
+            response.contains("hello plain"),
+            "expected body:\n{}",
+            response
+        );
     }
 }
