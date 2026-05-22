@@ -198,6 +198,22 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
     }
 }
 
+/// Returns true when a type carries no concrete shape information.
+///
+/// `_` (Unknown) is the canonical "no info" type produced by `jpar!` unwrap.
+/// `O _` arises when `mget` is called on an Unknown-typed value (e.g. the
+/// result of `jpar!`): the Optional wrapper was inferred but the inner type is
+/// still unknown, so downstream operations that accept Unknown should also
+/// accept `O _`.  Without this, valid chains like
+/// `r=jpar! body; v=mget r "key"; len v` produce spurious T013 errors.
+fn is_opaque(ty: &Ty) -> bool {
+    match ty {
+        Ty::Unknown => true,
+        Ty::Optional(inner) => matches!(inner.as_ref(), Ty::Unknown),
+        _ => false,
+    }
+}
+
 /// Two types are compatible if either is Unknown, or they're structurally equal.
 fn compatible(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
@@ -802,6 +818,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Map(_, _) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1064,6 +1081,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1147,6 +1165,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (*inner.clone(), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1178,6 +1197,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (*inner.clone(), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1210,6 +1230,7 @@ fn builtin_check_args(
             let elem_ty = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1274,6 +1295,7 @@ fn builtin_check_args(
                     return (Ty::List(inner.clone()), errors);
                 }
                 Some(Ty::Unknown) => return (Ty::Unknown, errors),
+                Some(other) if is_opaque(other) => return (Ty::Unknown, errors),
                 Some(other) => errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
@@ -1293,6 +1315,7 @@ fn builtin_check_args(
             let elem_a = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1308,6 +1331,7 @@ fn builtin_check_args(
             let elem_b = match arg_types.get(1) {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1335,6 +1359,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1365,6 +1390,7 @@ fn builtin_check_args(
             let inner = match arg_types.get(1) {
                 Some(Ty::List(inner)) => (**inner).clone(),
                 Some(Ty::Unknown) | None => Ty::Unknown,
+                Some(other) if is_opaque(other) => Ty::Unknown,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1384,6 +1410,7 @@ fn builtin_check_args(
             let elem_a = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1399,6 +1426,7 @@ fn builtin_check_args(
             let elem_b = match arg_types.get(1) {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1426,6 +1454,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1442,6 +1471,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1564,6 +1594,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1689,6 +1720,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1776,6 +1808,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1792,6 +1825,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1809,6 +1843,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1921,6 +1956,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -3177,6 +3213,7 @@ fn builtin_check_args(
             // hard-code "must be text" — see PR #257 for the MapKey rollout.
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3213,6 +3250,7 @@ fn builtin_check_args(
             // return shape is `v`, never `O v`.
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3310,6 +3348,7 @@ fn builtin_check_args(
             // inferred from the third arg if not previously known).
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3355,6 +3394,7 @@ fn builtin_check_args(
             };
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3384,6 +3424,7 @@ fn builtin_check_args(
         "mkeys" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3404,6 +3445,7 @@ fn builtin_check_args(
         "mvals" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3423,6 +3465,7 @@ fn builtin_check_args(
         "mpairs" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3441,6 +3484,7 @@ fn builtin_check_args(
         "mdel" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
