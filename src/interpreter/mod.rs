@@ -2053,6 +2053,47 @@ fn urldec_impl(arg: &Value) -> Result<Value> {
     }
 }
 
+/// `idxof s sub > O n` — Unicode code-point index of the first occurrence of
+/// `sub` in `s`. Returns `Value::Nil` when not found. Index is in code-point
+/// units (same convention as `at`), not raw byte offsets.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
+/// frame; the helper is small enough that the call overhead is in the noise.
+#[inline(never)]
+fn idxof_impl(s_arg: &Value, sub_arg: &Value) -> Result<Value> {
+    let s = match s_arg {
+        Value::Text(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("idxof: first arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    let sub = match sub_arg {
+        Value::Text(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("idxof: second arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    // Empty needle: matches at position 0 (Python / JS semantics).
+    if sub.is_empty() {
+        return Ok(Value::Number(0.0));
+    }
+    // Find the byte offset first (cheap), then count code points up to that
+    // byte to get the char-index.  O(n) but allocation-free.
+    match s.find(sub) {
+        None => Ok(Value::Nil),
+        Some(byte_offset) => {
+            let char_idx = s[..byte_offset].chars().count();
+            Ok(Value::Number(char_idx as f64))
+        }
+    }
+}
+
 #[inline(never)]
 fn b64u_impl(arg: &Value) -> Result<Value> {
     // b64u s > t — base64url-encode the UTF-8 bytes of s using the URL-safe
@@ -3551,6 +3592,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Urldec) && args.len() == 1 {
         return urldec_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Idxof) && args.len() == 2 {
+        return idxof_impl(&args[0], &args[1]);
     }
     if builtin == Some(Builtin::B64u) && args.len() == 1 {
         return b64u_impl(&args[0]);

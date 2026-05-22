@@ -835,6 +835,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Rsum, 2) => true,
         (Builtin::Ravg, 2) => true,
         (Builtin::Rmin, 2) => true,
+        // idxof s sub > O n — first code-point index of sub in s, nil when
+        // not found. Pure 2-arg text-in / option-n-out, no FnRef args, no
+        // I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in lockstep
+        // without a dedicated opcode.
+        (Builtin::Idxof, 2) => true,
         // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
         // args, no Result wrapper. Tree interpreter performs the element-wise
         // select; VM and Cranelift inherit through the bridge at zero opcode

@@ -721,6 +721,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("last-dom", &["n"], "n"),
     ("next-business-day", &["n"], "n"),
     ("day-of-week", &["n"], "n"),
+    // Text search (0.13.0).
+    // idxof s sub > O n — first code-point index of sub in s, nil when absent.
+    ("idxof", &["t", "t"], "O n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {

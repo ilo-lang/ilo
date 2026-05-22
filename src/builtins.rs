@@ -377,6 +377,13 @@ pub enum Builtin {
     Rsum,
     Ravg,
     Rmin,
+
+    // Text search (0.13.0). Tree-bridge eligible: pure text-in / Option-out,
+    // no FnRef args, no I/O, no Result wrapper.
+    // `idxof s sub > O n` — byte index of the first occurrence of `sub` in
+    // `s`. Returns nil when `sub` is not found. Index is in Unicode code-point
+    // units (same as `at`), not raw bytes, so multi-byte characters count as 1.
+    Idxof,
 }
 
 impl Builtin {
@@ -578,6 +585,7 @@ impl Builtin {
             "rsum" => Some(Builtin::Rsum),
             "ravg" => Some(Builtin::Ravg),
             "rmin" => Some(Builtin::Rmin),
+            "idxof" => Some(Builtin::Idxof),
             _ => None,
         }
     }
@@ -776,6 +784,7 @@ impl Builtin {
             Builtin::Rsum => "rsum",
             Builtin::Ravg => "ravg",
             Builtin::Rmin => "rmin",
+            Builtin::Idxof => "idxof",
         }
     }
 
@@ -1131,6 +1140,11 @@ impl Builtin {
         // Appended last to preserve every existing on-wire tag.
         Builtin::Sha256Hex,
         Builtin::Sha256d,
+        // `idxof s sub > O n` — Unicode code-point index of first occurrence of
+        // `sub` in `s`. Returns nil when not found. Tree-bridge eligible: pure
+        // 2-arg text-in / option-n-out, no FnRef args, no I/O, no Result wrapper.
+        // Appended last to preserve every existing on-wire tag.
+        Builtin::Idxof,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1155,7 +1169,8 @@ impl Builtin {
             | Builtin::Fmod
             | Builtin::DtparseRel
             | Builtin::DurParse
-            | Builtin::DurFmt => "experimental",
+            | Builtin::DurFmt
+            | Builtin::Idxof => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
