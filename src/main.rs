@@ -3373,6 +3373,25 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
         (source_arg.to_string(), false)
     };
 
+    // File path to embed in fix_plan.path so agents know which file to edit.
+    // Absent for inline code (e.g. `ilo check 'f>n;5'`).
+    let diag_path: Option<String> = if is_file {
+        Some(source_arg.to_string())
+    } else {
+        None
+    };
+
+    // Enriches a diagnostic with source, optional file path, and a derived
+    // fix_plan for codes that support mechanical edits (ILO-T004, ILO-T003,
+    // ILO-T032, ILO-L002).
+    let enrich = |d: Diagnostic| -> Diagnostic {
+        let mut d = d.with_source(source.clone());
+        if let Some(p) = &diag_path {
+            d = d.with_path(p.clone());
+        }
+        d.derive_fix_plan()
+    };
+
     let mut had_errors = false;
     // In --strict mode, any warning bumps the exit code to 1 too. Tracked
     // separately so we don't conflate genuine errors with elevated warnings
@@ -3382,7 +3401,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
         Err(e) => {
-            report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+            report_diagnostic(&enrich(Diagnostic::from(&e)), mode);
             return 1;
         }
     };
@@ -3433,7 +3452,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     }
 
     for e in &parse_errors {
-        report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+        report_diagnostic(&enrich(Diagnostic::from(e)), mode);
         had_errors = true;
     }
 
@@ -3443,12 +3462,12 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     // partially-broken ASTs.
     let verify_result = verify::verify(&program);
     for w in &verify_result.warnings {
-        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
+        report_diagnostic(&enrich(Diagnostic::from(w)), mode);
         had_warnings = true;
     }
     if !verify_result.errors.is_empty() {
         for e in &verify_result.errors {
-            report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+            report_diagnostic(&enrich(Diagnostic::from(e)), mode);
         }
         had_errors = true;
     }
