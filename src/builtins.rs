@@ -157,6 +157,15 @@ pub enum Builtin {
     /// Used to pass a restricted capability token to a sub-function that should
     /// not perform network I/O; the verifier enforces this statically (ILO-T044).
     WorldNoNet,
+    /// `read-only w:W > W` — derive a World with net=false, write=false, run=false.
+    /// Read capability is kept from the input World. ILO-392 sub-world masking.
+    WorldReadOnly,
+    /// `net-only w:W > W` — derive a World with read=false, write=false, run=false.
+    /// Net capability is kept from the input World. ILO-392 sub-world masking.
+    WorldNetOnly,
+    /// `no-net w:W > W` — derive a World with net=false; read/write/run kept.
+    /// Like `world-no-net` but takes an existing World token as input.
+    WorldNoNetMask,
     Ls,
     Walk,
     Glob,
@@ -657,6 +666,9 @@ impl Builtin {
             "env" => Some(Builtin::Env),
             "world" => Some(Builtin::WorldCap),
             "world-no-net" => Some(Builtin::WorldNoNet),
+            "read-only" => Some(Builtin::WorldReadOnly),
+            "net-only" => Some(Builtin::WorldNetOnly),
+            "no-net" => Some(Builtin::WorldNoNetMask),
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
@@ -893,6 +905,9 @@ impl Builtin {
             Builtin::Env => "env",
             Builtin::WorldCap => "world",
             Builtin::WorldNoNet => "world-no-net",
+            Builtin::WorldReadOnly => "read-only",
+            Builtin::WorldNetOnly => "net-only",
+            Builtin::WorldNoNetMask => "no-net",
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
@@ -1118,6 +1133,9 @@ impl Builtin {
         Builtin::Env,
         Builtin::WorldCap,
         Builtin::WorldNoNet,
+        Builtin::WorldReadOnly,
+        Builtin::WorldNetOnly,
+        Builtin::WorldNoNetMask,
         Builtin::Trm,
         Builtin::Upr,
         Builtin::Lwr,
