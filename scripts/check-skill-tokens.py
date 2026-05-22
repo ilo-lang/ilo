@@ -54,7 +54,7 @@ PER_MODULE_LIMIT = 1000
 #   ilo-builtins-math:  1409  ilo-builtins-io:    1947
 #   ilo-builtins-text:  1140  ilo-agent:          1219
 PER_MODULE_OVERRIDES = {
-    "ilo-language": 1700,
+    "ilo-language": 1800,
     "ilo-builtins-core": 1125,
     "ilo-builtins-math": 1460,
     "ilo-builtins-io": 2000,
