@@ -5146,6 +5146,13 @@ impl VerifyContext {
                         );
                     }
                     Ty::Unknown
+                } else if name == "nil" {
+                    // `nil` as a bare expression: the parser emits Expr::Ref("nil")
+                    // for Token::Nil so that sum-type variants named `nil` resolve
+                    // correctly (see the variant_constructors branch above).  When
+                    // no `nil` variant is in scope, treat it as the built-in nil
+                    // value (Ty::Nil) for backward compatibility with Optional usage.
+                    Ty::Nil
                 } else {
                     let mut candidates: Vec<String> = scope
                         .iter()

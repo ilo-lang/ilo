@@ -1146,13 +1146,22 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_sum_type_body(&mut self, name: String, start: Span) -> Result<Decl> {
         let mut variants = Vec::new();
         loop {
-            // Each variant: `ident` optionally followed by `(type)`
-            let vname = self.expect_ident().map_err(|_| {
-                self.error(
-                    "ILO-P010",
-                    "expected variant name in sum type declaration".into(),
-                )
-            })?;
+            // Each variant: `ident` optionally followed by `(type)`.
+            // `nil` is a keyword in expressions but is a perfectly valid variant
+            // name in a sum type declaration (e.g. `type list = nil | cons(n)`),
+            // so we accept Token::Nil here in addition to plain identifiers.
+            let vname = match self.peek().cloned() {
+                Some(Token::Nil) => {
+                    self.advance();
+                    "nil".to_string()
+                }
+                _ => self.expect_ident().map_err(|_| {
+                    self.error(
+                        "ILO-P010",
+                        "expected variant name in sum type declaration".into(),
+                    )
+                })?,
+            };
             let payload = if self.peek() == Some(&Token::LParen) {
                 self.advance(); // consume `(`
                 let ty = self.parse_type()?;
@@ -2993,7 +3002,16 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             Some(Token::Nil) => {
                 self.advance();
-                Ok(Pattern::Literal(Literal::Nil))
+                // `nil:` in a match arm can mean either:
+                //  - the built-in nil literal (Optional/nil check)
+                //  - a sum-type variant named `nil` (e.g. `type list = nil | cons(n)`)
+                // We emit Pattern::Variant so the same arm covers both cases.
+                // The interpreter and VM both handle this: matching Value::Nil
+                // as well as Value::Variant { tag: "nil" }.
+                Ok(Pattern::Variant {
+                    tag: "nil".to_string(),
+                    binding: None,
+                })
             }
             Some(Token::Ident(name)) if matches!(name.as_str(), "n" | "t" | "b" | "l") => {
                 let ty = match name.as_str() {
@@ -5056,7 +5074,12 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             }
             Some(Token::Nil) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Nil))
+                // Emit as Expr::Ref("nil") so that, when a sum-type variant
+                // named `nil` is in scope, it resolves to the variant
+                // constructor (returning the sum type).  The verifier and
+                // interpreter both fall back to the ordinary nil value when no
+                // such variant is registered.
+                Ok(Expr::Ref("nil".to_string()))
             }
             Some(Token::Underscore) => {
                 // `_ident` (no whitespace between `_` and the following ident) →
@@ -10916,7 +10939,10 @@ mod tests {
 
     #[test]
     fn parse_match_nil_literal_pattern() {
-        // `?x{nil:0;_:1}` — nil token as a match pattern (Pattern::Literal(Literal::Nil))
+        // `?x{nil:0;_:1}` — nil token as a match pattern.
+        // Since ILO-403, `nil:` in a match arm is emitted as
+        // Pattern::Variant { tag: "nil" } so it covers both built-in nil
+        // values (Optional) and sum-type variants named `nil`.
         let prog = parse_str("f x:n>n;?x{nil:0;_:1}");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
@@ -10924,7 +10950,10 @@ mod tests {
         let Stmt::Match { arms, .. } = &body[0].node else {
             panic!("expected match")
         };
-        assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Nil)));
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Variant { tag, binding: None } if tag == "nil"
+        ));
     }
 
     // ── Coverage: L975 — parse_expr_or_guard: guard with else body ─────────────
@@ -11105,14 +11134,17 @@ mod tests {
 
     #[test]
     fn parse_nil_literal_operand() {
-        // `nil` as an expression operand — exercises Token::Nil in parse_operand
+        // `nil` as an expression operand.
+        // Since ILO-403, Token::Nil produces Expr::Ref("nil") so that sum-type
+        // variants named `nil` resolve correctly via the variant_constructors map.
+        // When no `nil` variant is in scope the interpreter/VM fall back to nil.
         let prog = parse_str("f>_;nil");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
         assert!(matches!(
             &body[0].node,
-            Stmt::Expr(Expr::Literal(Literal::Nil))
+            Stmt::Expr(Expr::Ref(name)) if name == "nil"
         ));
     }
 
@@ -11330,6 +11362,8 @@ mod tests {
     // Nil literal in match pattern
     #[test]
     fn cov_nil_literal_pattern() {
+        // Since ILO-403, `nil:` in a match arm is Pattern::Variant { tag: "nil" }
+        // (covers both built-in nil and sum-type variants named `nil`).
         let prog = parse_str(r#"f x:n>n;?x{nil:0;_:1}"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
@@ -11337,7 +11371,10 @@ mod tests {
         let Stmt::Match { arms, .. } = &body[0].node else {
             panic!("expected match")
         };
-        assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Nil)));
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Variant { tag, binding: None } if tag == "nil"
+        ));
     }
 
     // parse_let single-brace desugar: v=cond{body} → Guard { condition, body: [Let{name,...}] }

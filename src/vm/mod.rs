@@ -3493,6 +3493,27 @@ impl RegCompiler {
                         end_jumps.push(self.emit_jmp_placeholder());
                         self.current.patch_jump(skip);
                         let _ = type_id; // type_id used for future type-tracking
+                    } else if tag == "nil" {
+                        // `nil:` was emitted as Pattern::Variant { tag: "nil" } by the
+                        // parser (to also cover sum-type variants named `nil`).  When
+                        // the variant_map has no `nil` entry the subject is a plain
+                        // Optional/nil value, so fall back to a nil-literal equality
+                        // check — same code path as the old Pattern::Literal(Nil) arm.
+                        let nil_ki = self.current.add_const(Value::Nil);
+                        let nil_reg = self.alloc_reg();
+                        self.emit_abx(OP_LOADK, nil_reg, nil_ki);
+                        let eq_reg = self.alloc_reg();
+                        self.emit_abc(OP_EQ, eq_reg, sub_reg, nil_reg);
+                        let skip = self.emit_jmpf(eq_reg);
+
+                        let body_result = self.compile_body(&arm.body);
+                        if let Some(br) = body_result
+                            && br != result_reg
+                        {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                        end_jumps.push(self.emit_jmp_placeholder());
+                        self.current.patch_jump(skip);
                     } else {
                         // Unknown variant tag — variant_map was not populated
                         // (e.g. the variant is from a type defined elsewhere).
@@ -4127,6 +4148,15 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     let bx = 0x8000u16 | (b.tag() as u16);
                     self.emit_abx(OP_LOADFN, ra, bx);
+                    ra
+                } else if name == "nil" {
+                    // `nil` is emitted as Expr::Ref("nil") by the parser so that
+                    // sum-type variants named `nil` resolve via variant_map above.
+                    // When no such variant is registered, fall back to loading the
+                    // built-in nil constant (backward-compatible Optional / nil usage).
+                    let ra = self.alloc_reg();
+                    let ki = self.current.add_const(Value::Nil);
+                    self.emit_abx(OP_LOADK, ra, ki);
                     ra
                 } else {
                     self.first_error
