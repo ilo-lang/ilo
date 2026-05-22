@@ -6155,6 +6155,57 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         });
     }
 
+    // read-only w:W > W — derive a World with net=false, write=false, run=false.
+    // Read capability is preserved from the input World. ILO-392 sub-world masking.
+    if builtin == Some(Builtin::WorldReadOnly) && args.len() == 1 {
+        return match &args[0] {
+            Value::World { read, .. } => Ok(Value::World {
+                net: false,
+                read: *read,
+                write: false,
+                run: false,
+            }),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("read-only requires World, got {:?}", other),
+            )),
+        };
+    }
+
+    // net-only w:W > W — derive a World with read=false, write=false, run=false.
+    // Net capability is preserved from the input World. ILO-392 sub-world masking.
+    if builtin == Some(Builtin::WorldNetOnly) && args.len() == 1 {
+        return match &args[0] {
+            Value::World { net, .. } => Ok(Value::World {
+                net: *net,
+                read: false,
+                write: false,
+                run: false,
+            }),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("net-only requires World, got {:?}", other),
+            )),
+        };
+    }
+
+    // no-net w:W > W — derive a World with net=false; read/write/run kept.
+    // Like `world-no-net` but takes an existing World token as input. ILO-392.
+    if builtin == Some(Builtin::WorldNoNetMask) && args.len() == 1 {
+        return match &args[0] {
+            Value::World { read, write, run, .. } => Ok(Value::World {
+                net: false,
+                read: *read,
+                write: *write,
+                run: *run,
+            }),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("no-net requires World, got {:?}", other),
+            )),
+        };
+    }
+
     // env-all -> R M t t: snapshot the full process environment as a
     // Map[Text, Text] wrapped in Ok. The Result wrapper mirrors `env key`
     // so callers can use `env-all!` to auto-unwrap; the Err arm is reserved
