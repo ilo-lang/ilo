@@ -1116,6 +1116,11 @@ statement boundary; bind the chain to a local first. For example, split \
         let start = self.peek_span();
         self.expect(&Token::Type)?;
         let name = self.expect_decl_name()?;
+        // `type Name = Circle(n) | Square(n) | red` — sum type with payloads
+        if self.peek() == Some(&Token::Eq) {
+            self.advance(); // consume `=`
+            return self.parse_sum_type_body(name, start);
+        }
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -1132,6 +1137,48 @@ statement boundary; bind the chain to a local first. For example, split \
         Ok(Decl::TypeDef {
             name,
             fields,
+            span: start.merge(end),
+        })
+    }
+
+    /// Parse the body of `type Name = Variant1(type) | Variant2 | Variant3(type)`.
+    /// Called after `type Name =` has been consumed.
+    fn parse_sum_type_body(&mut self, name: String, start: Span) -> Result<Decl> {
+        let mut variants = Vec::new();
+        loop {
+            // Each variant: `ident` optionally followed by `(type)`
+            let vname = self.expect_ident().map_err(|_| {
+                self.error(
+                    "ILO-P010",
+                    "expected variant name in sum type declaration".into(),
+                )
+            })?;
+            let payload = if self.peek() == Some(&Token::LParen) {
+                self.advance(); // consume `(`
+                let ty = self.parse_type()?;
+                self.expect(&Token::RParen)?;
+                Some(ty)
+            } else {
+                None
+            };
+            variants.push(crate::ast::Variant {
+                name: vname,
+                payload,
+            });
+            // Variants separated by `|`
+            if self.peek() == Some(&Token::Pipe) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if variants.is_empty() {
+            return Err(self.error("ILO-P010", "sum type requires at least one variant".into()));
+        }
+        let end = self.prev_span();
+        Ok(Decl::SumType {
+            name,
+            variants,
             span: start.merge(end),
         })
     }
@@ -2718,6 +2765,19 @@ statement boundary; bind the chain to a local first. For example, split \
                 if self.token_at(self.pos + 1) == Some(&Token::Colon) {
                     return false;
                 }
+                // Variant pattern: `Ident ( binding ) :` — sum type arm.
+                if self.token_at(self.pos + 1) == Some(&Token::LParen) {
+                    // Check for ident/underscore followed by `)` then `:`
+                    let p2 = self.token_at(self.pos + 2);
+                    let p3 = self.token_at(self.pos + 3);
+                    let p4 = self.token_at(self.pos + 4);
+                    let inner_ok = matches!(p2, Some(Token::Ident(_) | Token::Underscore));
+                    let close_ok = p3 == Some(&Token::RParen);
+                    let colon_ok = p4 == Some(&Token::Colon);
+                    if inner_ok && close_ok && colon_ok {
+                        return false;
+                    }
+                }
                 // Otherwise an ident followed by `=` or any operator is a
                 // statement.
                 true
@@ -2848,6 +2908,23 @@ statement boundary; bind the chain to a local first. For example, split \
                     )
                 )
             }
+            // ident(binding): → payload variant pattern (e.g., `circle(r):`)
+            Some(Token::Ident(_))
+                if self.token_at(after_semi + 1) == Some(&Token::LParen)
+                    && matches!(
+                        self.token_at(after_semi + 2),
+                        Some(Token::Ident(_) | Token::Underscore)
+                    )
+                    && self.token_at(after_semi + 3) == Some(&Token::RParen)
+                    && self.token_at(after_semi + 4) == Some(&Token::Colon) =>
+            {
+                true
+            }
+            // ident: → payload-less variant pattern
+            Some(Token::Ident(_)) => {
+                after_semi + 1 < self.tokens.len()
+                    && self.token_at(after_semi + 1) == Some(&Token::Colon)
+            }
             _ => false,
         }
     }
@@ -2935,6 +3012,25 @@ statement boundary; bind the chain to a local first. For example, split \
                     _ => self.expect_ident()?,
                 };
                 Ok(Pattern::TypeIs { ty, binding })
+            }
+            // `Tag(binding):` — named-sum variant pattern with optional payload binding
+            Some(Token::Ident(_)) => {
+                let tag = self.expect_ident()?;
+                let binding = if self.peek() == Some(&Token::LParen) {
+                    self.advance(); // consume `(`
+                    let b = match self.peek() {
+                        Some(Token::Underscore) => {
+                            self.advance();
+                            "_".to_string()
+                        }
+                        _ => self.expect_ident()?,
+                    };
+                    self.expect(&Token::RParen)?;
+                    Some(b)
+                } else {
+                    None
+                };
+                Ok(Pattern::Variant { tag, binding })
             }
             Some(tok) => Err(self.error(
                 "ILO-P011",

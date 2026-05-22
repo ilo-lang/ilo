@@ -119,6 +119,18 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                 "alias",
                 0,
             )),
+
+            Decl::SumType { name, variants, .. } => {
+                let vs = variants
+                    .iter()
+                    .map(|v| match &v.payload {
+                        Some(ty) => format!("{}({})", v.name, fmt_type(ty)),
+                        None => v.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                Some(annotate_line(&format!("type {name} = {vs}"), "sum type", 0))
+            }
         };
 
         if let Some(s) = snippet {

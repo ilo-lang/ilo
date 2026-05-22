@@ -122,6 +122,15 @@ pub struct Param {
     pub ty: Type,
 }
 
+/// A variant in a sum-type declaration.
+/// `Circle(n)` → Variant { name: "circle", payload: Some(Type::Number) }
+/// `red`       → Variant { name: "red",    payload: None }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Variant {
+    pub name: String,
+    pub payload: Option<Type>,
+}
+
 /// Compile-time predicate for conditional `use` — `use ?wasm "a.ilo" : "b.ilo"`.
 ///
 /// `wasm`   — true when building for wasm32 (`--target wasm`).
@@ -224,6 +233,14 @@ pub enum Decl {
         /// of this module's public surface (visible to consumers of this module).
         /// Without this flag, imported names are internal to this module only.
         reexport: bool,
+        #[serde(skip)]
+        span: Span,
+    },
+
+    /// `type Name = Circle(n) | Square(n) | red` — named discriminated union
+    SumType {
+        name: String,
+        variants: Vec<Variant>,
         #[serde(skip)]
         span: Span,
     },
@@ -337,6 +354,11 @@ pub enum Pattern {
     Wildcard,
     /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
     TypeIs { ty: Type, binding: String },
+    /// `Circle(r):` — match a named-sum variant, optionally bind payload
+    Variant {
+        tag: String,
+        binding: Option<String>,
+    },
     /// `pat1|pat2|...:` — matches if any alternative matches (OR pattern)
     Or(Vec<Pattern>),
 }

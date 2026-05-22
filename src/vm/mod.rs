@@ -100,6 +100,10 @@ pub enum CompileError {
         #[allow(dead_code)]
         span: crate::ast::Span,
     },
+    /// Sum types with payloads are not yet natively compiled by the VM.
+    /// The caller should fall back to the tree interpreter.
+    #[error("sum type `{name}` is not yet supported by the VM; falling back to tree interpreter")]
+    SumTypeNotSupported { name: String },
 }
 
 #[cfg(feature = "cranelift")]
@@ -1813,6 +1817,13 @@ struct RegCompiler {
     /// covers the rebind shape; this flag covers the tail-position
     /// `mset m k v` shape inside helper fns reached via OP_CALL_OWN1.
     in_tail_position: bool,
+    /// Sum-type variant constructors: maps variant name → (type_id, tag_index, has_payload).
+    /// Registered during compile_program when a Decl::SumType is encountered.
+    /// type_id is the record type registered as `__variant_<typename>` with
+    /// fields ["tag", "payload"]. tag_index is the 0-based ordinal of the
+    /// variant within the sum type declaration.  has_payload is true when the
+    /// variant was declared with a payload argument (e.g. `circle(n)`).
+    variant_map: HashMap<String, (u16, usize, bool)>,
     /// Set to true while lowering a function that contains at least one
     /// `defer` / `errdefer` statement.  When true, `emit_ret` inserts an
     /// OP_DEFER_DRAIN instruction immediately before every OP_RET.
@@ -1847,6 +1858,7 @@ impl RegCompiler {
             current_fn_name: String::new(),
             current_fn_span: crate::ast::Span::UNKNOWN,
             in_tail_position: false,
+            variant_map: HashMap::new(),
             current_fn_has_defer: false,
             defer_thunk_counter: 0,
             deferred_thunk_chunks: Vec::new(),
@@ -2197,7 +2209,11 @@ impl RegCompiler {
     }
 
     fn compile_program(mut self, program: &Program) -> Result<CompiledProgram, CompileError> {
-        // Build type registry from TypeDefs
+        // Build type registry from TypeDefs and SumTypes.
+        // SumTypes are represented as 2-field heap records with type name
+        // `__variant_<typename>`, fields ["tag", "payload"].  The `tag` slot
+        // holds the variant's 0-based ordinal as a Number; `payload` holds the
+        // constructor argument (or Nil for payload-less variants).
         for decl in &program.declarations {
             if let Decl::TypeDef { name, fields, .. } = decl {
                 let field_names: Vec<String> = fields.iter().map(|p| p.name.clone()).collect();
@@ -2209,6 +2225,25 @@ impl RegCompiler {
                 }
                 self.type_registry
                     .register(name.clone(), field_names, num_fields);
+            }
+        }
+
+        // Register sum-type variant record types and build variant_map.
+        for decl in &program.declarations {
+            if let Decl::SumType { name, variants, .. } = decl {
+                // Shared record type for all variants of this sum type.
+                // Fields: [0] = "tag" (numeric ordinal), [1] = "payload".
+                // Bit 0 of num_fields is set because field 0 ("tag") is always Number.
+                let type_name = format!("__variant_{}", name);
+                let type_id = self.type_registry.register(
+                    type_name,
+                    vec!["tag".to_string(), "payload".to_string()],
+                    0b01, // field 0 ("tag") is numeric
+                );
+                for (idx, v) in variants.iter().enumerate() {
+                    self.variant_map
+                        .insert(v.name.clone(), (type_id, idx, v.payload.is_some()));
+                }
             }
         }
 
@@ -2238,6 +2273,7 @@ impl RegCompiler {
                     is_defer_fn.push(false);
                 }
                 Decl::TypeDef { .. }
+                | Decl::SumType { .. }
                 | Decl::Alias { .. }
                 | Decl::Use { .. }
                 | Decl::Error { .. } => {}
@@ -2402,6 +2438,56 @@ impl RegCompiler {
             ast: None,
             defer_fns,
         })
+    }
+
+    /// Emit a 2-field variant record: { tag: <tag_idx as Number>, payload: <payload_reg or Nil> }.
+    /// Returns the result register holding the new record.
+    fn emit_variant_record(&mut self, type_id: u16, tag_idx: usize, payload_reg: Option<u8>) -> u8 {
+        // Allocate tag constant
+        let tag_val = Value::Number(tag_idx as f64);
+        let tag_ki = self.current.add_const(tag_val);
+        let tag_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, tag_reg, tag_ki);
+        self.reg_is_num[tag_reg as usize] = true;
+
+        let payload_r = match payload_reg {
+            Some(r) => r,
+            None => {
+                let nil_ki = self.current.add_const(Value::Nil);
+                let nil_reg = self.alloc_reg();
+                self.emit_abx(OP_LOADK, nil_reg, nil_ki);
+                nil_reg
+            }
+        };
+
+        // OP_RECNEW: result in `a`, fields starting at `fields_base`.
+        // Layout: fields_base+0 = tag, fields_base+1 = payload.
+        // bx encodes (type_id << 8) | n_fields.
+        let a = self.alloc_reg();
+        let fields_base = self.next_reg;
+        // Ensure tag_reg and payload_r are in consecutive slots at fields_base.
+        if tag_reg != fields_base {
+            self.emit_abc(OP_MOVE, fields_base, tag_reg, 0);
+        }
+        self.next_reg = fields_base + 1;
+        if self.next_reg > self.max_reg {
+            self.max_reg = self.next_reg;
+        }
+        if payload_r != fields_base + 1 {
+            let _ = self.alloc_reg(); // reserve fields_base+1
+            self.emit_abc(OP_MOVE, fields_base + 1, payload_r, 0);
+        } else {
+            self.next_reg = fields_base + 2;
+            if self.next_reg > self.max_reg {
+                self.max_reg = self.next_reg;
+            }
+        }
+        let bx = (type_id << 8) | 2u16;
+        self.emit_abx(OP_RECNEW, a, bx);
+        self.reg_record_type[a as usize] = type_id;
+        // Reclaim scratch registers; only `a` stays live.
+        self.next_reg = a + 1;
+        a
     }
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
@@ -3360,6 +3446,60 @@ impl RegCompiler {
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
                 }
+                Pattern::Variant { tag, binding } => {
+                    // Sum-type variant pattern: check sub_reg.tag == expected_idx,
+                    // optionally bind sub_reg.payload.
+                    //
+                    // Emitted sequence:
+                    //   tag_reg  = OP_RECFLD sub_reg, 0    ; extract tag field
+                    //   cmp_reg  = OP_LOADK  <tag_idx>
+                    //   eq_reg   = OP_EQ     tag_reg, cmp_reg
+                    //              OP_JMPF  eq_reg, <skip>
+                    //   [bind_reg = OP_RECFLD sub_reg, 1]   ; if binding present
+                    //   <body>
+                    //   OP_JMP <end>          ; added to end_jumps
+                    // skip:
+                    if let Some(&(type_id, tag_idx, _)) = self.variant_map.get(tag) {
+                        // Extract the tag field (index 0).
+                        let tag_reg = self.alloc_reg();
+                        self.emit_abc(OP_RECFLD, tag_reg, sub_reg, 0);
+                        self.reg_is_num[tag_reg as usize] = true;
+
+                        // Load the expected tag index as a constant.
+                        let cmp_ki = self.current.add_const(Value::Number(tag_idx as f64));
+                        let cmp_reg = self.alloc_reg();
+                        self.emit_abx(OP_LOADK, cmp_reg, cmp_ki);
+                        self.reg_is_num[cmp_reg as usize] = true;
+
+                        // Compare and branch if not equal.
+                        let eq_reg = self.alloc_reg();
+                        self.emit_abc(OP_EQ, eq_reg, tag_reg, cmp_reg);
+                        let skip = self.emit_jmpf(eq_reg);
+
+                        // Optionally bind payload (field index 1).
+                        if let Some(bind_name) = binding {
+                            let bind_reg = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD, bind_reg, sub_reg, 1);
+                            self.reg_record_type[bind_reg as usize] = u16::MAX;
+                            self.add_local(bind_name, bind_reg);
+                        }
+
+                        let body_result = self.compile_body(&arm.body);
+                        if let Some(br) = body_result
+                            && br != result_reg
+                        {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                        end_jumps.push(self.emit_jmp_placeholder());
+                        self.current.patch_jump(skip);
+                        let _ = type_id; // type_id used for future type-tracking
+                    } else {
+                        // Unknown variant tag — variant_map was not populated
+                        // (e.g. the variant is from a type defined elsewhere).
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: tag.clone() });
+                    }
+                }
 
                 Pattern::Or(alts) => {
                     // Emit: if alt1 matches OR alt2 matches OR ... → body, else skip.
@@ -3955,6 +4095,20 @@ impl RegCompiler {
             Expr::Ref(name) => {
                 if let Some(reg) = self.resolve_local(name) {
                     reg // FREE — no instruction needed!
+                } else if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(name) {
+                    if !has_payload {
+                        // 0-payload variant used as a bare value: emit the 2-field
+                        // record (tag=tag_idx, payload=Nil) directly.
+                        self.emit_variant_record(type_id, tag_idx, None)
+                    } else {
+                        // Payload variant used as a bare reference (first-class
+                        // constructor value). This is uncommon; fall through to the
+                        // UndefinedVariable error path so callers get a clear message
+                        // rather than silent wrong behaviour.
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable { name: name.clone() });
+                        0
+                    }
                 } else if let Some(idx) = self.func_names.iter().position(|n| n == name) {
                     // User function used as a value (passed to a HOF, stored,
                     // etc.). Encode as a FnRef NanVal via OP_LOADFN. Bx high
@@ -5810,6 +5964,27 @@ impl RegCompiler {
                     }
 
                     return a;
+                }
+
+                // ── Sum-type variant constructor ──────────────────────────────
+                // Intercept calls like `circle 5` or `point` where `circle`/`point`
+                // are variant names registered in variant_map.  Emit inline record
+                // construction (OP_RECNEW) rather than a function call.
+                if let Some(&(type_id, tag_idx, has_payload)) = self.variant_map.get(function) {
+                    let payload_reg = if has_payload {
+                        if args.len() == 1 {
+                            Some(self.compile_expr(&args[0]))
+                        } else {
+                            self.first_error
+                                .get_or_insert(CompileError::UndefinedFunction {
+                                    name: function.clone(),
+                                });
+                            return 0;
+                        }
+                    } else {
+                        None
+                    };
+                    return self.emit_variant_record(type_id, tag_idx, payload_reg);
                 }
 
                 // Compiling args of this call: each arg is NOT in tail
@@ -7780,6 +7955,16 @@ impl NanVal {
                 // tree-bridge call site); native compilation goes through
                 // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
+            }
+            Value::Variant { tag, payload, .. } => {
+                // Variants are not natively representable in NanVal — the VM
+                // bridge falls back to the tree interpreter for sum-type programs.
+                // Encode as a string sentinel so the conversion doesn't panic.
+                let s = match payload {
+                    Some(p) => format!("{}({})", tag, p),
+                    None => tag.clone(),
+                };
+                NanVal::heap_string(s)
             }
             Value::LazyStdinLines(handle) => {
                 // Wrap the lazy stdin handle in a HeapObj so the VM's OP_FOREACH
@@ -36849,6 +37034,75 @@ main>n
                 assert_eq!(got, 0);
             }
             other => panic!("expected VmError::Arity, got {other:?}"),
+        }
+    }
+
+    // ── ILO-401: Sum-type VM/JIT codegen ─────────────────────────────────────
+
+    /// VM can construct a payload-less variant and pattern-match on it.
+    #[test]
+    fn sum_type_vm_zero_payload_variant() {
+        let v = vm_run_main_for_test(
+            "type color = red | green | blue\n\
+             pick c:color>t;?c{red:\"r\";green:\"g\";blue:\"b\"}\n\
+             main>t;pick red",
+        );
+        assert_eq!(v, Value::Text(std::sync::Arc::new("r".to_string())));
+    }
+
+    /// VM can construct a payload-carrying variant and extract the payload in a match.
+    #[test]
+    fn sum_type_vm_payload_variant_match() {
+        // circle area = 3.14159 * 25 = 78.53975; square area = 9; sum = 87.53975
+        let v = vm_run_main_for_test(
+            "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)",
+        );
+        match v {
+            Value::Number(n) => {
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
+            }
+            _ => panic!("expected Number, got {v:?}"),
+        }
+    }
+
+    /// Regression: same program runs identically under tree interpreter and VM.
+    #[test]
+    fn sum_type_vm_matches_interpreter() {
+        let src = "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).unwrap();
+        let vm_result = run(&compiled, Some("main"), vec![]).unwrap();
+        let interp_result = crate::interpreter::run(&prog, Some("main"), vec![]).unwrap();
+        assert_eq!(
+            vm_result, interp_result,
+            "VM and tree interpreter disagree on sum-type result"
+        );
+    }
+
+    /// VM compile step must not return ILO-E803 (SumTypeNotSupported).
+    #[test]
+    fn sum_type_vm_no_e803_bailout() {
+        let src = "type shape = circle(n) | square(n) | point\n\
+             area s:shape>n;?s{circle(r):*3.14159 *r r;square(side):*side side;point:0}\n\
+             main>n;+area(circle 5) area(square 3)";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("sum-type program must compile without ILO-E803");
+        let val = run(&compiled, Some("main"), vec![]).unwrap();
+        match val {
+            Value::Number(n) => {
+                assert!(
+                    (n - 87.53975_f64).abs() < 1e-4,
+                    "expected ~87.53975, got {n}"
+                );
+            }
+            _ => panic!("expected Number, got {val:?}"),
         }
     }
 
