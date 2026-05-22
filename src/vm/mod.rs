@@ -611,6 +611,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::RgxallMulti, 2) => true,
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
+        (Builtin::RdJson, 1) => true,
         (Builtin::Rdb, 2) => true,
         // Filesystem enumeration: ls / walk / glob. No FnRef args, returns
         // R (L t) t, dispatched through the tree interpreter the same way
@@ -875,6 +876,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     matches!(
         b,
         Builtin::Rd
+            | Builtin::RdJson
             | Builtin::Rdb
             | Builtin::Mapr
             | Builtin::Ls
@@ -8876,16 +8878,9 @@ impl<'a> VM<'a> {
                         reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
                         continue;
                     }
-                    let fmt = std::path::Path::new(&path)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("raw")
-                        .to_lowercase();
+                    // rd always returns raw text — no extension-based auto-parse.
                     let result = match std::fs::read_to_string(&path) {
-                        Ok(content) => match vm_parse_format(&fmt, &content) {
-                            Ok(v) => NanVal::heap_ok(v),
-                            Err(e) => NanVal::heap_err(e),
-                        },
+                        Ok(content) => NanVal::heap_ok(NanVal::heap_string(content)),
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
@@ -19643,16 +19638,9 @@ pub(crate) extern "C" fn jit_rd(v: u64, span_bits: u64) -> u64 {
             _ => unreachable!(),
         }
     };
-    let fmt = std::path::Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("raw")
-        .to_lowercase();
+    // rd always returns raw text — no extension-based auto-parse.
     match std::fs::read_to_string(&path) {
-        Ok(content) => match vm_parse_format(&fmt, &content) {
-            Ok(v) => NanVal::heap_ok(v).0,
-            Err(e) => NanVal::heap_err(e).0,
-        },
+        Ok(content) => NanVal::heap_ok(NanVal::heap_string(content)).0,
         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())).0,
     }
 }
@@ -24638,21 +24626,50 @@ mod tests {
         assert_eq!(result, Value::Number(1.0), "original should be unchanged");
     }
 
-    // --- OP_RD with JSON parsing ---
+    // --- OP_RD — ILO-374: rd always returns raw text ---
 
     #[test]
-    fn vm_rd_json_file() {
-        let path = "/tmp/ilo_vm_rd_json.json";
+    fn vm_rd_json_file_returns_raw_text() {
+        // ILO-374: rd on a .json path must return raw text, not a parsed value.
+        let path = "/tmp/ilo_vm_rd_json_raw.json";
         std::fs::write(path, r#"{"key":"value"}"#).unwrap();
         let result = vm_run(
             "f p:t>R t t;rd p",
             Some("f"),
             vec![Value::Text(Arc::new(path.into()))],
         );
+        match &result {
+            Value::Ok(inner) => assert!(
+                matches!(inner.as_ref(), Value::Text(_)),
+                "rd on .json must return raw text, got {:?}",
+                inner
+            ),
+            other => panic!("rd on .json should return Ok(text), got {other:?}"),
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn vm_rd_json_builtin_parses_json() {
+        // rd-json path must read and parse the JSON, returning a non-text value.
+        let path = "/tmp/ilo_vm_rd_json_builtin.json";
+        std::fs::write(path, r#"{"key":"value"}"#).unwrap();
+        let result = vm_run(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path.into()))],
+        );
         assert!(
             matches!(result, Value::Ok(_)),
-            "rd json should succeed, got {result:?}"
+            "rd-json should succeed, got {result:?}"
         );
+        // The inner value must NOT be raw text (it should be a map/record).
+        if let Value::Ok(inner) = &result {
+            assert!(
+                !matches!(inner.as_ref(), Value::Text(_)),
+                "rd-json must return parsed value, not raw text"
+            );
+        }
         let _ = std::fs::remove_file(path);
     }
 
@@ -28436,7 +28453,9 @@ mod tests {
 
     // rd with bad JSON content — triggers Err return (line 2939)
     #[test]
-    fn vm_rd_bad_json_returns_err() {
+    fn vm_rd_json_path_returns_raw_text_even_when_invalid_json() {
+        // ILO-374: rd on a .json path returns raw text regardless of content.
+        // Bad JSON is not an error for rd — it's only a parse error for rd-json.
         let path = "/tmp/ilo_vm_rd_badjson.json";
         std::fs::write(path, "{ this is not valid json }").unwrap();
         let result = vm_run(
@@ -28444,9 +28463,30 @@ mod tests {
             Some("f"),
             vec![Value::Text(Arc::new(path.into()))],
         );
+        match &result {
+            Value::Ok(inner) => assert!(
+                matches!(inner.as_ref(), Value::Text(_)),
+                "rd on .json (even invalid) must return raw text, got {:?}",
+                inner
+            ),
+            other => panic!("expected Ok(text), got {other:?}"),
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn vm_rd_json_builtin_bad_json_returns_err() {
+        // rd-json on invalid JSON must return Err.
+        let path = "/tmp/ilo_vm_rd_json_bad.json";
+        std::fs::write(path, "{ this is not valid json }").unwrap();
+        let result = vm_run(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path.into()))],
+        );
         assert!(
             matches!(result, Value::Err(_)),
-            "expected Err from bad JSON, got {result:?}"
+            "expected Err from rd-json on bad JSON, got {result:?}"
         );
         let _ = std::fs::remove_file(path);
     }
@@ -28983,9 +29023,10 @@ mod tests {
     #[test]
     fn vm_rd_csv_quoted_fields() {
         let path = "/tmp/ilo_vm_test_quoted.csv";
-        // CSV with a quoted field containing a comma, and an escaped double-quote
+        // CSV with a quoted field containing a comma, and an escaped double-quote.
+        // rd requires an explicit "csv" format arg — no extension-based auto-parse (ILO-374).
         std::fs::write(path, "\"hello, world\",\"say \"\"hi\"\"\"").unwrap();
-        let source = format!(r#"f>n;rows=rd! "{path}";len rows"#);
+        let source = format!(r#"f>n;rows=rd! "{path}" "csv";len rows"#);
         let result = vm_run(&source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(1.0)); // one row
     }

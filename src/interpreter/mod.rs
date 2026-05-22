@@ -6677,6 +6677,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         if let Err(msg) = env.caps.check_read(path.as_str()) {
             return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
         }
+        // rd always returns raw text — no extension-based auto-parse.
+        // 2-arg form (rd path fmt) is kept for explicit csv/tsv override but
+        // callers wanting JSON must use `rd-json` or `rd path + jpar`.
         let fmt = if args.len() == 2 {
             match &args[1] {
                 Value::Text(s) => s.as_str().to_owned(),
@@ -6688,16 +6691,32 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         } else {
-            // auto-detect from extension
-            std::path::Path::new(path.as_str())
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("raw")
-                .to_lowercase()
+            "raw".to_owned()
         };
         return match std::fs::read_to_string(path.as_str()) {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(content) => match parse_format(&fmt, &content) {
+                Ok(v) => Ok(Value::Ok(Box::new(v))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e))))),
+            },
+        };
+    }
+    if builtin == Some(Builtin::RdJson) && args.len() == 1 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rd-json requires text path, got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return match std::fs::read_to_string(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(content) => match parse_format("json", &content) {
                 Ok(v) => Ok(Value::Ok(Box::new(v))),
                 Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e))))),
             },
@@ -14274,6 +14293,68 @@ mod tests {
     fn interpret_rd_with_wrong_format_type() {
         let err = run_str_err("f>t;rd \"/tmp\" 42", Some("f"), vec![]);
         assert!(err.contains("rd") || err.contains("format"), "got: {err}");
+    }
+
+    // ILO-374: rd on a .json path must return raw text, not a parsed value.
+    #[test]
+    fn interpret_rd_json_path_returns_raw_text() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_interp_rd_json_raw.json");
+        std::fs::write(&path, r#"{"key":"value"}"#).unwrap();
+        let path_str = path.to_str().unwrap().to_string();
+        let result = run_str(
+            "f p:t>R t t;rd p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path_str))],
+        );
+        std::fs::remove_file(&path).ok();
+        match &result {
+            Value::Ok(inner) => assert!(
+                matches!(inner.as_ref(), Value::Text(_)),
+                "rd on .json must return raw text, not {:?}",
+                inner
+            ),
+            other => panic!("expected Ok(text), got {other:?}"),
+        }
+    }
+
+    // ILO-374: rd-json reads and parses a JSON file.
+    #[test]
+    fn interpret_rd_json_builtin_parses_json() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_interp_rd_json_builtin.json");
+        std::fs::write(&path, r#"{"key":"value"}"#).unwrap();
+        let path_str = path.to_str().unwrap().to_string();
+        let result = run_str(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path_str))],
+        );
+        std::fs::remove_file(&path).ok();
+        match &result {
+            Value::Ok(inner) => assert!(
+                !matches!(inner.as_ref(), Value::Text(_)),
+                "rd-json must return parsed value, not raw text"
+            ),
+            other => panic!("expected Ok(parsed), got {other:?}"),
+        }
+    }
+
+    // ILO-374: rd-json on non-existent file returns Err.
+    #[test]
+    fn interpret_rd_json_not_found() {
+        let result = run_str(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(
+                "/nonexistent/ilo_rd_json_test.json".to_string(),
+            ))],
+        );
+        assert!(
+            matches!(result, Value::Err(_)),
+            "expected Err for missing file, got {:?}",
+            result
+        );
     }
 
     // L758: rdb wrong first arg
