@@ -45,13 +45,12 @@ fn emit_type_comment(ty: &Type) -> String {
         Type::Any => "any".to_string(),
         Type::Optional(inner) => format!("{} | null", emit_type_comment(inner)),
         Type::List(inner) => format!("{}[]", emit_type_comment(inner)),
-        Type::Map(k, v) => format!(
-            "Map<{}, {}>",
-            emit_type_comment(k),
-            emit_type_comment(v)
-        ),
+        Type::Map(k, v) => format!("Map<{}, {}>", emit_type_comment(k), emit_type_comment(v)),
         Type::Sum(_) => "string".to_string(),
-        Type::Result(ok, _err) => format!("{{ ok: true, value: {} }} | {{ ok: false, error: string }}", emit_type_comment(ok)),
+        Type::Result(ok, _err) => format!(
+            "{{ ok: true, value: {} }} | {{ ok: false, error: string }}",
+            emit_type_comment(ok)
+        ),
         Type::Fn(params, ret) => {
             let ps: Vec<_> = params.iter().map(emit_type_comment).collect();
             format!("({}) => {}", ps.join(", "), emit_type_comment(ret))
@@ -81,7 +80,10 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
                 ));
             }
             indent(out, level);
-            out.push_str(&format!(" * @returns {{{}}}\n", emit_type_comment(return_type)));
+            out.push_str(&format!(
+                " * @returns {{{}}}\n",
+                emit_type_comment(return_type)
+            ));
             indent(out, level);
             out.push_str(" */\n");
             indent(out, level);
@@ -128,7 +130,10 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
                 ));
             }
             indent(out, level);
-            out.push_str(&format!(" * @returns {{{}}}\n", emit_type_comment(return_type)));
+            out.push_str(&format!(
+                " * @returns {{{}}}\n",
+                emit_type_comment(return_type)
+            ));
             indent(out, level);
             out.push_str(" */\n");
             indent(out, level);
@@ -221,7 +226,11 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
         } => {
             let coll = emit_expr(out, level, collection);
             indent(out, level);
-            out.push_str(&format!("for (const {} of {}) {{\n", js_name(binding), coll));
+            out.push_str(&format!(
+                "for (const {} of {}) {{\n",
+                js_name(binding),
+                coll
+            ));
             emit_body(out, body, level + 1, false);
             indent(out, level);
             out.push_str("}\n");
@@ -328,11 +337,7 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                     kw, subj_str, subj_str
                 ));
                 indent(out, level + 1);
-                out.push_str(&format!(
-                    "const {} = {}[1];\n",
-                    js_name(binding),
-                    subj_str
-                ));
+                out.push_str(&format!("const {} = {}[1];\n", js_name(binding), subj_str));
             }
             Pattern::Err(binding) => {
                 let kw = if i == 0 { "if" } else { "else if" };
@@ -341,11 +346,7 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                     kw, subj_str, subj_str
                 ));
                 indent(out, level + 1);
-                out.push_str(&format!(
-                    "const {} = {}[1];\n",
-                    js_name(binding),
-                    subj_str
-                ));
+                out.push_str(&format!("const {} = {}[1];\n", js_name(binding), subj_str));
             }
             Pattern::Literal(lit) => {
                 let kw = if i == 0 { "if" } else { "else if" };
@@ -379,7 +380,11 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ref(name) => js_name(name),
-        Expr::Field { object, field, safe } => {
+        Expr::Field {
+            object,
+            field,
+            safe,
+        } => {
             let obj = emit_expr(out, level, object);
             if *safe {
                 format!("({}?.[\"{}\"])", obj, field)
@@ -387,7 +392,11 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 format!("{}[\"{}\"]", obj, field)
             }
         }
-        Expr::Index { object, index, safe } => {
+        Expr::Index {
+            object,
+            index,
+            safe,
+        } => {
             let obj = emit_expr(out, level, object);
             if *safe {
                 format!("({}?.[{}])", obj, index)
@@ -395,9 +404,11 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 format!("{}[{}]", obj, index)
             }
         }
-        Expr::Call { function, args, unwrap } => {
-            emit_call(out, level, function, args, unwrap)
-        }
+        Expr::Call {
+            function,
+            args,
+            unwrap,
+        } => emit_call(out, level, function, args, unwrap),
         Expr::BinOp { op, left, right } => {
             let op_str = match op {
                 BinOp::Add => "+",
@@ -555,10 +566,7 @@ fn emit_call(
     if function == "rnd" && args.len() == 2 {
         let lo = emit_expr(out, level, &args[0]);
         let hi = emit_expr(out, level, &args[1]);
-        return format!(
-            "Math.floor(Math.random() * ({} - {} + 1) + {})",
-            hi, lo, lo
-        );
+        return format!("Math.floor(Math.random() * ({} - {} + 1) + {})", hi, lo, lo);
     }
     if function == "trm" && args.len() == 1 {
         return format!("{}.trim()", emit_expr(out, level, &args[0]));
@@ -574,7 +582,10 @@ fn emit_call(
     if function == "srt" && args.len() == 2 {
         let key_fn = emit_expr(out, level, &args[0]);
         let xs = emit_expr(out, level, &args[1]);
-        return format!("[...{}].sort((a, b) => {{const ka = {}(a); const kb = {}(b); return ka < kb ? -1 : ka > kb ? 1 : 0;}})", xs, key_fn, key_fn);
+        return format!(
+            "[...{}].sort((a, b) => {{const ka = {}(a); const kb = {}(b); return ka < kb ? -1 : ka > kb ? 1 : 0;}})",
+            xs, key_fn, key_fn
+        );
     }
     if function == "fmt" && !args.is_empty() {
         // Simple positional format: replace {0}, {1}, ... with args
@@ -664,10 +675,7 @@ fn emit_match_expr(
     let can_ternary = arms.iter().all(|arm| {
         arm.body.len() == 1
             && matches!(arm.body[0].node, Stmt::Expr(_))
-            && matches!(
-                arm.pattern,
-                Pattern::Wildcard | Pattern::Literal(_)
-            )
+            && matches!(arm.pattern, Pattern::Wildcard | Pattern::Literal(_))
     });
 
     if can_ternary {
@@ -681,12 +689,7 @@ fn emit_match_expr(
             match &arm.pattern {
                 Pattern::Wildcard => default = arm_val,
                 Pattern::Literal(lit) => {
-                    parts.push(format!(
-                        "{} === {} ? {}",
-                        subj,
-                        emit_literal(lit),
-                        arm_val
-                    ));
+                    parts.push(format!("{} === {} ? {}", subj, emit_literal(lit), arm_val));
                 }
                 _ => {}
             }
@@ -727,11 +730,7 @@ fn emit_match_expr(
                     kw, subj_var, subj_var
                 ));
                 indent(&mut body, level + 2);
-                body.push_str(&format!(
-                    "const {} = {}[1];\n",
-                    js_name(binding),
-                    subj_var
-                ));
+                body.push_str(&format!("const {} = {}[1];\n", js_name(binding), subj_var));
                 emit_body(&mut body, &arm.body, level + 2, true);
                 indent(&mut body, level + 1);
                 body.push_str("}\n");
@@ -744,11 +743,7 @@ fn emit_match_expr(
                     kw, subj_var, subj_var
                 ));
                 indent(&mut body, level + 2);
-                body.push_str(&format!(
-                    "const {} = {}[1];\n",
-                    js_name(binding),
-                    subj_var
-                ));
+                body.push_str(&format!("const {} = {}[1];\n", js_name(binding), subj_var));
                 emit_body(&mut body, &arm.body, level + 2, true);
                 indent(&mut body, level + 1);
                 body.push_str("}\n");
