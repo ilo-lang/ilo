@@ -31,6 +31,7 @@ rust_out
 docs/
 # Tracked documentation files are explicitly exempted below:
 !docs/deploying.md
+!docs/streaming.md
 
 # E2E test artefacts (subagent-produced logs; not tracked)
 tests/e2e/
