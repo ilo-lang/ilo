@@ -4779,9 +4779,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::List(items))
             }
-            Some(Token::LBrace) if self.looks_like_brace_lambda() => {
-                self.parse_brace_lambda()
-            }
+            Some(Token::LBrace) if self.looks_like_brace_lambda() => self.parse_brace_lambda(),
             Some(Token::LBrace) if self.is_anon_record_literal() => {
                 self.advance(); // consume `{`
                 let expr = self.parse_anon_record_body()?;
@@ -5152,7 +5150,10 @@ For variable-position list indexing bind the head first: \
             match self.peek() {
                 Some(Token::Ident(_)) => {
                     let name = self.expect_ident()?;
-                    params.push(Param { name, ty: Type::Any });
+                    params.push(Param {
+                        name,
+                        ty: Type::Any,
+                    });
                 }
                 _ => {
                     return Err(self.error_hint(
@@ -5161,7 +5162,8 @@ For variable-position list indexing bind the head first: \
                             "expected param name or `>` in brace-lambda, got {}",
                             self.peek().map_or("EOF".into(), |t| t.user_facing_name())
                         ),
-                        "brace-lambda syntax: `{param... > stmts}` — bare param names before `>`".into(),
+                        "brace-lambda syntax: `{param... > stmts}` — bare param names before `>`"
+                            .into(),
                     ));
                 }
             }
@@ -5177,7 +5179,10 @@ For variable-position list indexing bind the head first: \
         if self.peek() != Some(&Token::RBrace) {
             let span_start = self.peek_span();
             let stmt = self.parse_stmt()?;
-            body.push(Spanned { node: stmt, span: span_start.merge(self.prev_span()) });
+            body.push(Spanned {
+                node: stmt,
+                span: span_start.merge(self.prev_span()),
+            });
             while self.peek() == Some(&Token::Semi) {
                 self.advance();
                 if self.peek() == Some(&Token::RBrace) {
@@ -5185,7 +5190,10 @@ For variable-position list indexing bind the head first: \
                 }
                 let span_start = self.peek_span();
                 let stmt = self.parse_stmt()?;
-                body.push(Spanned { node: stmt, span: span_start.merge(self.prev_span()) });
+                body.push(Spanned {
+                    node: stmt,
+                    span: span_start.merge(self.prev_span()),
+                });
             }
         }
         let end = self.peek_span();
@@ -5204,7 +5212,10 @@ For variable-position list indexing bind the head first: \
         self.lambda_counter += 1;
         let mut lifted_params = params;
         for cap in &free {
-            lifted_params.push(Param { name: cap.clone(), ty: Type::Any });
+            lifted_params.push(Param {
+                name: cap.clone(),
+                ty: Type::Any,
+            });
         }
         self.register_user_fn(&fn_name, &lifted_params);
         let span = start.merge(end);
