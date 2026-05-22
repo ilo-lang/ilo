@@ -2267,6 +2267,7 @@ mod tests {
         prog.declarations.push(Decl::Use {
             path: "x.@".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         });
         let py = emit(&prog);

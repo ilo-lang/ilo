@@ -9387,6 +9387,7 @@ mod tests {
         program.declarations.push(Decl::Use {
             path: "x.@".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         });
         let result = verify(&program);
