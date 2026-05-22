@@ -39,7 +39,10 @@ fn assert_clean(code: &str, label: &str) {
 
 fn assert_err_code(code: &str, expected_code: &str, label: &str) {
     let (ok, stderr) = check(code);
-    assert!(!ok, "{label}: expected error {expected_code}, program passed");
+    assert!(
+        !ok,
+        "{label}: expected error {expected_code}, program passed"
+    );
     assert!(
         stderr.contains(expected_code),
         "{label}: expected {expected_code} in stderr, got:\n{stderr}"
@@ -146,9 +149,5 @@ fn mget_on_concrete_non_map_still_errors() {
 
 #[test]
 fn len_on_concrete_non_collection_still_errors() {
-    assert_err_code(
-        "f x:n>n;len x",
-        "ILO-T013",
-        "len on n must still fail",
-    );
+    assert_err_code("f x:n>n;len x", "ILO-T013", "len on n must still fail");
 }
