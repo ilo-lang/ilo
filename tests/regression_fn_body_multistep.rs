@@ -91,10 +91,7 @@ const EARLY_RETURN_GUARD: &str = "abs-scale x:n>n;>=x 0 *x 10;neg=*x -1;*neg 10\
 
 #[test]
 fn early_return_guard_positive_vm() {
-    assert_eq!(
-        run("--vm", EARLY_RETURN_GUARD, &["abs-scale", "3"]),
-        "30"
-    );
+    assert_eq!(run("--vm", EARLY_RETURN_GUARD, &["abs-scale", "3"]), "30");
 }
 
 #[test]
@@ -108,10 +105,7 @@ fn early_return_guard_negative_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn early_return_guard_positive_jit() {
-    assert_eq!(
-        run("--jit", EARLY_RETURN_GUARD, &["abs-scale", "3"]),
-        "30"
-    );
+    assert_eq!(run("--jit", EARLY_RETURN_GUARD, &["abs-scale", "3"]), "30");
 }
 
 #[test]
@@ -158,24 +152,17 @@ fn early_return_ret_positive_jit() {
 // ── 5. Result unwrap mid-body (`!`) — VM/JIT paths ─────────────────────────
 // `a=num! "10";b=num! "32";~+a b` — unwrap two Results, then wrap sum as Ok.
 
-const RESULT_UNWRAP_BODY: &str =
-    "parse-and-add>R n t;a=num! \"10\";b=num! \"32\";~+a b\n";
+const RESULT_UNWRAP_BODY: &str = "parse-and-add>R n t;a=num! \"10\";b=num! \"32\";~+a b\n";
 
 #[test]
 fn result_unwrap_mid_body_vm() {
-    assert_eq!(
-        run("--vm", RESULT_UNWRAP_BODY, &["parse-and-add"]),
-        "42"
-    );
+    assert_eq!(run("--vm", RESULT_UNWRAP_BODY, &["parse-and-add"]), "42");
 }
 
 #[test]
 #[cfg(feature = "cranelift")]
 fn result_unwrap_mid_body_jit() {
-    assert_eq!(
-        run("--jit", RESULT_UNWRAP_BODY, &["parse-and-add"]),
-        "42"
-    );
+    assert_eq!(run("--jit", RESULT_UNWRAP_BODY, &["parse-and-add"]), "42");
 }
 
 // ── 5b. Result unwrap mid-body — AOT path (ILO-406) ────────────────────────
@@ -188,10 +175,8 @@ fn result_unwrap_mid_body_jit() {
 fn result_unwrap_mid_body_aot() {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let src_path = std::env::temp_dir()
-        .join(format!("ilo_406_unwrap_{pid}_{n}.ilo"));
-    let bin_path = std::env::temp_dir()
-        .join(format!("ilo_406_unwrap_{pid}_{n}.bin"));
+    let src_path = std::env::temp_dir().join(format!("ilo_406_unwrap_{pid}_{n}.ilo"));
+    let bin_path = std::env::temp_dir().join(format!("ilo_406_unwrap_{pid}_{n}.bin"));
 
     std::fs::write(&src_path, RESULT_UNWRAP_BODY).unwrap();
 
@@ -222,13 +207,8 @@ fn result_unwrap_mid_body_aot() {
         String::from_utf8_lossy(&run_out.stderr),
     );
 
-    let stdout = String::from_utf8_lossy(&run_out.stdout)
-        .trim()
-        .to_string();
-    assert_eq!(
-        stdout, "42",
-        "AOT: expected '42', got {stdout:?}"
-    );
+    let stdout = String::from_utf8_lossy(&run_out.stdout).trim().to_string();
+    assert_eq!(stdout, "42", "AOT: expected '42', got {stdout:?}");
 
     let _ = std::fs::remove_file(&src_path);
     let _ = std::fs::remove_file(&bin_path);
