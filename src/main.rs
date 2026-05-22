@@ -977,7 +977,8 @@ fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
     for w in &vr.warnings {
         eprint!(
             "{}",
-            AnsiRenderer { use_color: true }.render(&Diagnostic::from(w).with_source(source.clone()))
+            AnsiRenderer { use_color: true }
+                .render(&Diagnostic::from(w).with_source(source.clone()))
         );
     }
     if !vr.errors.is_empty() {
@@ -1083,8 +1084,8 @@ fn handle_http_connection(
     };
 
     // ── Build ilo Request record ───────────────────────────────────────────────
-    use interpreter::Value;
     use interpreter::MapKey;
+    use interpreter::Value;
 
     let mut hdr_map: HashMap<interpreter::MapKey, Value> = HashMap::new();
     for (k, v) in &raw_headers {
@@ -1107,10 +1108,7 @@ fn handle_http_connection(
         "headers".to_string(),
         Value::Map(std::sync::Arc::new(hdr_map)),
     );
-    req_fields.insert(
-        "body".to_string(),
-        Value::Text(std::sync::Arc::new(body)),
-    );
+    req_fields.insert("body".to_string(), Value::Text(std::sync::Arc::new(body)));
 
     let req_val = Value::Record {
         type_name: "Request".to_string(),
@@ -11461,17 +11459,31 @@ handler req:_>rsp
         // Verify Transfer-Encoding: chunked header is present.
         assert!(
             response.contains("Transfer-Encoding: chunked"),
-            "expected chunked header, got:\n{}", response
+            "expected chunked header, got:\n{}",
+            response
         );
         // Verify the chunked body contains the expected text.
-        assert!(response.contains("hello"), "expected 'hello' in body:\n{}", response);
-        assert!(response.contains("world"), "expected 'world' in body:\n{}", response);
+        assert!(
+            response.contains("hello"),
+            "expected 'hello' in body:\n{}",
+            response
+        );
+        assert!(
+            response.contains("world"),
+            "expected 'world' in body:\n{}",
+            response
+        );
         // Verify the terminating chunk is present.
-        assert!(response.ends_with("0\r\n\r\n"), "expected terminating chunk:\n{}", response);
+        assert!(
+            response.ends_with("0\r\n\r\n"),
+            "expected terminating chunk:\n{}",
+            response
+        );
         // Content-Length must NOT be present in chunked responses.
         assert!(
             !response.contains("Content-Length"),
-            "Content-Length must be absent in chunked response:\n{}", response
+            "Content-Length must be absent in chunked response:\n{}",
+            response
         );
     }
 
@@ -11504,8 +11516,20 @@ handler req:_>rsp
         client.read_to_string(&mut response).unwrap();
         jh.join().unwrap();
 
-        assert!(response.contains("Content-Length: 11"), "expected Content-Length:\n{}", response);
-        assert!(!response.contains("Transfer-Encoding"), "must not have TE:\n{}", response);
-        assert!(response.contains("hello plain"), "expected body:\n{}", response);
+        assert!(
+            response.contains("Content-Length: 11"),
+            "expected Content-Length:\n{}",
+            response
+        );
+        assert!(
+            !response.contains("Transfer-Encoding"),
+            "must not have TE:\n{}",
+            response
+        );
+        assert!(
+            response.contains("hello plain"),
+            "expected body:\n{}",
+            response
+        );
     }
 }
