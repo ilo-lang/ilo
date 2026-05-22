@@ -11274,12 +11274,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    #[test]
-    #[test]
-    #[test]
-    #[test]
-    #[test]
     fn interp_grp_wrong_fn_arg() {
         let err = run_str_err("f>t;grp 42 [1, 2, 3]", Some("f"), vec![]);
         assert!(err.contains("grp"), "got: {err}");
@@ -11818,8 +11812,6 @@ mod tests {
 
     // --- srt fn xs ---
 
-    #[test]
-    #[test]
     // --- prnt ---
     #[test]
     fn interpret_prnt_returns_value() {
@@ -12310,7 +12302,6 @@ mod tests {
     }
 
     // L582-583: srt with key fn — text keys
-    #[test]
     // L622: get with invalid (non-map) headers
     #[test]
     fn interpret_get_invalid_headers() {
@@ -12885,7 +12876,6 @@ mod tests {
 
     // ── resolve_fn_ref Text path (line 948) via map with text fn name ───────
 
-    #[test]
     // ── rd 2-arg explicit format (lines 736, 749, 750-751) ──────────────────
     #[test]
     fn interpret_rd_explicit_raw_format() {
@@ -12956,8 +12946,6 @@ mod tests {
 
     // ── grp Number/Bool key (lines 1012-1016, 1019-1020) ───────────────────
 
-    #[test]
-    #[test]
     // ── avg non-number element (line 1053) ──────────────────────────────────
     #[test]
     fn interpret_avg_non_number_element() {
@@ -13082,7 +13070,6 @@ mod tests {
 
     // ── grp — float key (line 1016) ──────────────────────────────────────────
 
-    #[test]
     // ── ForRange early return (lines 1370-1371) ───────────────────────────────
     #[test]
     fn interpret_for_range_early_return_via_guard() {
@@ -13300,7 +13287,6 @@ mod tests {
 
     // ── srt with bool key hits _ => Equal arm (line 583) ─────────────────────
 
-    #[test]
     // ── brk inside guard body propagates Break (line 1287) ───────────────────
     #[test]
     fn interpret_brk_inside_guard_body_propagates() {
