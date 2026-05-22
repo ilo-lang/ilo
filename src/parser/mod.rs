@@ -3460,7 +3460,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `env-all!` / etc. Never consume args — return immediately as
                 // a 0-arg call. Without this guard the greedy args loop below
                 // would steal the first token of the next statement.
-                if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" {
+                if name == "rdin" || name == "rdinl" || name == "env-all" || name == "world" || name == "world-no-net" {
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
@@ -3518,7 +3518,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "pi"
                 || name == "tau"
                 || name == "e"
-                || name == "world")
+                || name == "world"
+                || name == "world-no-net")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -4282,7 +4283,8 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     || name == "pi"
                     || name == "tau"
                     || name == "e"
-                    || name == "world" =>
+                    || name == "world"
+                    || name == "world-no-net" =>
             {
                 let name = name.clone();
                 self.advance();
