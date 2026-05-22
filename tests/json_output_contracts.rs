@@ -323,3 +323,74 @@ fn check_json_no_fix_plan_when_not_applicable() {
     assert!(!diags.is_empty(), "should have at least one error");
     // The test is that parsing succeeded (done above) and the binary ran.
 }
+
+/// ILO-T008 return type mismatch n→t: fix_plan wraps expr with `str`.
+#[test]
+fn check_json_t008_fix_plan_str_cast() {
+    let diags = check_json_diags("f x:n>t;x");
+    let t008 = diags
+        .iter()
+        .find(|d| d["code"] == "ILO-T008")
+        .expect("T008 diagnostic present");
+    let plan = &t008["fix_plan"];
+    assert!(!plan.is_null(), "ILO-T008 (n→t) should carry a fix_plan");
+    let edits = plan["edits"].as_array().expect("fix_plan.edits array");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["before"], "x", "before is the return expr");
+    let after = edits[0]["after"].as_str().unwrap();
+    assert!(after.starts_with("str "), "after wraps with 'str'; got: {after}");
+    assert!(edits[0]["line_range"].is_array());
+}
+
+/// ILO-T008 return type mismatch t→n: fix_plan wraps expr with `num`.
+#[test]
+fn check_json_t008_fix_plan_num_cast() {
+    let diags = check_json_diags("f x:t>n;x");
+    let t008 = diags
+        .iter()
+        .find(|d| d["code"] == "ILO-T008")
+        .expect("T008 diagnostic present");
+    let plan = &t008["fix_plan"];
+    assert!(!plan.is_null(), "ILO-T008 (t→n) should carry a fix_plan");
+    let edits = plan["edits"].as_array().expect("fix_plan.edits array");
+    assert_eq!(edits.len(), 1);
+    let after = edits[0]["after"].as_str().unwrap();
+    assert!(after.starts_with("num "), "after wraps with 'num'; got: {after}");
+}
+
+/// ILO-P011 reserved keyword used as binding: fix_plan renames to `<name>2`.
+#[test]
+fn check_json_p011_fix_plan_reserved_rename() {
+    let diags = check_json_diags("var=5;var");
+    let p011 = diags
+        .iter()
+        .find(|d| d["code"] == "ILO-P011")
+        .expect("P011 diagnostic present");
+    let plan = &p011["fix_plan"];
+    assert!(!plan.is_null(), "ILO-P011 should carry a fix_plan");
+    let edits = plan["edits"].as_array().expect("fix_plan.edits array");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["before"], "var", "before is the reserved keyword");
+    assert_eq!(edits[0]["after"], "var2", "after is the renamed identifier");
+    assert!(edits[0]["line_range"].is_array());
+}
+
+/// ILO-T041 nil-coalesce on Result: fix_plan rewrites to `?val{~v:v;^_:default}`.
+#[test]
+fn check_json_t041_fix_plan_nil_coalesce_result() {
+    let diags = check_json_diags("f s:t>n;num s ?? 0");
+    let t041 = diags
+        .iter()
+        .find(|d| d["code"] == "ILO-T041")
+        .expect("T041 diagnostic present");
+    let plan = &t041["fix_plan"];
+    assert!(!plan.is_null(), "ILO-T041 should carry a fix_plan");
+    let edits = plan["edits"].as_array().expect("fix_plan.edits array");
+    assert_eq!(edits.len(), 1);
+    let before = edits[0]["before"].as_str().unwrap();
+    let after = edits[0]["after"].as_str().unwrap();
+    assert!(before.contains(" ?? "), "before should contain ' ?? '; got: {before}");
+    assert!(after.starts_with('?'), "after should start with '?'; got: {after}");
+    assert!(after.contains("{~v:v;^_:"), "after should contain match arms; got: {after}");
+    assert!(edits[0]["line_range"].is_array());
+}
