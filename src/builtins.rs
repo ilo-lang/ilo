@@ -401,6 +401,16 @@ pub enum Builtin {
     // `s`. Returns nil when `sub` is not found. Index is in Unicode code-point
     // units (same as `at`), not raw bytes, so multi-byte characters count as 1.
     Idxof,
+
+    // `hex-rev s > t` — reverse the byte order of a hex-encoded string.
+    // Input must be a hex string of even length (2 chars per byte); odd
+    // length errors ILO-T013 with a padding hint. Case is preserved:
+    // `abCD` reversed is `CDab`. Useful for little-endian ↔ big-endian
+    // conversions (e.g. Bitcoin txid display vs wire encoding). Total
+    // for even-length hex; errors for odd-length input. Tree-bridge
+    // eligible: pure t → t, no FnRef args, no I/O. Appended last to
+    // preserve every existing on-wire tag.
+    HexRev,
 }
 
 impl Builtin {
@@ -596,6 +606,7 @@ impl Builtin {
             "ct-eq" => Some(Builtin::CtEq),
             "sha256-hex" => Some(Builtin::Sha256Hex),
             "sha256d" => Some(Builtin::Sha256d),
+            "hex-rev" => Some(Builtin::HexRev),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -797,6 +808,7 @@ impl Builtin {
             Builtin::CtEq => "ct-eq",
             Builtin::Sha256Hex => "sha256-hex",
             Builtin::Sha256d => "sha256d",
+            Builtin::HexRev => "hex-rev",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -1152,6 +1164,11 @@ impl Builtin {
         Builtin::Rsum,
         Builtin::Ravg,
         Builtin::Rmin,
+        // `hex-rev s > t` — byte-pair reversal of a hex-encoded string.
+        // Even-length hex input only; odd length errors ILO-T013.
+        // Tree-bridge eligible: pure t → t, no FnRef, no I/O. Appended
+        // last to preserve every existing on-wire tag.
+        Builtin::HexRev,
         // `bisect xs target > n` — O(log N) insertion point in a sorted
         // numeric list (Python `bisect_left` semantics). Tree-bridge
         // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last

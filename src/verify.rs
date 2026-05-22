@@ -760,6 +760,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64", &["t"], "t"),
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
+    ("hex-rev", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
     // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
     // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or

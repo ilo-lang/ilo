@@ -1,0 +1,15 @@
+-- hex-rev: reverse byte order of a hex-encoded string.
+-- Useful for little-endian <-> big-endian conversions (e.g. Bitcoin txids).
+
+-- Reverse a 4-byte (8-char) hex string.
+flip4 s:t>t;hex-rev s
+
+-- round-trip: double reversal is identity
+roundtrip s:t>t;hex-rev (hex-rev s)
+
+-- run: flip4 "12345678"
+-- out: 78563412
+-- run: flip4 "deadbeef"
+-- out: efbeadde
+-- run: roundtrip "aabbccdd"
+-- out: aabbccdd
