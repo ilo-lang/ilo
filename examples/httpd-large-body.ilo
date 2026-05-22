@@ -1,0 +1,27 @@
+-- `ilo httpd` lazy request-body example (ILO-380).
+--
+-- Demonstrates how `ilo httpd` adapts req.body shape based on payload size:
+--
+--   Content-Length ≤ 64 KiB  →  req.body : t        (plain string)
+--   Content-Length >  64 KiB  →  req.body : L t      (list of lines)
+--
+-- Usage:
+--   ilo httpd examples/httpd-large-body.ilo
+--   # small body → echoed as text:
+--   curl -X POST -d "hello" http://localhost:8080/
+--   # large body → handler receives a line-list, counts lines:
+--   python3 -c "print('x'*100+'\\n', end='')" | \
+--     head -c 200000 | curl -X POST --data-binary @- http://localhost:8080/
+--
+-- Handler signature:
+--   req.body is t   for small payloads (direct echo)
+--   req.body is L t for large payloads (@line iteration)
+
+type rsp{status:n;body:t}
+
+handler req:_>rsp
+  -- Check whether body arrived as a list (large) or text (small).
+  -- `len` works on both t (byte length) and L t (element count).
+  n=len req.body
+  msg=+"body parts: " (fmt n)
+  rsp status:200 body:msg

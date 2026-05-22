@@ -916,14 +916,26 @@ fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> 
 // Serves HTTP requests by calling a user-defined ilo handler function.
 //
 // Handler signature (ilo source):
-//   type Request{method:t;path:t;headers:M t t;body:t}
+//   type Request{method:t;path:t;headers:M t t;body:t|L t}
 //   type Response{status:n;headers:M t t;body:t}
 //   handler req:Request>Response; ...
+//
+// req.body shape (ILO-380):
+//   Content-Length ≤ LAZY_BODY_THRESHOLD  → Value::Text  (eager string)
+//   Content-Length >  LAZY_BODY_THRESHOLD → Value::List  (lines, L t)
+//
+// The lazy-list form lets handlers iterate large bodies with `@line req.body`
+// without buffering the whole payload into a single String allocation.
 //
 // One thread is spawned per accepted connection (minimal thread-per-request
 // pool). No async runtime is required — the ilo interpreter is synchronous.
 //
 // TODO(ILO-59): add --allow-net cap check once the cap-flags PR lands.
+
+/// Request bodies larger than this byte threshold are presented to the handler
+/// as a `Value::List` of text lines (`L t`) rather than a single `Value::Text`.
+/// Handlers iterate with `@line req.body`; small bodies remain a plain `t`.
+const LAZY_BODY_THRESHOLD: usize = 65_536; // 64 KiB
 
 fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
     use std::net::TcpListener;
@@ -1071,19 +1083,33 @@ fn handle_http_connection(
         }
     }
 
-    // ── Read body ─────────────────────────────────────────────────────────────
-    let body = if content_length > 0 {
-        let mut buf = vec![0u8; content_length];
-        use std::io::Read;
-        reader.read_exact(&mut buf)?;
-        String::from_utf8_lossy(&buf).into_owned()
-    } else {
-        String::new()
-    };
-
-    // ── Build ilo Request record ───────────────────────────────────────────────
+    // ── Read body (ILO-380: lazy lines for large POSTs) ───────────────────────
+    //
+    // Small bodies (≤ LAZY_BODY_THRESHOLD): read into a String → Value::Text.
+    // Large bodies (> LAZY_BODY_THRESHOLD): read into a byte buffer, split on
+    // newlines, yield Value::List of Value::Text — handlers iterate with
+    // `@line req.body` without a single huge allocation staying live.
     use interpreter::Value;
     use interpreter::MapKey;
+
+    let body_value: Value = if content_length == 0 {
+        Value::Text(std::sync::Arc::new(String::new()))
+    } else {
+        use std::io::Read;
+        let mut buf = vec![0u8; content_length];
+        reader.read_exact(&mut buf)?;
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        if content_length > LAZY_BODY_THRESHOLD {
+            // Split into lines and wrap as L t so handlers can @line iterate.
+            let lines: Vec<Value> = text
+                .lines()
+                .map(|l| Value::Text(std::sync::Arc::new(l.to_owned())))
+                .collect();
+            Value::List(std::sync::Arc::new(lines))
+        } else {
+            Value::Text(std::sync::Arc::new(text))
+        }
+    };
 
     let mut hdr_map: HashMap<interpreter::MapKey, Value> = HashMap::new();
     for (k, v) in &raw_headers {
@@ -1106,10 +1132,7 @@ fn handle_http_connection(
         "headers".to_string(),
         Value::Map(std::sync::Arc::new(hdr_map)),
     );
-    req_fields.insert(
-        "body".to_string(),
-        Value::Text(std::sync::Arc::new(body)),
-    );
+    req_fields.insert("body".to_string(), body_value);
 
     let req_val = Value::Record {
         type_name: "Request".to_string(),
@@ -10654,5 +10677,110 @@ handler req:_>rsp
         assert!(response.contains("Content-Length: 11"), "expected Content-Length:\n{}", response);
         assert!(!response.contains("Transfer-Encoding"), "must not have TE:\n{}", response);
         assert!(response.contains("hello plain"), "expected body:\n{}", response);
+    }
+
+    // ── handle_http_connection: lazy body for large POSTs (ILO-380) ───────────
+
+    /// Small POST body (≤ 64 KiB): req.body arrives as Value::Text.
+    /// Handler echoes it back; response contains the original string.
+    #[test]
+    fn httpd_small_post_body_is_text() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        // Handler echoes req.body as the response body (type t).
+        let src = r#"
+type rsp{status:n;body:t}
+handler req:_>rsp
+  rsp status:200 body:req.body
+"#;
+        let program = Arc::new(make_program(src));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+
+        let body = "hello small body";
+        let request = format!(
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(request.as_bytes()).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        jh.join().unwrap();
+
+        assert!(
+            response.contains("hello small body"),
+            "expected echoed body in response, got:\n{}", response
+        );
+        assert!(
+            response.contains("Content-Length"),
+            "small body response should use Content-Length:\n{}", response
+        );
+    }
+
+    /// Large POST body (> 64 KiB): req.body arrives as Value::List of lines.
+    /// Handler uses `len req.body` (line count); response contains the count.
+    #[test]
+    fn httpd_large_post_body_is_lazy_list() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+
+        // Handler counts lines in req.body (which will be a List for large bodies).
+        let src = r#"
+type rsp{status:n;body:t}
+handler req:_>rsp
+  n=len req.body
+  rsp status:200 body:(fmt n)
+"#;
+        let program = Arc::new(make_program(src));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let prog_clone = Arc::clone(&program);
+        let jh = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            handle_http_connection(conn, &prog_clone, "handler").unwrap();
+        });
+
+        // Build a body > 64 KiB: 700 lines of ~100 chars each ≈ 70 KB.
+        let line = "x".repeat(99) + "\n";
+        let line_count = 700usize;
+        let big_body: String = line.repeat(line_count);
+        assert!(big_body.len() > LAZY_BODY_THRESHOLD, "body must exceed threshold");
+
+        let request = format!(
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{}",
+            big_body.len(),
+            big_body
+        );
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(request.as_bytes()).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        jh.join().unwrap();
+
+        // Response body should be the line count as a string.
+        assert!(
+            response.contains(&line_count.to_string()),
+            "expected line count {} in response, got:\n{}", line_count, response
+        );
+    }
+
+    /// Regression: large body threshold is exactly 64 KiB = 65536 bytes.
+    #[test]
+    fn httpd_lazy_body_threshold_is_64kib() {
+        assert_eq!(LAZY_BODY_THRESHOLD, 65_536);
     }
 }
