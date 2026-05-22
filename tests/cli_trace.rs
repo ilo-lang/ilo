@@ -14,10 +14,7 @@ fn ilo() -> Command {
 }
 
 fn run_args(args: &[&str]) -> (bool, String, String) {
-    let out = ilo()
-        .args(args)
-        .output()
-        .expect("failed to run ilo");
+    let out = ilo().args(args).output().expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (out.status.success(), stdout, stderr)
@@ -27,13 +24,7 @@ fn run_args(args: &[&str]) -> (bool, String, String) {
 
 #[test]
 fn trace_demo_emits_valid_jsonl() {
-    let (ok, stdout, _stderr) = run_args(&[
-        "trace",
-        "examples/trace-demo.ilo",
-        "add",
-        "3",
-        "4",
-    ]);
+    let (ok, stdout, _stderr) = run_args(&["trace", "examples/trace-demo.ilo", "add", "3", "4"]);
     assert!(ok, "expected exit 0");
 
     // Must have at least one line.
@@ -42,37 +33,39 @@ fn trace_demo_emits_valid_jsonl() {
 
     // Every line must be valid JSON with required keys.
     for line in &lines {
-        let v: serde_json::Value =
-            serde_json::from_str(line).unwrap_or_else(|e| panic!("invalid JSON on line {line:?}: {e}"));
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("invalid JSON on line {line:?}: {e}"));
 
         // Required keys.
-        assert!(v.get("schemaVersion").is_some(), "missing schemaVersion in {line}");
-        assert!(v.get("line").is_some(),          "missing line in {line}");
-        assert!(v.get("stmt").is_some(),           "missing stmt in {line}");
-        assert!(v.get("bindings").is_some(),       "missing bindings in {line}");
-        assert!(v.get("result").is_some(),         "missing result in {line}");
+        assert!(
+            v.get("schemaVersion").is_some(),
+            "missing schemaVersion in {line}"
+        );
+        assert!(v.get("line").is_some(), "missing line in {line}");
+        assert!(v.get("stmt").is_some(), "missing stmt in {line}");
+        assert!(v.get("bindings").is_some(), "missing bindings in {line}");
+        assert!(v.get("result").is_some(), "missing result in {line}");
 
         // schemaVersion must be 1.
         assert_eq!(v["schemaVersion"], 1, "schemaVersion must be 1 in {line}");
 
         // line must be a positive integer.
-        let ln = v["line"].as_u64().expect("line must be a non-negative integer");
+        let ln = v["line"]
+            .as_u64()
+            .expect("line must be a non-negative integer");
         assert!(ln > 0, "line number must be > 0, got {ln}");
 
         // bindings must be an object.
-        assert!(v["bindings"].is_object(), "bindings must be an object in {line}");
+        assert!(
+            v["bindings"].is_object(),
+            "bindings must be an object in {line}"
+        );
     }
 }
 
 #[test]
 fn trace_demo_bindings_contain_expected_vars() {
-    let (ok, stdout, _stderr) = run_args(&[
-        "trace",
-        "examples/trace-demo.ilo",
-        "add",
-        "3",
-        "4",
-    ]);
+    let (ok, stdout, _stderr) = run_args(&["trace", "examples/trace-demo.ilo", "add", "3", "4"]);
     assert!(ok, "expected exit 0");
 
     // The last line should have bindings for x, y, a, b and result = 14.
