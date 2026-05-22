@@ -23,6 +23,7 @@
 ///     read:  Policy::All,
 ///     write: Policy::All,
 ///     run:   Policy::All,
+///     env:   Policy::All,
 /// };
 /// assert!(caps.check_net("evil.example").is_err());
 /// assert!(caps.check_net("good.example").is_err()); // still blocked — list is empty
@@ -48,6 +49,8 @@ pub enum Caps {
         read: Policy,
         write: Policy,
         run: Policy,
+        /// Controls access to environment variables via `env` / `env-all`.
+        env: Policy,
     },
 }
 
@@ -150,6 +153,28 @@ impl Caps {
                 } else {
                     Err(format!(
                         "ILO-CAP-001 blocked by --allow-run policy: cmd={cmd} is not in the allowlist"
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Returns `Ok(())` if reading environment variable `name` is allowed.
+    ///
+    /// For `env-all` (no specific name), pass `"*"` — the list policy blocks
+    /// the bulk snapshot unless the allowlist explicitly contains `"*"`.
+    pub fn check_env(&self, name: &str) -> Result<(), String> {
+        let Caps::Restricted { env, .. } = self else {
+            return Ok(());
+        };
+        match env {
+            Policy::All => Ok(()),
+            Policy::List(allowed) => {
+                if allowed.iter().any(|n| n == name) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "ILO-CAP-001 blocked by --allow-env policy: var={name} is not in the allowlist"
                     ))
                 }
             }
@@ -286,6 +311,7 @@ mod tests {
             read: Policy::List(vec![]),
             write: Policy::List(vec![]),
             run: Policy::List(vec![]),
+            env: Policy::All,
         };
         assert!(caps.check_net("https://evil.example").is_ok());
     }
@@ -297,6 +323,7 @@ mod tests {
             read: Policy::All,
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         let err = caps.check_net("https://example.com").unwrap_err();
         assert!(err.contains("--allow-net"), "msg={err}");
@@ -310,6 +337,7 @@ mod tests {
             read: Policy::All,
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         assert!(caps.check_net("https://example.com/api").is_ok());
     }
@@ -321,6 +349,7 @@ mod tests {
             read: Policy::All,
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         let err = caps.check_net("https://evil.example").unwrap_err();
         assert!(err.contains("--allow-net"), "msg={err}");
@@ -333,6 +362,7 @@ mod tests {
             read: Policy::All,
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         assert!(caps.check_net("https://api.example.com/data").is_ok());
         assert!(caps.check_net("https://example.com/data").is_ok());
@@ -348,6 +378,7 @@ mod tests {
             read: Policy::List(vec![]),
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         assert!(caps.check_read("/etc/passwd").is_err());
     }
@@ -359,6 +390,7 @@ mod tests {
             read: Policy::List(vec!["/tmp".to_owned()]),
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         assert!(caps.check_read("/tmp/foo.txt").is_ok());
         assert!(caps.check_read("/tmp").is_ok());
@@ -371,6 +403,7 @@ mod tests {
             read: Policy::List(vec!["/tmp".to_owned()]),
             write: Policy::All,
             run: Policy::All,
+            env: Policy::All,
         };
         assert!(caps.check_read("/tmpfoo").is_err());
         assert!(caps.check_read("/etc/passwd").is_err());
@@ -385,6 +418,7 @@ mod tests {
             read: Policy::All,
             write: Policy::List(vec!["/tmp".to_owned()]),
             run: Policy::All,
+            env: Policy::All,
         };
         assert!(caps.check_write("/tmp/out.txt").is_ok());
         assert!(caps.check_write("/etc/passwd").is_err());
@@ -399,6 +433,7 @@ mod tests {
             read: Policy::All,
             write: Policy::All,
             run: Policy::List(vec![]),
+            env: Policy::All,
         };
         assert!(caps.check_run("ls").is_err());
     }
@@ -410,6 +445,7 @@ mod tests {
             read: Policy::All,
             write: Policy::All,
             run: Policy::List(vec!["ls".to_owned()]),
+            env: Policy::All,
         };
         assert!(caps.check_run("ls").is_ok());
         assert!(caps.check_run("/usr/bin/ls").is_ok()); // basename match
@@ -458,5 +494,80 @@ mod tests {
     #[test]
     fn path_matches_trailing_slash_prefix() {
         assert!(path_matches("/tmp/", "/tmp/foo"));
+    }
+
+    // ── check_env ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn env_permissive_allows_any() {
+        let caps = Caps::default();
+        assert!(caps.check_env("PATH").is_ok());
+        assert!(caps.check_env("SECRET_TOKEN").is_ok());
+    }
+
+    #[test]
+    fn env_all_policy_allows_any() {
+        let caps = Caps::Restricted {
+            net: Policy::All,
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+            env: Policy::All,
+        };
+        assert!(caps.check_env("PATH").is_ok());
+    }
+
+    #[test]
+    fn env_empty_list_blocks_all() {
+        let caps = Caps::Restricted {
+            net: Policy::All,
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+            env: Policy::List(vec![]),
+        };
+        let err = caps.check_env("PATH").unwrap_err();
+        assert!(err.contains("--allow-env"), "msg={err}");
+        assert!(err.contains("PATH"), "msg={err}");
+    }
+
+    #[test]
+    fn env_allowlisted_var_passes() {
+        let caps = Caps::Restricted {
+            net: Policy::All,
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+            env: Policy::List(vec!["PATH".to_owned(), "HOME".to_owned()]),
+        };
+        assert!(caps.check_env("PATH").is_ok());
+        assert!(caps.check_env("HOME").is_ok());
+        assert!(caps.check_env("SECRET_TOKEN").is_err());
+    }
+
+    #[test]
+    fn env_bulk_snapshot_blocked_by_empty_list() {
+        // env-all passes "*" as the name; an empty list blocks it.
+        let caps = Caps::Restricted {
+            net: Policy::All,
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+            env: Policy::List(vec![]),
+        };
+        assert!(caps.check_env("*").is_err());
+    }
+
+    #[test]
+    fn env_bulk_snapshot_allowed_by_star_in_list() {
+        // Explicit "*" in the allowlist permits env-all.
+        let caps = Caps::Restricted {
+            net: Policy::All,
+            read: Policy::All,
+            write: Policy::All,
+            run: Policy::All,
+            env: Policy::List(vec!["*".to_owned()]),
+        };
+        assert!(caps.check_env("*").is_ok());
     }
 }
