@@ -8171,6 +8171,7 @@ mod tests {
                 ast::Expr::Literal(ast::Literal::Number(42.0)),
             ))],
             span: ast::Span::UNKNOWN,
+            effect_set: None,
         };
 
         let lazy_use = ast::Decl::Use {
@@ -8226,6 +8227,7 @@ mod tests {
                 unwrap: ast::UnwrapMode::None,
             }))],
             span: ast::Span::UNKNOWN,
+            effect_set: None,
         };
 
         let lazy_use = ast::Decl::Use {
