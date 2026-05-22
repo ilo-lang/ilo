@@ -10238,8 +10238,7 @@ impl<'a> VM<'a> {
                         .unwrap_or(false);
                     if is_defer_call {
                         if let Some(ast) = &self.program.ast {
-                            let callee_name =
-                                &self.program.func_names[func_idx as usize].clone();
+                            let callee_name = &self.program.func_names[func_idx as usize].clone();
                             let mut value_args = Vec::with_capacity(n_args);
                             for i in 0..n_args {
                                 value_args.push(reg!(base + a as usize + 1 + i).to_value());
@@ -13937,7 +13936,6 @@ impl<'a> VM<'a> {
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = (bx >> 8) as u16;
                     let n_args = bx & 0xFF;
-
 
                     // Save current frame metadata (result_reg + stack_base
                     // survive across the tail-call; ip is reset to 0).
