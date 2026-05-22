@@ -38,9 +38,7 @@ pub fn pkg_dir_for(owner: &str, repo: &str) -> Option<PathBuf> {
 /// Returns `None` when the input is not in a recognised form.
 pub fn parse_package_spec(spec: &str) -> Option<(&str, &str, Option<&str>)> {
     // Strip a leading `https://github.com/` if someone pastes the URL.
-    let spec = spec
-        .strip_prefix("https://github.com/")
-        .unwrap_or(spec);
+    let spec = spec.strip_prefix("https://github.com/").unwrap_or(spec);
 
     let (slug, git_ref) = if let Some((s, r)) = spec.split_once('@') {
         (s, Some(r))
@@ -83,9 +81,9 @@ pub fn is_pkg_path(path: &str) -> bool {
 /// installed (so the caller can wrap it in `ILO-P017`).
 pub fn resolve_pkg_path(path: &str) -> Result<PathBuf, String> {
     // Strip leading slash/dots (already ruled out by is_pkg_path, but be safe).
-    let (owner, rest) = path.split_once('/').ok_or_else(|| {
-        format!("package path '{}' is not in owner/repo form", path)
-    })?;
+    let (owner, rest) = path
+        .split_once('/')
+        .ok_or_else(|| format!("package path '{}' is not in owner/repo form", path))?;
 
     let (repo, sub) = if let Some((r, s)) = rest.split_once('/') {
         (r, Some(s))
@@ -93,9 +91,8 @@ pub fn resolve_pkg_path(path: &str) -> Result<PathBuf, String> {
         (rest, None)
     };
 
-    let cache_dir = pkg_dir_for(owner, repo).ok_or_else(|| {
-        "could not determine home directory for package cache".to_string()
-    })?;
+    let cache_dir = pkg_dir_for(owner, repo)
+        .ok_or_else(|| "could not determine home directory for package cache".to_string())?;
 
     if !cache_dir.exists() {
         return Err(format!(
@@ -139,14 +136,22 @@ pub fn cmd_add(spec: &str) -> i32 {
     // Remove stale cache so a re-add always gets a fresh shallow clone.
     if dest.exists() {
         if let Err(e) = std::fs::remove_dir_all(&dest) {
-            eprintln!("error: could not remove existing cache at {}: {}", dest.display(), e);
+            eprintln!(
+                "error: could not remove existing cache at {}: {}",
+                dest.display(),
+                e
+            );
             return 1;
         }
     }
 
     if let Some(parent) = dest.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("error: could not create cache directory {}: {}", parent.display(), e);
+            eprintln!(
+                "error: could not create cache directory {}: {}",
+                parent.display(),
+                e
+            );
             return 1;
         }
     }
@@ -157,7 +162,8 @@ pub fn cmd_add(spec: &str) -> i32 {
             "clone",
             "--depth=1",
             "--single-branch",
-            "--branch", git_ref,
+            "--branch",
+            git_ref,
             &url,
             dest.to_str().unwrap_or(""),
         ])
@@ -188,7 +194,10 @@ pub fn cmd_add(spec: &str) -> i32 {
                 .args(["-C", dest.to_str().unwrap_or(""), "checkout", git_ref])
                 .status();
             if !checkout.map(|s| s.success()).unwrap_or(false) {
-                eprintln!("error: could not checkout ref '{}' in {}/{}", git_ref, owner, repo);
+                eprintln!(
+                    "error: could not checkout ref '{}' in {}/{}",
+                    git_ref, owner, repo
+                );
                 return 1;
             }
         }
@@ -198,7 +207,12 @@ pub fn cmd_add(spec: &str) -> i32 {
     let sha = resolved_sha(&dest);
 
     // Update ilo.lock.
-    update_lockfile(owner, repo, &sha, &format!("https://github.com/{owner}/{repo}"));
+    update_lockfile(
+        owner,
+        repo,
+        &sha,
+        &format!("https://github.com/{owner}/{repo}"),
+    );
 
     println!("added {owner}/{repo} @ {sha}");
     println!("  cache: {}", dest.display());
@@ -248,7 +262,9 @@ fn read_lockfile() -> Vec<LockEntry> {
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .filter_map(|l| {
             let cols: Vec<&str> = l.splitn(3, '\t').collect();
-            cols.first().map(|s| LockEntry { slug: s.to_string() })
+            cols.first().map(|s| LockEntry {
+                slug: s.to_string(),
+            })
         })
         .collect()
 }

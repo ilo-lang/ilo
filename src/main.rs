@@ -2469,7 +2469,8 @@ fn resolve_imports(
                         diagnostics,
                     );
                     visited.remove(&canonical);
-                    let filtered = apply_only_filter(imported_decls, &only, &path, span, diagnostics);
+                    let filtered =
+                        apply_only_filter(imported_decls, &only, &path, span, diagnostics);
                     result.extend(filtered);
                     continue;
                 }
@@ -3074,9 +3075,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
-        Some(cli::Cmd::Update(u)) => {
-            std::process::exit(ilo::pkg::cmd_update(u.package.as_deref()))
-        }
+        Some(cli::Cmd::Update(u)) => std::process::exit(ilo::pkg::cmd_update(u.package.as_deref())),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
