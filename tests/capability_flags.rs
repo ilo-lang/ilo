@@ -352,9 +352,15 @@ fn allow_read_blocks_fsize() {
     };
     let src = format!("f>R n t;fsize \"{path}\"");
     let (tree, _vm_val) = run_both(&src, caps);
-    assert!(is_err_value(&tree), "tree: fsize should be blocked by read cap");
+    assert!(
+        is_err_value(&tree),
+        "tree: fsize should be blocked by read cap"
+    );
     let msg = err_text(&tree);
-    assert!(msg.contains("ILO-CAP-001"), "expected ILO-CAP-001, got: {msg}");
+    assert!(
+        msg.contains("ILO-CAP-001"),
+        "expected ILO-CAP-001, got: {msg}"
+    );
 }
 
 /// `mtime` blocked by --allow-read → returns Err containing ILO-CAP-001.
@@ -370,9 +376,15 @@ fn allow_read_blocks_mtime() {
     };
     let src = format!("f>R n t;mtime \"{path}\"");
     let (tree, _vm_val) = run_both(&src, caps);
-    assert!(is_err_value(&tree), "tree: mtime should be blocked by read cap");
+    assert!(
+        is_err_value(&tree),
+        "tree: mtime should be blocked by read cap"
+    );
     let msg = err_text(&tree);
-    assert!(msg.contains("ILO-CAP-001"), "expected ILO-CAP-001, got: {msg}");
+    assert!(
+        msg.contains("ILO-CAP-001"),
+        "expected ILO-CAP-001, got: {msg}"
+    );
 }
 
 /// `isfile` blocked by --allow-read → returns false (collapses to bool false).
