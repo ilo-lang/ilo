@@ -1191,11 +1191,6 @@ impl Builtin {
         Builtin::ForLine,
         // `idxof s sub > O n` — text-search builtin (0.13.0).
         Builtin::Idxof,
-        // Raw-bytes crypto cluster (ILO-383).
-        Builtin::Sha256Hex,
-        Builtin::Sha256d,
-        // hex-rev (ILO-372): reverse the byte order of a hex-encoded string.
-        Builtin::HexRev,
         // tokcount (ILO-47): approximate cl100k_base token count (bytes/3.4 stub).
         // Follow-up (ILO-413) will replace this stub with the full tiktoken-rs BPE
         // tokeniser once the crate's WASM and licence story is confirmed.

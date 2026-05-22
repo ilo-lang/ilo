@@ -10228,6 +10228,33 @@ impl<'a> VM<'a> {
                         continue;
                     }
 
+                    // If this function contains defer/errdefer, bridge to the tree-walker.
+                    // The tree interpreter has native defer support; the VM does not (v1 MVP).
+                    let is_defer_call = self
+                        .program
+                        .is_defer_fn
+                        .get(func_idx as usize)
+                        .copied()
+                        .unwrap_or(false);
+                    if is_defer_call {
+                        if let Some(ast) = &self.program.ast {
+                            let callee_name = &self.program.func_names[func_idx as usize].clone();
+                            let mut value_args = Vec::with_capacity(n_args);
+                            for i in 0..n_args {
+                                value_args.push(reg!(base + a as usize + 1 + i).to_value());
+                            }
+                            let tree_result =
+                                crate::interpreter::run(ast, Some(callee_name), value_args)
+                                    .map_err(|e| VmError::Runtime(e.message))?;
+                            let nan_result = NanVal::from_value(&tree_result);
+                            reg_set!(base + a as usize, nan_result);
+                            continue;
+                        }
+                        // AST not available — fall through to normal VM dispatch
+                        // (defer semantics will be silently absent, but this path
+                        // is not reachable in practice since compile() always sets ast).
+                    }
+
                     // Push args directly onto the stack (no intermediate Vec).
                     let new_base = self.stack.len();
                     let callee_all_numeric =
