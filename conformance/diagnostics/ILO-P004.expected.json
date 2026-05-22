@@ -1,0 +1,7 @@
+{
+  "code": "ILO-P004",
+  "long": "## ILO-P004: unexpected end of file\n\nThe file ended before a required token was found.\n",
+  "phase": "parse",
+  "schemaVersion": 1,
+  "short": "unexpected end of file"
+}

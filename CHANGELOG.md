@@ -87,6 +87,7 @@ against Phase 6.
     and the open questions Stage 5b picked up.
 ### Added
 
+<<<<<<< HEAD
 - `.@` is the new canonical source file extension. `.@` tokenises as two tokens (`foo`, `.@`) on cl100k and o200k vs three for `foo.ilo` - one token saved per filename mention. All `examples/` and `tests/` source files in this repo have been renamed to `.@`. `.ilo` continues to be accepted but emits a deprecation hint on stderr at load time: `hint: .ilo extension is deprecated; rename to .@`. Rename your files with: `find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;`
 - **Typed HIR module (`src/hir/`).** Phase 5 Stage 5a. A thin high-level
   intermediate representation that sits between the verified AST and concrete
@@ -254,6 +255,12 @@ against Phase 6.
 No public API changes (other than `--emit python` removal). No other CLI changes. No behaviour changes.
 
 ### Added (more from main, builtins)
+=======
+- `_=expr` explicit discard bind. Evaluates `expr` for side effects and drops the result without allocating a binding. The `_` sigil is not a real local — it cannot be read back after the statement. Primary uses: (a) silencing ILO-T033 when discarding the return value of `mset`/`+=`/`mdel` is genuinely intentional, (b) calling a side-effecting function at non-tail position when the return value is irrelevant. All three engines (tree-interpreter, VM, Cranelift JIT/AOT) produce the same behaviour: the RHS expression is fully evaluated, its result is discarded with no register/slot allocation. The verifier still checks the RHS for type errors and T005 undefined-function; it does not insert `_` into scope so a subsequent `_` reference still resolves to the wildcard/nil sentinel. (ILO-36)
+
+- `idxof s sub > O n` builtin. Returns the first Unicode code-point index of `sub` in `s`, or nil when not found. Index is in code-point units (same convention as `at`), not raw byte offsets. Empty `sub` returns 0 (Python / JS semantics). Closes the verbose `flt`+`len` workaround scrapingbee-chain and tui-client personas reached for when locating substrings. Tree-bridge eligible: pure 2-arg text-in / option-n-out, no FnRef args, no I/O. VM and Cranelift inherit through the bridge without new opcodes. Part of the 0.13.0 text-utility batch (ILO-39).
+- `\xNN` hex escape in string literals. Two hex digits after `\x` encode a single Unicode code point in U+0000..=U+00FF. Case-insensitive (`\x1b` and `\x1B` both produce ESC). Non-hex digits after `\x` are passed through literally (lexer stays infallible). Closes the ANSI-escape friction that tui-client personas hit when embedding colour codes (`"\x1b[31m"` is now legal). Part of the 0.13.0 text-utility batch (ILO-39).
+>>>>>>> origin/main
 
 - `matvec xm ys > L n` builtin. Native matrix-vector product as a flat vector. Replaces the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony every linear-regression-style persona was paying (three lines / ~10 tokens per use). Errors as `ILO-R009` on dim mismatch, empty matrix, or ragged rows. Tree-bridge eligible -- VM and Cranelift inherit through the bridge without new opcodes. Closes pending.md #5an.
 - `lstsq xm ys > L n` builtin. Ordinary least squares via the normal equations: returns the coefficient vector `b` minimising `||xm·b - ys||²`. Closed-form OLS as a thin wrapper around `solve (Xᵀ X) (Xᵀ y)` - collapses the 5-line recipe (`transpose` + `matmul` + `matmul` + `solve` + index-fiddling) into a single call, saving ~30 tokens per OLS use. Errors as ILO-R009 on rank-deficient design, underdetermined system (cols > rows), row/length mismatch, or empty input. Same precision tier as `solve`/`inv`/`det` (LU with partial pivoting); numerically inferior to QR/SVD for ill-conditioned designs. Tree-bridge eligible - VM and Cranelift inherit through the bridge with no new opcodes. Motivated by the linear-regression persona.

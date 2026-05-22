@@ -1,0 +1,7 @@
+{
+  "code": "ILO-P001",
+  "long": "## ILO-P001: unexpected token at top level\n\nA token was found where a new declaration was expected. Declarations\nstart with a function name followed by parameters, or with `type`/`tool`.\n\n**Common causes:**\n- A stray token left over from a previous edit\n- A missing semicolon between statement and the return expression\n\n**Example:**\n\n    f x:n>n; = x   -- stray `=` before expression\n",
+  "phase": "parse",
+  "schemaVersion": 1,
+  "short": "unexpected token at top level"
+}

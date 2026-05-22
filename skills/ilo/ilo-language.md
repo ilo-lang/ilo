@@ -11,7 +11,7 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies `;`-separated or newli
 
 `tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns, `;` separates, last expr returns. Zero-arg: `make-id()`.
 
-Single-line: `f x:n>n;+x 1`. Multi-line: `f x:n>n` then indented body, newline = `;` (PR #501 also normalises CRLF). Trailing `;` on header (`f x:n>n;\n  a=+x 1\n  *a 2`) is optional; both forms parse.
+Single-line: `f x:n>n;+x 1`. Brace-block: `f x:n>n { s=+x 1; *s s }` (same semantics, braces wrap whole body). Multi-line: `f x:n>n` then indented body, newline = `;` (PR #501 also normalises CRLF). Trailing `;` on header (`f x:n>n;\n  a=+x 1\n  *a 2`) is optional; both forms parse. Multi-step: bind intermediates then tail expr: `add-and-double x:n y:n>n;s=+x y;*s 2`. Early return: braceless guard `>=x 0 val` or `ret val`. Result unwrap mid-body: `v=call!;use v`.
 
 ## types
 

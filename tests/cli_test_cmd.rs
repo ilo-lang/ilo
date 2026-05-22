@@ -87,7 +87,11 @@ fn test_handles_err_assertion() {
     // `-- err:` form: program returning `^reason` exits 1 and the assertion
     // matches against stderr. Pin both directions: matching err passes,
     // mismatched err fails.
+<<<<<<< HEAD
     let path = write_tmp("err.@", "m>R t t;^\"nope\"\n\n-- run: m\n-- err: ^nope\n");
+=======
+    let path = write_tmp("err.ilo", "m>R t t;^\"nope\"\n\n-- run: m\n-- err: ^nope\n");
+>>>>>>> origin/main
 
     let out = ilo()
         .arg("test")

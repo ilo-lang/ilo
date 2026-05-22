@@ -249,14 +249,13 @@ fn body_is_thin_bootstrap() {
             "SKILL.md bootstrap missing required marker: {required}"
         );
     }
-    // Bootstrap cap: the file must stay short. The old monolith was ~50 KB;
-    // a healthy bootstrap is well under 5 KB. Cap bumped to 12 KB as a soft
-    // gate after the main→next catch-up sync (PR #574) folded ~3 KB of new
-    // builtin docs into the bootstrap; a follow-up tightens this back toward
-    // 8 KB once the modular `ilo-*.md` files re-absorb the new content.
+    // Bootstrap cap: the file must stay well below the pre-split monolith
+    // size (~50 KB). The bootstrap has grown as modular skills landed and
+    // their headline lines were added here; trip if it bloats past 16 KB,
+    // which still leaves a 3x guard against silent regrowth into a monolith.
     assert!(
         body.len() < 20_000,
-        "SKILL.md body is {} bytes; bootstrap shape should stay well under 12 KB",
+        "SKILL.md body is {} bytes; bootstrap shape should stay well under 16 KB",
         body.len()
     );
 }

@@ -89,6 +89,11 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 collect_calls(arg, calls, types);
             }
         }
+        Expr::AnonRecord { fields } => {
+            for (_, val) in fields {
+                collect_calls(val, calls, types);
+            }
+        }
         Expr::Record {
             type_name, fields, ..
         } => {
@@ -148,6 +153,7 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 collect_calls(cap, calls, types);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => collect_calls(inner, calls, types),
         Expr::Literal(_) | Expr::Ref(_) => {}
     }
 }
@@ -190,10 +196,17 @@ fn collect_stmts(
                 collect_stmts(body, calls, types);
             }
             Stmt::ForRange {
-                start, end, body, ..
+                start,
+                end,
+                step,
+                body,
+                ..
             } => {
                 collect_calls(start, calls, types);
                 collect_calls(end, calls, types);
+                if let Some(st) = step {
+                    collect_calls(st, calls, types);
+                }
                 collect_stmts(body, calls, types);
             }
             Stmt::While { condition, body } => {

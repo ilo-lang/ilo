@@ -734,6 +734,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // wra path s - append text to file. Same bridge contract as wr 2-arg:
         // no FnRef args, returns R t t, round-trips cleanly through NanVal.
         (Builtin::Wra, 2) => true,
+        // wro path s - truncate-write text to file. Same bridge contract as wra:
+        // no FnRef args, returns R t t, round-trips cleanly through NanVal.
+        (Builtin::Wro, 2) => true,
         // dtparse-rel s now -> R n t. Pure (no FnRef, no I/O), returns Result.
         // Tree-bridge gives VM + Cranelift cross-engine parity for free.
         (Builtin::DtparseRel, 2) => true,
@@ -813,6 +816,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::B64Dec, 1) => true,
         (Builtin::HexEnc, 1) => true,
         (Builtin::CtEq, 2) => true,
+        // Raw-bytes crypto (ILO-383). Pure text-in / text-out, no FnRef args,
+        // no I/O, no Result wrapper (errors propagate as ILO-R009 runtime errors
+        // through the standard tree-bridge error path). VM and Cranelift
+        // inherit cross-engine parity at zero opcode cost.
+        (Builtin::Sha256Hex, 1) => true,
+        (Builtin::Sha256d, 1) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
@@ -826,6 +835,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Rsum, 2) => true,
         (Builtin::Ravg, 2) => true,
         (Builtin::Rmin, 2) => true,
+<<<<<<< HEAD
+=======
+        // idxof s sub > O n — first code-point index of sub in s, nil when
+        // not found. Pure 2-arg text-in / option-n-out, no FnRef args, no
+        // I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in lockstep
+        // without a dedicated opcode.
+        (Builtin::Idxof, 2) => true,
+>>>>>>> origin/main
         // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
         // args, no Result wrapper. Tree interpreter performs the element-wise
         // select; VM and Cranelift inherit through the bridge at zero opcode
@@ -845,6 +862,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Linspace, 3) => true,
         (Builtin::Ones, 1) => true,
         (Builtin::Rep, 2) => true,
+        // `for-line stdin > LazyStdinLines` (ILO-70). 1-arg, no FnRef.
+        // The return type (LazyStdinLines) is opaque to the register engines;
+        // the bridge lets VM and Cranelift produce the handle without a new
+        // opcode. ForEach in the tree interpreter drains it one line at a time.
+        (Builtin::ForLine, 1) => true,
         _ => false,
     }
 }
@@ -870,6 +892,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Rdin
             | Builtin::Rdinl
             | Builtin::Wra
+            | Builtin::Wro
             | Builtin::DtparseRel
             | Builtin::DurParse
             | Builtin::GetTo
@@ -980,6 +1003,17 @@ impl Chunk {
         self.code.push(inst);
         self.spans.push(span);
         idx
+    }
+
+    fn patch_jump_to(&mut self, jump_pos: usize, target: usize) {
+        let offset_i32 = target as i32 - jump_pos as i32 - 1;
+        assert!(
+            offset_i32 >= i16::MIN as i32 && offset_i32 <= i16::MAX as i32,
+            "jump offset {offset_i32} exceeds i16 range — function body too large (max ~32K instructions)"
+        );
+        let offset = offset_i32 as i16;
+        let inst = self.code[jump_pos];
+        self.code[jump_pos] = (inst & 0xFFFF0000) | (offset as u16 as u32);
     }
 
     fn patch_jump(&mut self, jump_pos: usize) {
@@ -2331,6 +2365,13 @@ impl RegCompiler {
         }
         match stmt {
             Stmt::Let { name, value } => {
+                // `_=expr` — explicit discard bind. Compile value for side
+                // effects (IOs, tree-bridge calls) but do not allocate a
+                // register or add a local. `_` remains the wildcard/nil ref.
+                if name == "_" {
+                    self.compile_expr(value);
+                    return None;
+                }
                 if let Some(existing_reg) = self.resolve_local(name) {
                     // Peephole: `x = +x k` where k is a numeric literal and x is known numeric
                     // → emit ADDK_N/SUBK_N/MULK_N/DIVK_N directly into existing_reg (no temp + MOVE)
@@ -2824,11 +2865,22 @@ impl RegCompiler {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 // Evaluate start and end once
                 let start_reg = self.compile_expr(start);
                 let end_reg = self.compile_expr(end);
+
+                // Evaluate step (or use constant 1)
+                let step_reg = if let Some(step_expr) = step {
+                    self.compile_expr(step_expr)
+                } else {
+                    let one_ki = self.current.add_const(Value::Number(1.0));
+                    let r = self.alloc_reg();
+                    self.emit_abx(OP_LOADK, r, one_ki);
+                    r
+                };
 
                 let last_reg = self.alloc_reg();
                 let nil_ki = self.current.add_const(Value::Nil);
@@ -2839,8 +2891,6 @@ impl RegCompiler {
                 let counter_reg = self.alloc_reg();
                 self.emit_abc(OP_MOVE, counter_reg, start_reg, 0);
                 self.add_local(binding, counter_reg);
-
-                let one_ki = self.current.add_const(Value::Number(1.0));
 
                 // Loop top: check counter < end
                 let loop_top = self.current.code.len();
@@ -2878,14 +2928,8 @@ impl RegCompiler {
                     }
                 }
 
-                // counter += 1 (use ADDK_N when counter is known numeric)
-                if self.reg_is_num[counter_reg as usize] && one_ki <= 255 {
-                    self.emit_abc(OP_ADDK_N, counter_reg, counter_reg, one_ki as u8);
-                } else {
-                    let one_reg = self.alloc_reg();
-                    self.emit_abx(OP_LOADK, one_reg, one_ki);
-                    self.emit_abc(OP_ADD, counter_reg, counter_reg, one_reg);
-                }
+                // counter += step
+                self.emit_abc(OP_ADD, counter_reg, counter_reg, step_reg);
 
                 // Jump back to loop top
                 self.emit_jump_to(loop_top);
@@ -3110,6 +3154,75 @@ impl RegCompiler {
                     }
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
+                }
+
+                Pattern::Or(alts) => {
+                    // Emit: if alt1 matches OR alt2 matches OR ... → body, else skip.
+                    // Strategy: for each alt except the last, if it matches jump to body.
+                    // If the last alt doesn't match, jump to skip (past body).
+                    let mut to_body: Vec<usize> = Vec::new();
+                    for (i, alt) in alts.iter().enumerate() {
+                        let is_last = i == alts.len() - 1;
+                        match alt {
+                            Pattern::Literal(lit) => {
+                                let val = match lit {
+                                    Literal::Number(n) => Value::Number(*n),
+                                    Literal::Text(s) => Value::Text(Arc::new(s.clone())),
+                                    Literal::Bool(b) => Value::Bool(*b),
+                                    Literal::Nil => Value::Nil,
+                                };
+                                let const_reg = self.alloc_reg();
+                                let ki = self.current.add_const(val);
+                                self.emit_abx(OP_LOADK, const_reg, ki);
+                                let eq_reg = self.alloc_reg();
+                                self.emit_abc(OP_EQ, eq_reg, sub_reg, const_reg);
+                                if is_last {
+                                    // Last alt: if false skip to next arm
+                                    let skip = self.emit_jmpf(eq_reg);
+                                    // Patch all "to_body" jumps to here (body start)
+                                    let body_pos = self.current.code.len();
+                                    for tb in &to_body {
+                                        self.current.patch_jump_to(*tb, body_pos);
+                                    }
+                                    let body_result = self.compile_body(&arm.body);
+                                    if let Some(br) = body_result
+                                        && br != result_reg
+                                    {
+                                        self.emit_abc(OP_MOVE, result_reg, br, 0);
+                                    }
+                                    end_jumps.push(self.emit_jmp_placeholder());
+                                    self.current.patch_jump(skip);
+                                } else {
+                                    // Non-last: if true jump to body
+                                    to_body.push(self.emit_jmpt(eq_reg));
+                                }
+                            }
+                            Pattern::Wildcard => {
+                                // Wildcard always matches — patch to_body jumps then
+                                // fall through to body (no conditional needed).
+                                let body_pos = self.current.code.len();
+                                for tb in &to_body {
+                                    self.current.patch_jump_to(*tb, body_pos);
+                                }
+                                let bind_reg = self.alloc_reg();
+                                self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
+                                self.add_local("_", bind_reg);
+                                let body_result = self.compile_body(&arm.body);
+                                if let Some(br) = body_result
+                                    && br != result_reg
+                                {
+                                    self.emit_abc(OP_MOVE, result_reg, br, 0);
+                                }
+                                // This arm always matches — patch all end_jumps and return
+                                for j in end_jumps {
+                                    self.current.patch_jump(j);
+                                }
+                                return;
+                            }
+                            // Other pattern types in Or are not supported — skip silently
+                            _ => {}
+                        }
+                    }
                 }
             }
 
@@ -6149,6 +6262,81 @@ impl RegCompiler {
                 }
             }
 
+            Expr::AnonRecord { fields } => {
+                // Anonymous record: synthesize a stable type name from the sorted
+                // field list so that two literals with the same shape share one
+                // registry entry (matching the structural unification the verifier
+                // promises). The name is internal — agents never see it.
+                let mut sorted_names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                sorted_names.sort_unstable();
+                let type_name = format!("__anon_{}", sorted_names.join("_"));
+                let fields_owned: Vec<(String, _)> = fields.clone();
+                // Delegate to the same logic as named Record by building an
+                // owned Vec and reusing the same bytecode path inline.
+                let type_id = match self.type_registry.name_to_id.get(&type_name) {
+                    Some(&id) => id,
+                    None => {
+                        let field_names: Vec<String> =
+                            fields_owned.iter().map(|(n, _)| n.clone()).collect();
+                        self.type_registry
+                            .register(type_name.clone(), field_names, 0)
+                    }
+                };
+                let canonical_order: Vec<String> =
+                    self.type_registry.types[type_id as usize].fields.clone();
+                let source_fields: HashMap<&str, &Expr> =
+                    fields_owned.iter().map(|(n, e)| (n.as_str(), e)).collect();
+                let n = canonical_order.len();
+                let pre_reg = self.next_reg as usize;
+                let fits_contiguous = n <= 255 && type_id <= 255 && pre_reg + 2 * n < 255;
+                assert!(
+                    type_id <= 255,
+                    "type_id {} exceeds 8-bit limit in OP_RECNEW",
+                    type_id
+                );
+                if fits_contiguous {
+                    let ordered_regs: Vec<u8> = canonical_order
+                        .iter()
+                        .map(|fname| {
+                            let expr = source_fields[fname.as_str()];
+                            self.compile_expr(expr)
+                        })
+                        .collect();
+                    let a = self.alloc_reg();
+                    let fields_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + ordered_regs.len() <= 255,
+                        "register overflow: anonymous record literal requires too many register slots"
+                    );
+                    self.next_reg += ordered_regs.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
+                    }
+                    for (i, &field_reg) in ordered_regs.iter().enumerate() {
+                        let target = fields_base + i as u8;
+                        if field_reg != target {
+                            self.emit_abc(OP_MOVE, target, field_reg, 0);
+                        }
+                    }
+                    let bx = (type_id << 8) | ordered_regs.len() as u16;
+                    self.emit_abx(OP_RECNEW, a, bx);
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                } else {
+                    let a = self.alloc_reg();
+                    self.emit_abx(OP_RECNEW_EMPTY, a, type_id);
+                    let after_result = self.next_reg;
+                    for (i, fname) in canonical_order.iter().enumerate() {
+                        let expr = source_fields[fname.as_str()];
+                        let val_reg = self.compile_expr(expr);
+                        self.emit_abc(OP_RECSETFIELD, a, val_reg, i as u8);
+                        self.next_reg = after_result;
+                    }
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                }
+            }
+
             Expr::Record { type_name, fields } => {
                 // Look up or auto-register type in registry
                 let type_id = match self.type_registry.name_to_id.get(type_name) {
@@ -6484,6 +6672,17 @@ impl RegCompiler {
                     }
                     self.current.emit(word, self.current_span);
                 }
+                dest
+            }
+            // `todo "reason"` / `panic "reason"`: compile reason, wrap as
+            // Err, then OP_PANIC_UNWRAP to abort with the message. The
+            // returned dest register is never read (execution halts at the
+            // panic), but we allocate one to satisfy the register contract.
+            Expr::Todo(reason) | Expr::Panic(reason) => {
+                let dest = self.alloc_reg();
+                let reason_reg = self.compile_expr(reason);
+                self.emit_abc(OP_WRAPERR, reason_reg, reason_reg, 0);
+                self.emit_abc(OP_PANIC_UNWRAP, 0, reason_reg, 0);
                 dest
             }
         }
@@ -7170,6 +7369,12 @@ enum HeapObj {
         id: u32,
         captures: Vec<NanVal>,
     },
+    /// Lazy stdin line iterator — produced by `for-line stdin` (ILO-70).
+    /// Wraps the tree-level StdinLinesHandle so the VM's OP_FOREACH can
+    /// drain it one line at a time without converting to a List first.
+    /// The Arc makes this cheaply cloneable; the Mutex enables interior
+    /// mutability across the VM's ownership model.
+    LazyStdinLines(crate::interpreter::StdinLinesHandle),
 }
 
 impl Drop for HeapObj {
@@ -7205,6 +7410,10 @@ impl Drop for HeapObj {
                 for v in captures {
                     v.drop_rc();
                 }
+            }
+            HeapObj::LazyStdinLines(_) => {
+                // The Arc inside StdinLinesHandle is cheaply dropped (refcount decrement).
+                // No NanVal children to drop_rc.
             }
         }
     }
@@ -7245,10 +7454,10 @@ fn materialize_list_view(v: NanVal) -> NanVal {
                 .collect();
             NanVal::heap_list(items)
         }
-        // Tag-checked above, so unreachable for these variants. Closure
-        // shares TAG_LIST but is not list-shaped — materialize_list_view is
-        // a no-op for closures (they don't have a list-view sibling).
-        HeapObj::Closure { .. } => v,
+        // Tag-checked above, so unreachable for these variants. Closure and
+        // LazyStdinLines share TAG_LIST but are not list-shaped — materialize
+        // is a no-op for them.
+        HeapObj::Closure { .. } | HeapObj::LazyStdinLines(_) => v,
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
@@ -7306,7 +7515,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         | HeapObj::Record { .. }
         | HeapObj::OkVal(_)
         | HeapObj::ErrVal(_)
-        | HeapObj::Closure { .. } => {
+        | HeapObj::Closure { .. }
+        | HeapObj::LazyStdinLines(_) => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -7340,7 +7550,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
                 | HeapObj::Record { .. }
                 | HeapObj::OkVal(_)
                 | HeapObj::ErrVal(_)
-                | HeapObj::Closure { .. } => {
+                | HeapObj::Closure { .. }
+                | HeapObj::LazyStdinLines(_) => {
                     debug_assert!(false, "ListView::src does not reference HeapObj::List");
                     &[]
                 }
@@ -7467,6 +7678,12 @@ impl NanVal {
     /// the closure (no clone_rc here); the closure's Drop releases them.
     fn heap_closure(kind: FnRefKind, id: u32, captures: Vec<NanVal>) -> Self {
         let rc = Rc::new(HeapObj::Closure { kind, id, captures });
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
+    }
+
+    fn heap_stdin_lines(handle: crate::interpreter::StdinLinesHandle) -> Self {
+        let rc = Rc::new(HeapObj::LazyStdinLines(handle));
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
@@ -7708,6 +7925,11 @@ impl NanVal {
                 // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
             }
+            Value::LazyStdinLines(handle) => {
+                // Wrap the lazy stdin handle in a HeapObj so the VM's OP_FOREACH
+                // can drain it one line at a time without buffering.
+                NanVal::heap_stdin_lines(handle.clone())
+            }
         }
     }
 
@@ -7933,6 +8155,10 @@ impl NanVal {
                             captures: captures.iter().map(|v| v.to_value()).collect(),
                         }
                     }
+                    HeapObj::LazyStdinLines(handle) => {
+                        // Round-trip the lazy handle back to Value::LazyStdinLines.
+                        Value::LazyStdinLines(handle.clone())
+                    }
                 }
             },
         }
@@ -8018,6 +8244,7 @@ impl NanVal {
                                     .collect(),
                             }
                         }
+                        HeapObj::LazyStdinLines(handle) => Value::LazyStdinLines(handle.clone()),
                     }
                 }
             }
@@ -9725,6 +9952,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("index access on non-list"))
                             }
@@ -9765,6 +9993,7 @@ impl<'a> VM<'a> {
                                 | HeapObj::Record { .. }
                                 | HeapObj::OkVal(_)
                                 | HeapObj::ErrVal(_)
+                                | HeapObj::LazyStdinLines(_)
                                 | HeapObj::Closure { .. } => {
                                     vm_err!(VmError::Type("foreach requires a list"))
                                 }
@@ -9802,6 +10031,24 @@ impl<'a> VM<'a> {
                                 }
                                 // else: empty list → fall through to JMP exit
                             }
+                            HeapObj::LazyStdinLines(handle) => {
+                                // Lazy stdin: pull the first line.
+                                match handle.next_line() {
+                                    None => {
+                                        // EOF immediately — fall through to JMP exit (empty).
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "for-line: stdin read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
+                            }
                             HeapObj::Str(_)
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
@@ -9824,17 +10071,17 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
                     let list = reg!(b);
-                    // idx_reg holds the current index (a number); increment it.
-                    // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
-                    // only modified here by addition of 1.0).
-                    let new_idx = reg!(c).as_number() + 1.0;
-                    reg_set!(c, NanVal::number(new_idx));
-                    // SAFETY: list is the same heap List validated by FOREACHPREP on entry.
+                    // SAFETY: list is the same heap value validated by FOREACHPREP on entry.
                     debug_assert!(list.is_heap(), "OP_FOREACHNEXT on non-heap value");
                     unsafe {
                         let heap = list.as_heap_ref();
                         match heap {
                             HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                // idx_reg holds the current index (a number); increment it.
+                                // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
+                                // only modified here by addition of 1.0).
+                                let new_idx = reg!(c).as_number() + 1.0;
+                                reg_set!(c, NanVal::number(new_idx));
                                 let items = slice_of(heap);
                                 let i = new_idx as usize;
                                 if i < items.len() {
@@ -9844,6 +10091,25 @@ impl<'a> VM<'a> {
                                     ip += 1; // skip JMP exit → execute JMP body_top
                                 }
                                 // else: out of bounds → fall through to JMP exit
+                            }
+                            HeapObj::LazyStdinLines(handle) => {
+                                // Lazy stdin: pull next line. idx_reg is unused
+                                // for streaming — we just call next_line().
+                                match handle.next_line() {
+                                    None => {
+                                        // EOF — fall through to JMP exit.
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "for-line: stdin read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
                             }
                             HeapObj::Str(_)
                             | HeapObj::Map(_)
@@ -10878,6 +11144,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("len requires string, list, or map"))
                             }
@@ -10891,16 +11158,21 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
-                    if !v.is_number() {
-                        vm_err!(VmError::Type("str requires a number"));
-                    }
-                    let n = v.as_number();
-                    let s = if n.fract() == 0.0 && n.abs() < 1e15 {
-                        format!("{}", n as i64)
+                    if v.is_string() {
+                        // identity passthrough — text in, same text out
+                        v.clone_rc();
+                        reg_set!(a, v);
+                    } else if v.is_number() {
+                        let n = v.as_number();
+                        let s = if n.fract() == 0.0 && n.abs() < 1e15 {
+                            format!("{}", n as i64)
+                        } else {
+                            format!("{}", n)
+                        };
+                        reg_set!(a, NanVal::heap_string(s));
                     } else {
-                        format!("{}", n)
-                    };
-                    reg_set!(a, NanVal::heap_string(s));
+                        vm_err!(VmError::Type("str requires a number or text"));
+                    }
                 }
                 OP_NUM => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -11481,6 +11753,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_env(&key_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::env::var(&key_str) {
                         Ok(val) => NanVal::heap_ok(NanVal::heap_string(val)),
                         Err(_) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -12017,6 +12293,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("has requires a list or text"))
                             }
@@ -12061,6 +12338,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("hd requires a list or text"))
                             }
@@ -12137,6 +12415,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("at requires a list or text"))
                             }
@@ -12535,6 +12814,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("tl requires a list or text"))
                             }
@@ -12641,6 +12921,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rev requires a list or text"))
                             }
@@ -12755,6 +13036,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("srt requires a list or text"))
                             }
@@ -12823,6 +13105,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rsrt requires a list or text"))
                             }
@@ -13054,6 +13337,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("slc requires a list or text"))
                             }
@@ -13109,6 +13393,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("lst requires a list"))
                             }
@@ -13269,6 +13554,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("take requires a list or text"))
                             }
@@ -13320,6 +13606,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("drop requires a list or text"))
                             }
@@ -13398,6 +13685,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 return Err(VmError::Type("+= requires a list"));
                             }
@@ -13424,6 +13712,7 @@ impl<'a> VM<'a> {
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
+                            | HeapObj::LazyStdinLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("+= requires a list"))
                             }
@@ -14258,6 +14547,9 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                         };
                         serde_json::Value::String(format!("<closure:{}>", name))
                     }
+                    HeapObj::LazyStdinLines(_) => {
+                        serde_json::Value::String("<stdin-lines>".to_string())
+                    }
                 }
             }
         }
@@ -14425,7 +14717,8 @@ fn nanval_truthy(v: NanVal) -> bool {
                     | HeapObj::Record { .. }
                     | HeapObj::OkVal(_)
                     | HeapObj::ErrVal(_)
-                    | HeapObj::Closure { .. } => true,
+                    | HeapObj::Closure { .. }
+                    | HeapObj::LazyStdinLines(_) => true,
                 }
             },
         }
@@ -14992,8 +15285,12 @@ pub(crate) extern "C" fn jit_len(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_str(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
+    if v.is_string() {
+        // identity passthrough — text in, same text out
+        return v.0;
+    }
     if !v.is_number() {
-        jit_set_runtime_error_with_span(VmError::Type("str requires a number"), span_bits);
+        jit_set_runtime_error_with_span(VmError::Type("str requires a number or text"), span_bits);
         return TAG_NIL;
     }
     let n = v.as_number();
@@ -17469,6 +17766,14 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Rsum
             | Builtin::Ravg
             | Builtin::Rmin
+<<<<<<< HEAD
+=======
+            // Raw-bytes crypto (ILO-383). sha256-hex / sha256d raise ILO-R009
+            // on odd-length or non-hex input. Surface on Cranelift in lockstep
+            // rather than degenerating silently to nil.
+            | Builtin::Sha256Hex
+            | Builtin::Sha256d
+>>>>>>> origin/main
     )
 }
 
@@ -20266,6 +20571,16 @@ pub extern "C" fn ilo_aot_arena_reset() {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_publish_program(ptr: u64, len: u64) -> u64 {
+    // SAFETY: The Cranelift AOT codegen emits the blob into a `.rodata` data
+    // section via `create_data_section`; the linker maps that section
+    // read-only for the entire process lifetime.  The call site (the
+    // cranelift-emitted `main` shim) passes the section's base address and
+    // byte length as literal constants baked into the binary — neither can
+    // be attacker-controlled without first compromising the binary on disk.
+    // Potential violation: if `ptr`/`len` were passed from an untrusted
+    // source (e.g. a future IPC or plugin mechanism) the guarantee would
+    // break; at that point this function must validate the pointer against a
+    // known-good range before constructing the slice.
     let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
     let program = match aot_blob::deserialize_program(bytes) {
         Ok(p) => p,
@@ -20313,6 +20628,14 @@ pub extern "C" fn jit_get_registry_ptr() -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is a compile-time `.rodata` address of a null-terminated
+    // C string emitted by the Cranelift AOT codegen (`data_section_counter`
+    // path in `compile_cranelift.rs`).  The codegen always appends a NUL
+    // byte and the data section lives for the process lifetime, so
+    // `CStr::from_ptr` will find the terminator within the mapped region.
+    // Potential violation: if a future codegen change forgets to NUL-
+    // terminate, or if `ptr` is zero/garbage, this is UB.  The
+    // `data_section_counter` path must maintain the NUL invariant.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("").to_string();
     NanVal::heap_string(s).0
@@ -20322,6 +20645,11 @@ pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is `argv[i]` forwarded by the cranelift-emitted `main`
+    // shim as a u64-cast C string pointer.  The OS guarantees each `argv`
+    // entry is a valid NUL-terminated string for the duration of `main`.
+    // Potential violation: if the AOT shim ever passes an arbitrary u64 that
+    // is not an `argv` pointer (e.g. a computed value), this becomes UB.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("");
     match s {
@@ -22685,14 +23013,22 @@ mod tests {
     }
 
     #[test]
-    fn vm_str_non_number_type_error() {
-        // OP_STR on text → L1903 ("str requires a number")
+    fn vm_str_text_passthrough() {
+        // OP_STR on text is identity — returns the same string unchanged
         let source = "f x:t>t;str x";
-        let err = vm_run_err(
+        let result = vm_run(
             source,
             Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
+            vec![Value::Text(Arc::new("hello".to_string()))],
         );
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
+    }
+
+    #[test]
+    fn vm_str_non_text_non_number_type_error() {
+        // OP_STR on a non-text, non-number type → runtime error via VM path.
+        // Bypass the verifier by using `_` param type so the VM sees a bool.
+        let err = vm_run_err("f x:_ >t;str x", Some("f"), vec![Value::Bool(true)]);
         assert!(err.contains("str"), "got: {err}");
     }
 
@@ -26176,7 +26512,19 @@ mod tests {
         }
 
         #[test]
-        fn jit_str_non_number_signals_runtime_error() {
+        fn jit_str_text_passthrough() {
+            let input = NanVal::heap_string("hello".to_string());
+            let r = jit_str(input.0, 0);
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.as_str(), "hello");
+        }
+
+        #[test]
+        fn jit_str_non_number_non_text_signals_runtime_error() {
             let _ = jit_take_runtime_error();
             let r = jit_str(TAG_NIL, 0);
             assert!(is_nil(r));
@@ -29723,6 +30071,60 @@ mod tests {
         );
     }
 
+    // ── Or (|) patterns ─────────────────────────────────────────────────
+
+    #[test]
+    fn vm_or_pattern_first_alt_matches() {
+        // `?x{"a"|"b":"found";_:"miss"}` — subject matches first alternative
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("a".to_string()))]
+            ),
+            Value::Text(Arc::new("found".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_second_alt_matches() {
+        // subject matches second alternative
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("b".to_string()))]
+            ),
+            Value::Text(Arc::new("found".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_no_alt_matches() {
+        // subject matches neither alternative — falls to wildcard
+        let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
+        assert_eq!(
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("c".to_string()))]
+            ),
+            Value::Text(Arc::new("miss".to_string()))
+        );
+    }
+
+    #[test]
+    fn vm_or_pattern_three_alts() {
+        // three alternatives, middle one matches
+        let source = r#"f x:n>t;?x{1|2|3:"low";_:"high"}"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(2.0)]),
+            Value::Text(Arc::new("low".to_string()))
+        );
+    }
+
     #[test]
     fn vm_pattern_ok_no_match() {
         let source = r#"f>t;x=^"err";?x{~v:v;_:"default"}"#;
@@ -30388,11 +30790,8 @@ mod tests {
 
     #[test]
     fn vm_err_str_wrong_type() {
-        let err = vm_run_err(
-            r#"f x:t>t;str x"#,
-            Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
-        );
+        // str now accepts text (identity) and number; bool triggers the error
+        let err = vm_run_err(r#"f x:_ >t;str x"#, Some("f"), vec![Value::Bool(true)]);
         assert!(
             err.contains("str") || err.contains("number") || err.contains("type"),
             "got: {err}"
@@ -36351,6 +36750,136 @@ main>n
                 assert_eq!(got, 0);
             }
             other => panic!("expected VmError::Arity, got {other:?}"),
+        }
+    }
+
+    /// Regression test: every tree-bridge-eligible (Builtin, arity) pair whose
+    /// verify.rs signature returns `R ...` must appear in
+    /// `tree_bridge_returns_result`, so that the auto-unwrap (`!` / `!!`)
+    /// protocol works correctly in the VM and Cranelift backends.
+    ///
+    /// The "result-returning eligible" set below is derived from the
+    /// `src/verify.rs` BUILTINS table: any entry whose return-type string
+    /// starts with `"R "` and whose name maps to a Builtin that also appears
+    /// in `is_tree_bridge_eligible`.  When a new tree-bridge builtin is added
+    /// that returns an ILO Result type, it must be added to BOTH
+    /// `is_tree_bridge_eligible` AND `tree_bridge_returns_result`.
+    ///
+    /// ILO-397: audit for the same gap found in ILO-376 (wro).
+    #[test]
+    fn tree_bridge_eligible_result_builtins_are_in_returns_result() {
+        use crate::builtins::Builtin;
+
+        // (Builtin, representative arity) pairs where:
+        //   1. is_tree_bridge_eligible(B, arity) == true, AND
+        //   2. verify.rs BUILTINS signature returns "R ..." (ILO Result)
+        //
+        // Update this list whenever a new Result-returning builtin is added
+        // to the tree bridge.
+        let result_eligible: &[(Builtin, usize)] = &[
+            (Builtin::Rd, 2),
+            (Builtin::Rdb, 2),
+            (Builtin::Ls, 1),
+            (Builtin::Walk, 1),
+            (Builtin::Glob, 2),
+            (Builtin::Fsize, 1),
+            (Builtin::Mtime, 1),
+            (Builtin::TzOffset, 2),
+            (Builtin::Run, 2),
+            (Builtin::Run2, 2),
+            (Builtin::EnvAll, 0),
+            (Builtin::Jkeys, 2),
+            (Builtin::Rdin, 0),
+            (Builtin::Rdinl, 0),
+            (Builtin::Wra, 2),
+            (Builtin::Wro, 2),
+            (Builtin::DtparseRel, 2),
+            (Builtin::DurParse, 1),
+            (Builtin::GetTo, 2),
+            (Builtin::PstTo, 3),
+            (Builtin::Getx, 1),
+            (Builtin::Getx, 2),
+            (Builtin::Pstx, 2),
+            (Builtin::Pstx, 3),
+            (Builtin::Put, 2),
+            (Builtin::Put, 3),
+            (Builtin::Pat, 2),
+            (Builtin::Pat, 3),
+            (Builtin::Del, 1),
+            (Builtin::Del, 2),
+            (Builtin::Hed, 1),
+            (Builtin::Hed, 2),
+            (Builtin::Opt, 1),
+            (Builtin::Opt, 2),
+            (Builtin::Urldec, 1),
+            (Builtin::B64uDec, 1),
+            (Builtin::B64Dec, 1),
+        ];
+
+        for &(builtin, arity) in result_eligible {
+            assert!(
+                is_tree_bridge_eligible(builtin, arity),
+                "Builtin {:?} arity {} is listed as result-eligible but \
+                 is_tree_bridge_eligible returned false — add it to \
+                 is_tree_bridge_eligible or remove it from this list",
+                builtin,
+                arity
+            );
+            assert!(
+                tree_bridge_returns_result(builtin),
+                "Builtin {:?} (arity {}) has a verify.rs signature starting \
+                 with 'R ' but is missing from tree_bridge_returns_result — \
+                 add it to that function so auto-unwrap (! / !!) works \
+                 correctly in the VM and Cranelift backends",
+                builtin,
+                arity
+            );
+        }
+
+        // Inverse check: every builtin in tree_bridge_returns_result must be
+        // eligible for at least one arity (or be Mapr, which is compiled
+        // natively via OP_CALL_DYN and retains a legacy guard entry).
+        let returns_result_builtins = [
+            Builtin::Rd,
+            Builtin::Rdb,
+            Builtin::Mapr, // native (OP_CALL_DYN path), legacy guard entry
+            Builtin::Ls,
+            Builtin::Walk,
+            Builtin::Glob,
+            Builtin::Fsize,
+            Builtin::Mtime,
+            Builtin::EnvAll,
+            Builtin::Run,
+            Builtin::Run2,
+            Builtin::Jkeys,
+            Builtin::Rdin,
+            Builtin::Rdinl,
+            Builtin::Wra,
+            Builtin::Wro,
+            Builtin::DtparseRel,
+            Builtin::DurParse,
+            Builtin::GetTo,
+            Builtin::PstTo,
+            Builtin::Getx,
+            Builtin::Pstx,
+            Builtin::Put,
+            Builtin::Pat,
+            Builtin::Del,
+            Builtin::Hed,
+            Builtin::Opt,
+            Builtin::Urldec,
+            Builtin::B64uDec,
+            Builtin::B64Dec,
+            Builtin::TzOffset,
+        ];
+        for builtin in returns_result_builtins {
+            assert!(
+                tree_bridge_returns_result(builtin),
+                "Builtin {:?} is in the expected returns_result set but \
+                 tree_bridge_returns_result returned false — update either \
+                 the function or this test",
+                builtin
+            );
         }
     }
 }

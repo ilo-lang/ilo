@@ -1,2 +1,13 @@
 [env]
 RUST_MIN_STACK = "16777216"
+<<<<<<< HEAD
+=======
+
+# Silence the macOS SDK version link warnings (e.g. "ld: warning: object file …
+# was built for newer macOS version (15.x) than being linked (14.x)").
+# Setting -mmacosx-version-min to 15.0 aligns the minimum deployment target
+# with what the installed Xcode linker expects on modern CI runners.
+# This is a no-op on non-Apple platforms.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-mmacosx-version-min=15.0"]
+>>>>>>> origin/main

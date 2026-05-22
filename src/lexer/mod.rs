@@ -32,6 +32,10 @@ pub enum Token {
     #[token("S")]
     SumType,
 
+    // Step keyword for range loops: `@i 0..n by 2{...}`
+    #[token("by")]
+    By,
+
     // Reserved keywords from other languages — not valid in ilo, emit friendly errors
     #[token("if")]
     KwIf,
@@ -173,6 +177,44 @@ pub enum Token {
                     Some('a') => out.push('\u{0007}'),
                     Some('0') => out.push('\u{0000}'),
                     Some('/') => out.push('/'),
+                    Some('x') => {
+                        // \xNN — two hex digits encode a Unicode scalar in
+                        // U+0000..=U+00FF. Non-hex digits or a truncated
+                        // sequence are passed through literally (same lenient
+                        // policy as unknown escapes below), keeping the lexer
+                        // infallible so the parser surfaces a clean diagnostic
+                        // rather than a lexer crash.
+                        let hi = chars.next();
+                        let lo = chars.next();
+                        match (hi, lo) {
+                            (Some(h), Some(l))
+                                if h.is_ascii_hexdigit() && l.is_ascii_hexdigit() =>
+                            {
+                                let val = u8::from_str_radix(
+                                    &format!("{h}{l}"),
+                                    16,
+                                )
+                                .expect("two hex digits always parse as u8");
+                                out.push(char::from(val));
+                            }
+                            (Some(h), Some(l)) => {
+                                // Non-hex: pass through literally.
+                                out.push('\\');
+                                out.push('x');
+                                out.push(h);
+                                out.push(l);
+                            }
+                            (Some(h), None) => {
+                                out.push('\\');
+                                out.push('x');
+                                out.push(h);
+                            }
+                            (None, _) => {
+                                out.push('\\');
+                                out.push('x');
+                            }
+                        }
+                    }
                     Some(other) => { out.push('\\'); out.push(other); }
                     None => {}
                 }
@@ -205,6 +247,9 @@ impl Token {
     /// `TokenKind` variant name (`Greater`, `PipeOp`, `LBrace` ...).
     pub fn user_facing_name(&self) -> String {
         match self {
+            // Step keyword
+            Token::By => "`by`".into(),
+
             // Keywords
             Token::Type => "`type`".into(),
             Token::Tool => "`tool`".into(),

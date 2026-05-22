@@ -118,6 +118,9 @@ pub enum Cmd {
 
     /// Print version.
     Version,
+
+    /// Trace program execution, emitting one JSON line per statement.
+    Trace(TraceArgs),
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -153,7 +156,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub bench: bool,
 
-    /// Emit target (e.g. python) instead of running.
+    /// Emit target (e.g. python, js) instead of running.
     #[arg(long)]
     pub emit: Option<String>,
 
@@ -198,6 +201,13 @@ pub struct RunArgs {
     /// Allow process execution. Comma-separated command list, or `*` for all.
     #[arg(long = "allow-run", value_name = "CMDS")]
     pub allow_run: Option<String>,
+
+    /// Allow environment variable access. Comma-separated variable name list,
+    /// or `*` for all. Omitting leaves behaviour unchanged (permissive).
+    /// `--allow-env=` (empty value) blocks all env reads. `--allow-env=PATH,HOME`
+    /// permits only those variables. `env-all` requires `*` in the allowlist.
+    #[arg(long = "allow-env", value_name = "VARS")]
+    pub allow_env: Option<String>,
 
     /// Remaining positional args: optional function name + call arguments.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -314,6 +324,16 @@ pub struct GraphArgs {
 
 // ── Compile ────────────────────────────────────────────────────────────────────
 
+/// Supported cross-compilation targets for `ilo compile --target`.
+pub const SUPPORTED_TARGETS: &[&str] = &[
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip1",
+];
+
 #[derive(Args, Debug)]
 pub struct CompileArgs {
     /// Source file or inline code.
@@ -330,6 +350,7 @@ pub struct CompileArgs {
     #[arg(long)]
     pub bench: bool,
 
+<<<<<<< HEAD
     /// Transpile to Python source (`.py`) via the Python backend.
     ///
     /// Manifesto-strict: this is the canonical replacement for the removed
@@ -361,6 +382,15 @@ pub struct CompileArgs {
     /// at `~/.zero/bin/zero`.
     #[arg(long = "0bin")]
     pub zero_bin: bool,
+=======
+    /// Cross-compilation target triple.
+    /// Supported: aarch64-apple-darwin, x86_64-apple-darwin,
+    /// x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
+    /// x86_64-pc-windows-msvc, wasm32-wasip1.
+    /// Requires the target to be installed via `rustup target add <triple>`.
+    #[arg(long, value_name = "TRIPLE")]
+    pub target: Option<String>,
+>>>>>>> origin/main
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
@@ -435,6 +465,39 @@ pub enum SkillCmd {
     Path { name: String },
     /// Print a skill with a formatted header.
     Show { name: String },
+}
+
+// ── Trace ──────────────────────────────────────────────────────────────────────
+
+/// Granularity of trace events.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TraceDepth {
+    /// Emit one event per statement (default).
+    #[default]
+    Statement,
+    /// Emit one event per sub-expression in addition to per-statement events.
+    Expr,
+}
+
+#[derive(Args, Debug)]
+pub struct TraceArgs {
+    /// Source file to trace.
+    pub source: String,
+
+    /// Entry function name (defaults to first function).
+    pub func: Option<String>,
+
+    /// Trace granularity: `statement` (default) or `expr` (per sub-expression).
+    #[arg(long = "depth", value_enum, default_value = "statement")]
+    pub depth: TraceDepth,
+
+    /// Only emit events that touch this variable name (may be repeated).
+    #[arg(long = "watch", value_name = "NAME", action = clap::ArgAction::Append)]
+    pub watch: Vec<String>,
+
+    /// Call arguments passed to the entry function.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub rest: Vec<String>,
 }
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────
@@ -809,6 +872,28 @@ mod tests {
     }
 
     #[test]
+    fn compile_with_target() {
+        let cli = Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", "wasm32-wasip1"])
+            .unwrap();
+        if let Some(Cmd::Compile(c)) = cli.cmd {
+            assert_eq!(c.target.as_deref(), Some("wasm32-wasip1"));
+        }
+    }
+
+    #[test]
+    fn compile_target_flag_parses_all_supported() {
+        for triple in SUPPORTED_TARGETS {
+            let cli =
+                Cli::try_parse_from(["ilo", "compile", "prog.ilo", "--target", triple]).unwrap();
+            if let Some(Cmd::Compile(c)) = cli.cmd {
+                assert_eq!(c.target.as_deref(), Some(*triple));
+            } else {
+                panic!("expected Compile for target {triple}");
+            }
+        }
+    }
+
+    #[test]
     fn graph_with_budget() {
         let cli = Cli::try_parse_from(["ilo", "graph", "f.ilo", "--budget", "100"]).unwrap();
         if let Some(Cmd::Graph(g)) = cli.cmd {
@@ -950,6 +1035,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         assert_eq!(r.effective_engine(), Engine::Default);

@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T004",
+  "long": "## ILO-T004: undefined variable\n\nA variable name was used that has not been bound in the current scope.\nVariables are bound by `let` statements or function parameters.\n\n**Example:**\n\n    f x:n>n;+x y   -- 'y' is not defined\n\n**Fix:** bind the variable before use, or pass it as a parameter:\n\n    f x:n y:n>n;+x y\n\n### Common pitfall: `name.N` after `zip`\n\nilo has no tuple type. `zip xs ys` returns `L (L n)` — a list of\ntwo-element lists, not a list of tuples. Agents reaching for\n`tup.0` / `pair.0` tuple-access syntax will see ILO-T004 on the\nunbound `tup` / `pair` name.\n\n**Wrong:**\n\n    g pair:L n>n;+pair.0 pair.1   -- pair.0 works only once pair is bound\n\nIf `pair` is unbound (e.g. you wrote `tup.0` without binding `tup`),\nthe fix is to bind it from the outer list and index with `at`:\n\n    f>L n;\n      xs=[1 2 3];ys=[10 20 30];zs=zip xs ys;\n      map (pair:L n>n;+at pair 0 at pair 1) zs\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "undefined variable"
+}

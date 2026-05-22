@@ -1,0 +1,7 @@
+{
+  "code": "ILO-R005",
+  "long": "## ILO-R005: field not found at runtime\n\nA field access was performed on a record that does not have the\nrequested field. Normally caught statically (ILO-T019).\n",
+  "phase": "runtime",
+  "schemaVersion": 1,
+  "short": "field not found at runtime"
+}

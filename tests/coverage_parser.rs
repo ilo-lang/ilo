@@ -1214,6 +1214,45 @@ fn nested_lambdas_capture() {
     ok("f xs:LLn k:n>LLn;map (ys:Ln>Ln;map (y:n>n;+y k) ys) xs");
 }
 
+// ---------------------------------------------------------------------------
+// Brace-lambda `{params> stmts}` (ILO-404)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn brace_lambda_fld_multi_stmt() {
+    ok("f xs:Ln>n;fld {a x>; tmp=*x 2; +a tmp} xs 0");
+}
+
+#[test]
+fn brace_lambda_fld_single_stmt() {
+    ok("f xs:Ln>n;fld {a x> +a x} xs 0");
+}
+
+#[test]
+fn brace_lambda_map_single_stmt() {
+    ok("f xs:Ln>Ln;map {x> *x 2} xs");
+}
+
+#[test]
+fn brace_lambda_map_multi_stmt() {
+    ok("f xs:Ln>Ln;map {x> y=+x 1; *y 2} xs");
+}
+
+#[test]
+fn brace_lambda_flt_single_stmt() {
+    ok("f xs:Ln>Ln;flt {x> >x 0} xs");
+}
+
+#[test]
+fn brace_lambda_flt_multi_stmt() {
+    ok("f xs:Ln>Ln;flt {x> thresh=0; >x thresh} xs");
+}
+
+#[test]
+fn brace_lambda_closure_capture() {
+    ok("f xs:Ln thr:n>Ln;flt {x> >x thr} xs");
+}
+
 #[test]
 fn pattern_text_arm() {
     ok("f x:t>n;?x{\"a\":1;\"b\":2;_:0}");

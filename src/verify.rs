@@ -19,6 +19,10 @@ pub enum Ty {
     /// Function type: params then return. `F n n` = Fn(vec![Number], Number).
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
+    /// Structural record type inferred from an anonymous record literal `{f:v ...}`.
+    /// Two `AnonRecord` types are compatible when they have exactly the same field
+    /// names and compatible field types (order-independent).
+    AnonRecord(Vec<(String, Ty)>),
     Unknown,
 }
 
@@ -48,6 +52,10 @@ impl std::fmt::Display for Ty {
                 write!(f, " {ret}")
             }
             Ty::Named(name) => write!(f, "{name}"),
+            Ty::AnonRecord(fields) => {
+                let parts: Vec<String> = fields.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+                write!(f, "{{{}}}", parts.join(" "))
+            }
             Ty::Unknown => write!(f, "_"),
         }
     }
@@ -198,6 +206,22 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
     }
 }
 
+/// Returns true when a type carries no concrete shape information.
+///
+/// `_` (Unknown) is the canonical "no info" type produced by `jpar!` unwrap.
+/// `O _` arises when `mget` is called on an Unknown-typed value (e.g. the
+/// result of `jpar!`): the Optional wrapper was inferred but the inner type is
+/// still unknown, so downstream operations that accept Unknown should also
+/// accept `O _`.  Without this, valid chains like
+/// `r=jpar! body; v=mget r "key"; len v` produce spurious T013 errors.
+fn is_opaque(ty: &Ty) -> bool {
+    match ty {
+        Ty::Unknown => true,
+        Ty::Optional(inner) => matches!(inner.as_ref(), Ty::Unknown),
+        _ => false,
+    }
+}
+
 /// Two types are compatible if either is Unknown, or they're structurally equal.
 fn compatible(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
@@ -223,10 +247,57 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
                 && compatible(ar, br)
         }
         (Ty::Named(a), Ty::Named(b)) => a == b,
+        // Two anonymous records unify when they have the same field names (order-independent)
+        // and compatible field types.
+        (Ty::AnonRecord(a_fields), Ty::AnonRecord(b_fields)) => {
+            if a_fields.len() != b_fields.len() {
+                return false;
+            }
+            let b_map: std::collections::HashMap<&str, &Ty> =
+                b_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+            a_fields
+                .iter()
+                .all(|(n, t)| b_map.get(n.as_str()).is_some_and(|bt| compatible(t, bt)))
+        }
         _ => false,
     }
 }
 
+<<<<<<< HEAD
+=======
+/// Check whether an anonymous-record type structurally satisfies a named
+/// record type: every field declared on the named type must be present in
+/// the anon record with a compatible type.  Extra fields on the anon record
+/// are permitted (structural / width subtyping).
+fn anon_satisfies_named(
+    anon_fields: &[(String, Ty)],
+    type_name: &str,
+    types: &HashMap<String, TypeDef>,
+) -> bool {
+    let Some(type_def) = types.get(type_name) else {
+        return false;
+    };
+    let anon_map: HashMap<&str, &Ty> = anon_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    type_def.fields.iter().all(|(name, expected_ty)| {
+        anon_map
+            .get(name.as_str())
+            .is_some_and(|actual_ty| compatible(actual_ty, expected_ty))
+    })
+}
+
+/// Like `compatible`, but additionally allows an `AnonRecord` to satisfy a
+/// `Named` record type via structural subtyping (see `anon_satisfies_named`).
+fn compatible_ext(a: &Ty, b: &Ty, types: &HashMap<String, TypeDef>) -> bool {
+    match (a, b) {
+        // anon record supplied where a named record type is expected
+        (Ty::AnonRecord(fields), Ty::Named(name)) | (Ty::Named(name), Ty::AnonRecord(fields)) => {
+            anon_satisfies_named(fields, name, types)
+        }
+        _ => compatible(a, b),
+    }
+}
+
+>>>>>>> origin/main
 /// Build a targeted hint for a ternary whose branches have mismatched
 /// types. The verifier emits ILO-T003 with this hint to nudge agents
 /// toward the cheapest fix rather than the generic
@@ -435,7 +506,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // (name, param_types, return_type_desc)
     // We use special strings to describe signatures
     ("len", &["list_or_text"], "n"),
-    ("str", &["n"], "t"),
+    ("str", &["t_or_n"], "t"),
     ("num", &["t_or_n"], "R n t"),
     ("abs", &["n"], "n"),
     ("flr", &["n"], "n"),
@@ -518,8 +589,14 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // Both return Err on I/O failure or on WASM targets.
     ("rdin", &[], "R t t"),
     ("rdinl", &[], "R (L t) t"),
+    // for-line stdin > LazyStdinLines (ILO-70). Lazy line iterator: one arg
+    // ("stdin"), returns a handle iterable by @binding foreach. On WASM returns
+    // Err. The return type is opaque (not a List), so we use "_" as the type
+    // signature here; the verifier treats it as Unknown for type inference.
+    ("for-line", &["t"], "_"),
     ("wr", &["t", "t"], "R t t"),
     ("wra", &["t", "t"], "R t t"),
+    ("wro", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
     ("upr", &["t"], "t"),
@@ -688,6 +765,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("b64-dec", &["t"], "R t t"),
     ("hex", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
+    // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
+    // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or
+    // non-hex input.
+    ("sha256-hex", &["t"], "t"),
+    ("sha256d", &["t"], "t"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.
@@ -697,6 +779,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("last-dom", &["n"], "n"),
     ("next-business-day", &["n"], "n"),
     ("day-of-week", &["n"], "n"),
+    // Text search (0.13.0).
+    // idxof s sub > O n — first code-point index of sub in s, nil when absent.
+    ("idxof", &["t", "t"], "O n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -777,8 +862,8 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         "chr" => Ty::Fn(vec![n.clone()], Box::new(t.clone())),
         // 1-arg t -> L t (split into single-char strings, one per Unicode scalar)
         "chars" => Ty::Fn(vec![t.clone()], Box::new(Ty::List(Box::new(t.clone())))),
-        // 1-arg n->t and t->R n t
-        "str" => Ty::Fn(vec![n], Box::new(t)),
+        // 1-arg (n|t)->t  — identity for text, number→text conversion for numbers
+        "str" => Ty::Fn(vec![Ty::Unknown], Box::new(t)),
         "num" => Ty::Fn(
             vec![t.clone()],
             Box::new(Ty::Result(Box::new(Ty::Number), Box::new(t))),
@@ -803,6 +888,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Map(_, _) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -818,11 +904,12 @@ fn builtin_check_args(
         "str" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Number)
+                && !compatible(arg, &Ty::Text)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'str' expects n, got {arg}"),
+                    message: format!("'str' expects n or t, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -1065,6 +1152,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1148,6 +1236,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (*inner.clone(), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1179,6 +1268,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (*inner.clone(), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1211,6 +1301,7 @@ fn builtin_check_args(
             let elem_ty = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1275,6 +1366,7 @@ fn builtin_check_args(
                     return (Ty::List(inner.clone()), errors);
                 }
                 Some(Ty::Unknown) => return (Ty::Unknown, errors),
+                Some(other) if is_opaque(other) => return (Ty::Unknown, errors),
                 Some(other) => errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
@@ -1294,6 +1386,7 @@ fn builtin_check_args(
             let elem_a = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1309,6 +1402,7 @@ fn builtin_check_args(
             let elem_b = match arg_types.get(1) {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1336,6 +1430,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1366,6 +1461,7 @@ fn builtin_check_args(
             let inner = match arg_types.get(1) {
                 Some(Ty::List(inner)) => (**inner).clone(),
                 Some(Ty::Unknown) | None => Ty::Unknown,
+                Some(other) if is_opaque(other) => Ty::Unknown,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1385,6 +1481,7 @@ fn builtin_check_args(
             let elem_a = match arg_types.first() {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1400,6 +1497,7 @@ fn builtin_check_args(
             let elem_b = match arg_types.get(1) {
                 Some(Ty::List(inner)) => Some((**inner).clone()),
                 Some(Ty::Unknown) | None => None,
+                Some(other) if is_opaque(other) => None,
                 Some(other) => {
                     errors.push(VerifyError {
                         code: "ILO-T013",
@@ -1427,6 +1525,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1443,6 +1542,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1565,6 +1665,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1690,6 +1791,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1777,6 +1879,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1793,6 +1896,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1810,6 +1914,7 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(_) | Ty::Unknown => {}
+                    other if is_opaque(other) => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -1922,6 +2027,7 @@ fn builtin_check_args(
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
                     Ty::Text => return (Ty::Text, errors),
                     Ty::Unknown => return (Ty::Unknown, errors),
+                    other if is_opaque(other) => return (Ty::Unknown, errors),
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -2231,7 +2337,7 @@ fn builtin_check_args(
                 errors,
             )
         }
-        "wr" | "wra" | "wrl" => {
+        "wr" | "wra" | "wro" | "wrl" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -2272,6 +2378,19 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'wra' arg 2 expects t (content), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wro"
+                && let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wro' arg 2 expects t (content), got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -3165,6 +3284,7 @@ fn builtin_check_args(
             // hard-code "must be text" — see PR #257 for the MapKey rollout.
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3201,6 +3321,7 @@ fn builtin_check_args(
             // return shape is `v`, never `O v`.
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3298,6 +3419,7 @@ fn builtin_check_args(
             // inferred from the third arg if not previously known).
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3343,6 +3465,7 @@ fn builtin_check_args(
             };
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3372,6 +3495,7 @@ fn builtin_check_args(
         "mkeys" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3392,6 +3516,7 @@ fn builtin_check_args(
         "mvals" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3411,6 +3536,7 @@ fn builtin_check_args(
         "mpairs" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -3429,6 +3555,7 @@ fn builtin_check_args(
         "mdel" => {
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+                && !is_opaque(first)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
@@ -4181,7 +4308,7 @@ impl VerifyContext {
 
                 let body_ty = self.verify_body(name, &mut scope, body);
                 let expected = convert_type_with_aliases(return_type, &self.aliases);
-                if !compatible(&body_ty, &expected) {
+                if !compatible_ext(&body_ty, &expected, &self.types) {
                     let hint = match (&body_ty, &expected) {
                         (Ty::Number, Ty::Text) => {
                             Some("use 'str' to convert: str <expr>".to_string())
@@ -4380,12 +4507,38 @@ impl VerifyContext {
         match stmt {
             Stmt::Let { name, value } => {
                 let ty = self.infer_expr(func, scope, value, span);
-                scope_insert(scope, name.clone(), ty);
+                // `_=expr` explicit discard: evaluate type for diagnostics on
+                // the RHS (e.g. catches T005 undefined calls inside), but do
+                // not insert `_` into scope — it's a sigil, not a binding.
+                if name != "_" {
+                    scope_insert(scope, name.clone(), ty);
+                }
                 Ty::Nil
             }
             Stmt::Destructure { bindings, value } => {
                 let record_ty = self.infer_expr(func, scope, value, span);
                 match &record_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        let fields_ty = fields_ty.clone();
+                        for binding in bindings {
+                            if let Some((_, fty)) = fields_ty.iter().find(|(n, _)| n == binding) {
+                                scope_insert(scope, binding.clone(), fty.clone());
+                            } else {
+                                let field_names: Vec<String> =
+                                    fields_ty.iter().map(|(n, _)| n.clone()).collect();
+                                let hint = closest_match(binding, field_names.iter())
+                                    .map(|s| format!("did you mean '{s}'?"));
+                                self.err(
+                                    "ILO-T019",
+                                    func,
+                                    format!("no field '{binding}' on anonymous record"),
+                                    hint,
+                                    Some(span),
+                                );
+                                scope_insert(scope, binding.clone(), Ty::Unknown);
+                            }
+                        }
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name).cloned() {
                             for binding in bindings {
@@ -4565,6 +4718,7 @@ impl VerifyContext {
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 let start_ty = self.infer_expr(func, scope, start, span);
@@ -4586,6 +4740,30 @@ impl VerifyContext {
                         None,
                         Some(span),
                     );
+                }
+                if let Some(step_expr) = step {
+                    let step_ty = self.infer_expr(func, scope, step_expr, span);
+                    if !compatible(&step_ty, &Ty::Number) {
+                        self.err(
+                            "ILO-T014",
+                            func,
+                            format!("range step must be n, got {step_ty}"),
+                            None,
+                            Some(span),
+                        );
+                    }
+                    // Reject literal zero or negative steps
+                    if let Expr::Literal(Literal::Number(n)) = step_expr {
+                        if *n <= 0.0 {
+                            self.err(
+                                "ILO-V001",
+                                func,
+                                format!("range step must be positive, got {n} — use a positive integer step (e.g. `by 2`)"),
+                                None,
+                                Some(span),
+                            );
+                        }
+                    }
                 }
                 scope.push(HashMap::new());
                 scope_insert(scope, binding.clone(), Ty::Number);
@@ -4676,6 +4854,12 @@ impl VerifyContext {
                     _ => Ty::Unknown,
                 };
                 scope_insert(scope, binding.clone(), bound_ty);
+            }
+            Pattern::Or(alts) => {
+                // Bind from the first alternative only (or patterns share one body)
+                if let Some(first) = alts.first() {
+                    self.bind_pattern("", scope, first, subject_ty);
+                }
             }
         }
     }
@@ -5030,7 +5214,7 @@ impl VerifyContext {
                     for (i, ((param_name, param_ty), arg_ty)) in
                         sig_params.iter().zip(arg_types.iter()).enumerate()
                     {
-                        if !compatible(param_ty, arg_ty) {
+                        if !compatible_ext(param_ty, arg_ty, &self.types) {
                             let hint = match (param_ty, arg_ty) {
                                 (Ty::Text, Ty::Number) => {
                                     Some("use 'str' to convert number to text".to_string())
@@ -5071,7 +5255,7 @@ impl VerifyContext {
                         for (i, (param_ty, arg_ty)) in
                             param_types.iter().zip(arg_types.iter()).enumerate()
                         {
-                            if !compatible(param_ty, arg_ty) {
+                            if !compatible_ext(param_ty, arg_ty, &self.types) {
                                 self.err(
                                     "ILO-T007",
                                     func,
@@ -5325,6 +5509,16 @@ impl VerifyContext {
                 }
             }
 
+            Expr::AnonRecord { fields } => {
+                // Infer each field's type and return a structural AnonRecord type.
+                // No declaration required; shape is derived entirely from the literal.
+                let inferred: Vec<(String, Ty)> = fields
+                    .iter()
+                    .map(|(n, e)| (n.clone(), self.infer_expr(func, scope, e, span)))
+                    .collect();
+                Ty::AnonRecord(inferred)
+            }
+
             Expr::Record { type_name, fields } => {
                 if let Some(type_def) = self.types.get(type_name) {
                     let def_fields = type_def.fields.clone();
@@ -5404,6 +5598,24 @@ impl VerifyContext {
                     return Ty::Nil;
                 }
                 match &obj_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        if let Some((_, fty)) = fields_ty.iter().find(|(n, _)| n == field) {
+                            fty.clone()
+                        } else {
+                            let field_names: Vec<String> =
+                                fields_ty.iter().map(|(n, _)| n.clone()).collect();
+                            let hint = closest_match(field, field_names.iter())
+                                .map(|s| format!("did you mean '{s}'?"));
+                            self.err(
+                                "ILO-T019",
+                                func,
+                                format!("no field '{field}' on anonymous record"),
+                                hint,
+                                Some(span),
+                            );
+                            Ty::Unknown
+                        }
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name) {
                             if let Some((_, fty)) = type_def.fields.iter().find(|(n, _)| n == field)
@@ -5616,6 +5828,37 @@ ilo has no tuple type."
             Expr::With { object, updates } => {
                 let obj_ty = self.infer_expr(func, scope, object, span);
                 match &obj_ty {
+                    Ty::AnonRecord(fields_ty) => {
+                        // Build updated fields: carry through unchanged fields, replace updated ones.
+                        let def_fields = fields_ty.clone();
+                        let mut new_fields = def_fields.clone();
+                        for (fname, expr) in updates {
+                            if let Some(pos) = new_fields.iter().position(|(n, _)| n == fname) {
+                                let actual = self.infer_expr(func, scope, expr, span);
+                                new_fields[pos] = (fname.clone(), actual);
+                            } else {
+                                // ILO-T044: `with` on an anonymous record must not add new fields.
+                                let def_field_strings: Vec<String> =
+                                    def_fields.iter().map(|(n, _)| n.clone()).collect();
+                                let hint = closest_match(fname, def_field_strings.iter())
+                                    .map(|s| format!("did you mean '{s}'?"))
+                                    .or_else(|| {
+                                        Some(format!(
+                                            "existing fields: {}",
+                                            def_field_strings.join(", ")
+                                        ))
+                                    });
+                                self.err(
+                                    "ILO-T044",
+                                    func,
+                                    format!("'with' cannot add new field '{fname}' to an anonymous record"),
+                                    hint,
+                                    Some(span),
+                                );
+                            }
+                        }
+                        Ty::AnonRecord(new_fields)
+                    }
                     Ty::Named(type_name) => {
                         if let Some(type_def) = self.types.get(type_name) {
                             let def_fields = type_def.fields.clone();
@@ -5675,6 +5918,12 @@ ilo has no tuple type."
                     self.infer_expr(func, scope, cap, span);
                 }
                 let _ = fn_name;
+                Ty::Unknown
+            }
+            // `todo "reason"` and `panic "reason"` are divergent expressions:
+            // they abort at runtime and satisfy any return type.
+            Expr::Todo(reason) | Expr::Panic(reason) => {
+                self.infer_expr(func, scope, reason, span);
                 Ty::Unknown
             }
         }
@@ -6524,14 +6773,24 @@ mod tests {
     // ---- builtin_check_args type errors ----
 
     #[test]
-    fn builtin_str_wrong_type() {
+    fn builtin_str_text_passthrough() {
+        // str is now polymorphic — text input is accepted without error
         let result = parse_and_verify("f x:t>t;str x");
+        assert!(result.is_ok(), "expected no errors, got: {:?}", result);
+    }
+
+    #[test]
+    fn builtin_str_wrong_type() {
+        // bool is still rejected by str
+        let result = parse_and_verify("f x:b>t;str x");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("'str' expects n, got t"))
+                .any(|e| e.message.contains("'str' expects n or t, got b")),
+            "unexpected errors: {:?}",
+            errors
         );
     }
 
@@ -6688,6 +6947,51 @@ mod tests {
                 .iter()
                 .any(|e| e.message.contains("undefined type 'ghost'"))
         );
+    }
+
+    // ---- Anon record → named record structural subtyping ----
+
+    #[test]
+    fn anon_record_satisfies_named_param() {
+        // greet p:person; passing {name:"jane" age:30} should be accepted
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30}",
+        );
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn anon_record_satisfies_named_param_with_extra_fields() {
+        // anon record has extra field 'note' — still acceptable (width subtyping)
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:30 note:\"hi\"}",
+        );
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn anon_record_missing_required_field_rejected() {
+        // anon record is missing 'age' — should produce a type error
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\"}",
+        );
+        assert!(result.is_err(), "expected type error for missing field");
+    }
+
+    #[test]
+    fn anon_record_wrong_field_type_rejected() {
+        // anon record has 'age' as text instead of number — should fail
+        let result = parse_and_verify(
+            "type person{name:t;age:n} greet p:person>n;0 f>n;greet {name:\"jane\" age:\"old\"}",
+        );
+        assert!(result.is_err(), "expected type error for wrong field type");
+    }
+
+    #[test]
+    fn anon_record_as_return_type_of_named() {
+        // function declared to return 'person' but returns anon record — should be accepted
+        let result = parse_and_verify("type person{name:t;age:n} mk>person;{name:\"bob\" age:25}");
+        assert!(result.is_ok(), "expected ok, got {:?}", result.unwrap_err());
     }
 
     // ---- Field access errors ----
@@ -8196,6 +8500,47 @@ mod tests {
         assert_eq!(t033.len(), 3);
     }
 
+    // ---- _=expr explicit discard bind (ILO-36) ----
+
+    #[test]
+    fn discard_bind_no_t033() {
+        // `_=mset m k v` — explicit discard, T033 must NOT fire.
+        let result = parse_and_verify_full(r#"f>n;m=mmap;_=mset m "k" 1;3"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(
+            t033.len(),
+            0,
+            "_=mset should not warn T033, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn discard_bind_no_scope_pollution() {
+        // `_=expr` must not introduce `_` as a bound variable.
+        // The function returns `_` (the nil/wildcard ref), not the mset result.
+        // Verifier should not surface T005 ("undefined '_'") nor bind it.
+        let result = parse_and_verify_full(r#"f>n;_=prnt "hi";3"#);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn discard_bind_rhs_errors_still_surface() {
+        // Errors inside the RHS of `_=` are still checked.
+        // `_=no_such 1` should emit T005 for the undefined call.
+        let errs = parse_and_verify(r#"f>n;_=no-such 1;3"#).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T005"),
+            "expected T005 for undefined call in _=expr, got {:?}",
+            errs
+        );
+    }
+
     // ---- rnd builtin ----
 
     #[test]
@@ -9258,6 +9603,9 @@ mod tests {
         program.declarations.push(Decl::Use {
             path: "x.@".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: Span::UNKNOWN,
         });
         let result = verify(&program);
@@ -10333,5 +10681,37 @@ mod tests {
     fn verify_fmt2_valid_returns_text() {
         // Sanity: valid call typechecks.
         assert!(parse_and_verify("f>t;fmt2 3.14 2").is_ok());
+    }
+
+    // ---- todo / panic typed expressions (ILO-410) ----
+
+    #[test]
+    fn verify_todo_satisfies_number_return() {
+        // `todo` in a number-returning function should not cause a type error.
+        assert!(parse_and_verify("f>n;todo \"not yet\"").is_ok());
+    }
+
+    #[test]
+    fn verify_panic_satisfies_number_return() {
+        assert!(parse_and_verify("f>n;panic \"unreachable\"").is_ok());
+    }
+
+    #[test]
+    fn verify_todo_satisfies_text_return() {
+        assert!(parse_and_verify("f>t;todo \"stub\"").is_ok());
+    }
+
+    #[test]
+    fn verify_panic_satisfies_text_return() {
+        assert!(parse_and_verify("f>t;panic \"stub\"").is_ok());
+    }
+
+    #[test]
+    fn verify_todo_in_branch() {
+        // `todo` as one branch of a ternary should not cause type errors.
+        assert!(
+            parse_and_verify("f x:n>n;?=x 0(todo \"zero case\")(+x 1)").is_ok(),
+            "todo in ternary branch should typecheck"
+        );
     }
 }

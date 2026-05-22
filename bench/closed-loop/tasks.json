@@ -1,0 +1,39 @@
+{
+  "tasks": [
+    {
+      "id": "simple-function",
+      "description": "Write an ilo function that takes an integer n and returns n*(n+1)/2 (triangular number). Call it with n=10 and print the result.",
+      "expected_output": "55",
+      "difficulty": "easy",
+      "category": "arithmetic"
+    },
+    {
+      "id": "with-dependencies",
+      "description": "Write an ilo program that defines a helper function `double` (returns 2*x) and a function `quad` that calls double twice. Call quad with 7 and print the result.",
+      "expected_output": "28",
+      "difficulty": "easy",
+      "category": "function-composition"
+    },
+    {
+      "id": "data-transform",
+      "description": "Write an ilo program that creates a list of integers [1, 2, 3, 4, 5], maps each element to its square, filters for values greater than 10, and prints the sum.",
+      "expected_output": "41",
+      "difficulty": "medium",
+      "category": "list-processing"
+    },
+    {
+      "id": "tool-interaction",
+      "description": "Write an ilo program that uses the `env` builtin to read an environment variable named BENCH_VAR (default to 'hello' if missing), appends ' world' to it, and prints the result. Assume BENCH_VAR is not set.",
+      "expected_output": "hello world",
+      "difficulty": "medium",
+      "category": "io-env"
+    },
+    {
+      "id": "workflow-rollback",
+      "description": "Write an ilo program that defines a function `safe-div` which divides two numbers but returns 0 if the divisor is zero (using an if expression). Call it with (10, 2) and (5, 0), print both results separated by a newline.",
+      "expected_output": "5\n0",
+      "difficulty": "medium",
+      "category": "control-flow"
+    }
+  ]
+}
