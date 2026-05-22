@@ -2315,10 +2315,7 @@ fn builtin_check_args(
             } else {
                 Ty::Unknown
             };
-            (
-                Ty::Result(Box::new(ok_ty), Box::new(Ty::Text)),
-                errors,
-            )
+            (Ty::Result(Box::new(ok_ty), Box::new(Ty::Text)), errors)
         }
         "rd-json" => {
             if let Some(arg) = arg_types.first()

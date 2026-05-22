@@ -14148,6 +14148,7 @@ fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
 /// Grid ("csv", "tsv") → Ok(list of rows).
 /// Graph ("json")      → Ok(parsed JSON) or Err(error string NanVal).
 /// Raw/unknown         → Ok(plain string).
+#[allow(dead_code)]
 fn vm_parse_format(fmt: &str, content: &str) -> Result<NanVal, NanVal> {
     match fmt {
         "csv" | "tsv" => {
