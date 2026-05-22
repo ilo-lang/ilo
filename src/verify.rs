@@ -11806,6 +11806,8 @@ mod tests {
             parse_and_verify("f x:n>n;?=x 0(todo \"zero case\")(+x 1)").is_ok(),
             "todo in ternary branch should typecheck"
         );
+    }
+
     // ── Effect sets (ILO-361) ──────────────────────────────────────────────────
 
     #[test]
