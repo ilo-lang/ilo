@@ -307,6 +307,11 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
                 out.push_str(&format!("{};\n", val));
             }
         }
+        Stmt::Defer { expr, .. } => {
+            let val = emit_expr(out, level, expr);
+            indent(out, level);
+            out.push_str(&format!("{};\n", val));
+        }
     }
 }
 

@@ -355,7 +355,15 @@ fn defer_vm_not_slower_than_tree() {
         let tokens = ilo::lexer::lex(src).expect("lex");
         let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
             .into_iter()
-            .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+            .map(|(t, r)| {
+                (
+                    t,
+                    ilo::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
             .collect();
         let (mut program, _) = ilo::parser::parse(token_spans);
         ilo::ast::resolve_aliases(&mut program);
@@ -371,9 +379,7 @@ fn defer_vm_not_slower_than_tree() {
     let vm_ns = v_start.elapsed().as_nanos();
 
     let ratio = tree_ns as f64 / vm_ns as f64;
-    eprintln!(
-        "defer perf: tree={tree_ns}ns  vm={vm_ns}ns  vm_speedup={ratio:.2}x ({ITERS} iters)"
-    );
+    eprintln!("defer perf: tree={tree_ns}ns  vm={vm_ns}ns  vm_speedup={ratio:.2}x ({ITERS} iters)");
 
     // VM must not be more than 2× slower than the tree (in practice it is
     // faster because the tree bridge clones AST nodes on every call).

@@ -3138,11 +3138,11 @@ impl RegCompiler {
 
         // The thunk index in func_names / chunks.  It was pre-registered by
         // compile_program before the function-body loop, so we just look it up.
-        let thunk_fn_idx = self
-            .func_names
-            .iter()
-            .position(|n| n == &thunk_name)
-            .expect("defer thunk name must be pre-registered in func_names") as u16;
+        let thunk_fn_idx =
+            self.func_names
+                .iter()
+                .position(|n| n == &thunk_name)
+                .expect("defer thunk name must be pre-registered in func_names") as u16;
 
         // Save compiler state for the enclosing function.
         let saved_current = std::mem::take(&mut self.current);
@@ -8162,19 +8162,12 @@ fn count_defers_in_stmt(stmt: &Stmt) -> u32 {
         Stmt::Guard {
             body, else_body, ..
         } => {
-            count_defers_in_body(body)
-                + else_body
-                    .as_deref()
-                    .map(count_defers_in_body)
-                    .unwrap_or(0)
+            count_defers_in_body(body) + else_body.as_deref().map(count_defers_in_body).unwrap_or(0)
         }
-        Stmt::Match { arms, .. } => arms
-            .iter()
-            .map(|a| count_defers_in_body(&a.body))
-            .sum(),
-        Stmt::ForEach { body, .. }
-        | Stmt::ForRange { body, .. }
-        | Stmt::While { body, .. } => count_defers_in_body(body),
+        Stmt::Match { arms, .. } => arms.iter().map(|a| count_defers_in_body(&a.body)).sum(),
+        Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } | Stmt::While { body, .. } => {
+            count_defers_in_body(body)
+        }
         _ => 0,
     }
 }
@@ -14059,28 +14052,28 @@ impl<'a> VM<'a> {
                         }
 
                         // Resolve the callable: FnRef (user fn) or Closure.
-                        let (thunk_fn_idx, captures): (usize, Vec<NanVal>) =
-                            if callable.is_fnref() {
-                                let (_kind, id) = callable.fnref_parts();
-                                (id as usize, Vec::new())
-                            } else if callable.is_heap() && (callable.0 & TAG_MASK) == TAG_LIST {
-                                let heap = unsafe { callable.as_heap_ref() };
-                                if let HeapObj::Closure {
-                                    kind: _k,
-                                    id,
-                                    captures,
-                                } = heap
-                                {
-                                    let caps = captures.clone();
-                                    (*id as usize, caps)
-                                } else {
-                                    callable.drop_rc();
-                                    continue;
-                                }
+                        let (thunk_fn_idx, captures): (usize, Vec<NanVal>) = if callable.is_fnref()
+                        {
+                            let (_kind, id) = callable.fnref_parts();
+                            (id as usize, Vec::new())
+                        } else if callable.is_heap() && (callable.0 & TAG_MASK) == TAG_LIST {
+                            let heap = unsafe { callable.as_heap_ref() };
+                            if let HeapObj::Closure {
+                                kind: _k,
+                                id,
+                                captures,
+                            } = heap
+                            {
+                                let caps = captures.clone();
+                                (*id as usize, caps)
                             } else {
                                 callable.drop_rc();
                                 continue;
-                            };
+                            }
+                        } else {
+                            callable.drop_rc();
+                            continue;
+                        };
                         callable.drop_rc();
 
                         // Push the thunk frame.  Captures are installed as

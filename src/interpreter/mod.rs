@@ -8223,11 +8223,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             //      (e.g. `ret ^"msg"` or a `!`-propagated error).
             // Defer errors are silently ignored so a failing defer doesn't
             // hide the original error.
-            let is_error = match &body_result {
-                Err(_) => true,
-                Ok(Value::Err(_)) => true,
-                _ => false,
-            };
+            let is_error = matches!(&body_result, Err(_) | Ok(Value::Err(_)));
             let frame_defers = std::mem::take(&mut env.defer_stack);
             for (defer_expr, defer_kind) in frame_defers.into_iter().rev() {
                 let should_run = match defer_kind {
