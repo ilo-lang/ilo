@@ -1,0 +1,10 @@
+-- wro path s: truncate file at path and write s (create if missing). Returns R t t.
+-- wro overwrites on every call — no accumulated data between calls.
+-- Contrast with wra which appends, and wr which also overwrites but lacks the
+-- companion symmetry of the wra/wro pair.
+-- See also: `wra` for append-write.
+
+-- run: overwrite-count
+-- out: 1
+
+overwrite-count>n;path="/tmp/ilo-wro-ex.txt";w=wro!! path "first\n";w=wro!! path "second\n";lines=rdl!! path;rc=run "rm" [path];len lines

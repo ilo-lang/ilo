@@ -532,6 +532,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rdinl", &[], "R (L t) t"),
     ("wr", &["t", "t"], "R t t"),
     ("wra", &["t", "t"], "R t t"),
+    ("wro", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
     ("upr", &["t"], "t"),
@@ -2244,7 +2245,7 @@ fn builtin_check_args(
                 errors,
             )
         }
-        "wr" | "wra" | "wrl" => {
+        "wr" | "wra" | "wro" | "wrl" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -2285,6 +2286,19 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'wra' arg 2 expects t (content), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wro"
+                && let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wro' arg 2 expects t (content), got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -5454,7 +5468,10 @@ impl VerifyContext {
                         match field.as_str() {
                             "net" | "read" | "write" | "run" => Ty::Bool,
                             other => {
-                                let known: Vec<String> = ["net", "read", "write", "run"].iter().map(|s| s.to_string()).collect();
+                                let known: Vec<String> = ["net", "read", "write", "run"]
+                                    .iter()
+                                    .map(|s| s.to_string())
+                                    .collect();
                                 let hint = closest_match(other, known.iter())
                                     .map(|s| format!("did you mean '{s}'?"));
                                 self.err(
