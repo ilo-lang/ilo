@@ -584,6 +584,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // Both return Err on I/O failure or on WASM targets.
     ("rdin", &[], "R t t"),
     ("rdinl", &[], "R (L t) t"),
+    // for-line stdin > LazyStdinLines (ILO-70). Lazy line iterator: one arg
+    // ("stdin"), returns a handle iterable by @binding foreach. On WASM returns
+    // Err. The return type is opaque (not a List), so we use "_" as the type
+    // signature here; the verifier treats it as Unknown for type inference.
+    ("for-line", &["t"], "_"),
     ("wr", &["t", "t"], "R t t"),
     ("wra", &["t", "t"], "R t t"),
     ("wro", &["t", "t"], "R t t"),

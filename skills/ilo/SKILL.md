@@ -108,6 +108,18 @@ Agents reach for these names constantly — pick the listed alternative and move
 
 When in doubt: pick a 4+ char descriptive name. The token cost of an extra character is dwarfed by the cost of an ILO-P011 retry round-trip.
 
+## Streaming stdin (ILO-70)
+
+For unbounded input streams (e.g. `tail -f`, a producer that never closes stdin), use `for-line` instead of `rdinl`:
+
+```
+-- rdinl buffers ALL of stdin before returning — blocks on infinite/slow producers.
+-- for-line "stdin" yields one line at a time as the pipe delivers it.
+main>n;n=0;@line (for-line "stdin"){prnt line;n=+ n 1};n
+```
+
+`for-line` takes exactly one arg: the text `"stdin"`. It is iterable directly with `@binding` foreach. On WASM it returns Err. Tree + VM engines only (Cranelift JIT follow-up). Keep using `rdinl` when you need random access to all lines (e.g. to sort them).
+
 ## Date/time builtins
 
 `now` and `now-ms` are not the whole surface. Full set: `now` (Unix seconds), `now-ms` (Unix ms), `dtfmt ts fmt` (timestamp to text), `dtparse s fmt` (text to timestamp, `R n t`), `dtparse-rel s now` (relative phrase like `"in 3 days"` / `"last monday"` anchored at `now`, `R n t`). Reach for `dtparse-rel` before hand-rolling phrase parsers. Details in `ilo skill get ilo-builtins-text`.

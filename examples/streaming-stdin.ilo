@@ -1,0 +1,15 @@
+-- for-line stdin > LazyStdinLines — lazy line iterator over stdin (ILO-70).
+-- Unlike `rdinl` (which buffers the full input before returning), `for-line`
+-- processes one line at a time as it arrives. Suitable for unbounded streams
+-- such as `tail -f` output or streaming log producers.
+--
+-- Canonical foreach usage:
+--   main>n;@line (for-line "stdin"){prnt line};0
+--
+-- The `for-line` builtin takes exactly one argument: the text "stdin".
+-- Each iteration binds the next line (newline stripped) to the loop variable.
+-- EOF terminates the loop naturally; I/O errors surface as ILO-R012.
+--
+-- This example echoes each incoming line and returns a count of lines seen.
+
+main>n;n=0;@line (for-line "stdin"){prnt line;n=+ n 1};n

@@ -65,6 +65,9 @@ impl Value {
             }
             Value::FnRef(_) => Err("functions cannot be serialized".to_string()),
             Value::Closure { .. } => Err("closures cannot be serialized".to_string()),
+            Value::LazyStdinLines(_) => {
+                Err("stdin-lines iterator cannot be serialized".to_string())
+            }
         }
     }
 
