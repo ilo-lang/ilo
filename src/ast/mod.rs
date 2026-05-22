@@ -957,7 +957,9 @@ fn collect_anon_record_fields_stmt(stmt: &Stmt, out: &mut std::collections::Hash
             collect_anon_record_fields_expr(condition, out);
             collect_anon_record_fields_stmts(body, out);
         }
-        Stmt::ForEach { collection, body, .. } => {
+        Stmt::ForEach {
+            collection, body, ..
+        } => {
             collect_anon_record_fields_expr(collection, out);
             collect_anon_record_fields_stmts(body, out);
         }
