@@ -1158,6 +1158,9 @@ impl Builtin {
         // Returns a LazyStdinLines handle that ForEach drains one line at a time,
         // enabling processing of unbounded piped input without buffering.
         Builtin::ForLine,
+        // `idxof s sub > O n` — text-search builtin (0.13.0). Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Idxof,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
