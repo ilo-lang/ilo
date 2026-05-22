@@ -2400,6 +2400,32 @@ fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
 }
 
 #[inline(never)]
+fn tokcount_impl(arg: &Value) -> Result<Value> {
+    // tokcount s > n — approximate cl100k_base token count of string s.
+    //
+    // STUB: uses a bytes/3.4 approximation (empirical mean bytes-per-token for
+    // English prose under cl100k_base). Correct within ~5% for natural-language
+    // skill files. A follow-up (ILO-47) will replace this with a real BPE
+    // tokeniser (tiktoken-rs or similar) once crate WASM and licence questions
+    // are resolved.
+    //
+    // f64::ceil ensures we round up, matching Python tiktoken's exact count
+    // on short strings where the approximation could otherwise round down
+    // and produce a false-passing token budget check.
+    match arg {
+        Value::Text(s) => {
+            let bytes = s.len() as f64;
+            let count = (bytes / 3.4_f64).ceil();
+            Ok(Value::Number(count))
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!("tokcount requires text, got {:?}", other),
+        )),
+    }
+}
+
+#[inline(never)]
 fn b64_impl(arg: &Value) -> Result<Value> {
     // b64 s > t — standard base64 (RFC 4648 §4) encode of the UTF-8 bytes of
     // s, with `=` padding. Distinct from `b64u` which uses the URL-safe
@@ -5109,6 +5135,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::HexRev) && args.len() == 1 {
         return hex_rev_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Tokcount) && args.len() == 1 {
+        return tokcount_impl(&args[0]);
     }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {

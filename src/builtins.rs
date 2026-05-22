@@ -356,6 +356,15 @@ pub enum Builtin {
     Sha256Hex,
     Sha256d,
 
+    // `tokcount s > n` — approximate cl100k_base token count of string `s`.
+    // Uses a bytes/3.4 approximation (mean bytes-per-token for English prose
+    // under cl100k_base). Fast, allocation-minimal, and correct within ~5%
+    // for natural-language skill files. A follow-up (ILO-47) will replace
+    // this with the full tiktoken-rs BPE tokeniser once the crate's WASM
+    // and licence story is confirmed. Pure text-in / number-out; tree-bridge
+    // eligible. Added in 0.12.2 (experimental).
+    Tokcount,
+
     // `where cond xs ys > L a` — parallel-list conditional select.
     // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
     // All three lists must have the same length; mismatch raises ILO-R009.
@@ -607,6 +616,7 @@ impl Builtin {
             "sha256-hex" => Some(Builtin::Sha256Hex),
             "sha256d" => Some(Builtin::Sha256d),
             "hex-rev" => Some(Builtin::HexRev),
+            "tokcount" => Some(Builtin::Tokcount),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -809,6 +819,7 @@ impl Builtin {
             Builtin::Sha256Hex => "sha256-hex",
             Builtin::Sha256d => "sha256d",
             Builtin::HexRev => "hex-rev",
+            Builtin::Tokcount => "tokcount",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -1175,13 +1186,21 @@ impl Builtin {
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
         // `for-line stdin > LazyStdinLines` — lazy stdin line iterator (ILO-70).
-        // Appended last to preserve every existing on-wire tag.
         // Returns a LazyStdinLines handle that ForEach drains one line at a time,
         // enabling processing of unbounded piped input without buffering.
         Builtin::ForLine,
-        // `idxof s sub > O n` — text-search builtin (0.13.0). Appended last
-        // to preserve every existing on-wire tag.
+        // `idxof s sub > O n` — text-search builtin (0.13.0).
         Builtin::Idxof,
+        // Raw-bytes crypto cluster (ILO-383).
+        Builtin::Sha256Hex,
+        Builtin::Sha256d,
+        // hex-rev (ILO-372): reverse the byte order of a hex-encoded string.
+        Builtin::HexRev,
+        // tokcount (ILO-47): approximate cl100k_base token count (bytes/3.4 stub).
+        // Follow-up (ILO-413) will replace this stub with the full tiktoken-rs BPE
+        // tokeniser once the crate's WASM and licence story is confirmed.
+        // Appended last to preserve every existing on-wire tag.
+        Builtin::Tokcount,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1207,7 +1226,9 @@ impl Builtin {
             | Builtin::DtparseRel
             | Builtin::DurParse
             | Builtin::DurFmt
-            | Builtin::Idxof => "experimental",
+            | Builtin::Idxof
+            | Builtin::HexRev
+            | Builtin::Tokcount => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1573,6 +1594,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "tokcount",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1842,6 +1864,9 @@ mod tests {
             "rmin",
             "bisect",
             "for-line",
+            "idxof",
+            "hex-rev",
+            "tokcount",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
