@@ -1,0 +1,10 @@
+-- feature: recursive sum types (ILO-403) — linked list via nil | cons(cell)
+-- expected: 15
+type nlist = nil | cons(cell)
+type cell { hd:n; tl:nlist }
+
+lsum xs:nlist>n;?xs{nil:0;cons(c):+c.hd(lsum c.tl)}
+
+main>n
+  l=cons (cell hd:1 tl:(cons (cell hd:2 tl:(cons (cell hd:3 tl:(cons (cell hd:4 tl:(cons (cell hd:5 tl:nil)))))))))
+  lsum l

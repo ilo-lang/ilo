@@ -608,6 +608,12 @@ impl Env {
         if Builtin::is_builtin(name) {
             return Ok(Value::FnRef(name.to_string()));
         }
+        // `nil` is emitted as Expr::Ref("nil") by the parser (so that sum-type
+        // variants named `nil` resolve correctly).  When no `nil` variant is
+        // registered, fall back to the built-in nil value.
+        if name == "nil" {
+            return Ok(Value::Nil);
+        }
         Err(RuntimeError::new(
             "ILO-R001",
             format!("undefined variable: {}", name),
@@ -9895,6 +9901,12 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
             }
         }
         Pattern::Variant { tag, binding } => {
+            // `nil:` in a match arm is emitted as Pattern::Variant { tag: "nil" }
+            // so that it can match both the built-in nil value (Optional/nil) and
+            // a sum-type variant named `nil`.
+            if tag == "nil" && matches!(value, Value::Nil) {
+                return Some(vec![]);
+            }
             if let Value::Variant {
                 tag: vtag, payload, ..
             } = value
