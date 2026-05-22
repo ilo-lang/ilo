@@ -3942,7 +3942,10 @@ impl VerifyContext {
         // Collect sum type declarations and register variant constructors as functions.
         for decl in &program.declarations {
             if let Decl::SumType { name, variants, .. } = decl {
-                if self.sum_types.contains_key(name) || self.types.contains_key(name) || self.aliases.contains_key(name) {
+                if self.sum_types.contains_key(name)
+                    || self.types.contains_key(name)
+                    || self.aliases.contains_key(name)
+                {
                     self.err(
                         "ILO-T001",
                         "<global>",
@@ -6040,7 +6043,8 @@ ilo has no tuple type."
                                 .iter()
                                 .map(|n| {
                                     // Find whether this variant has a payload
-                                    let has_payload = variants.iter()
+                                    let has_payload = variants
+                                        .iter()
                                         .find(|v| v.name == *n)
                                         .and_then(|v| v.payload.as_ref())
                                         .is_some();

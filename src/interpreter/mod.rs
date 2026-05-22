@@ -7682,7 +7682,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             if args.len() != 1 {
                 return Err(RuntimeError::new(
                     "ILO-R004",
-                    format!("{name}: variant constructor expects 1 argument, got {}", args.len()),
+                    format!(
+                        "{name}: variant constructor expects 1 argument, got {}",
+                        args.len()
+                    ),
                 ));
             }
             Ok(Value::Variant {
@@ -7694,7 +7697,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             if !args.is_empty() {
                 return Err(RuntimeError::new(
                     "ILO-R004",
-                    format!("{name}: variant constructor takes no arguments, got {}", args.len()),
+                    format!(
+                        "{name}: variant constructor takes no arguments, got {}",
+                        args.len()
+                    ),
                 ));
             }
             Ok(Value::Variant {
@@ -8917,9 +8923,7 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
         }
         Pattern::Variant { tag, binding } => {
             if let Value::Variant {
-                tag: vtag,
-                payload,
-                ..
+                tag: vtag, payload, ..
             } = value
             {
                 if vtag == tag {
@@ -15427,7 +15431,10 @@ mod tests {
     fn sum_type_payload_less_variant_returns_variant_value() {
         let src = r#"type color = red | green | blue
 f>t;c=red;?c{red:"r";green:"g";blue:"b"}"#;
-        assert_eq!(run_str(src, Some("f"), vec![]), Value::Text(Arc::new("r".to_string())));
+        assert_eq!(
+            run_str(src, Some("f"), vec![]),
+            Value::Text(Arc::new("r".to_string()))
+        );
     }
 
     #[test]
@@ -15441,7 +15448,10 @@ f>n;s=circle 5;?s{circle(r):r;point:0}"#;
     fn sum_type_wildcard_arm_catches_remaining() {
         let src = r#"type shape = circle(n) | square(n) | point
 f>t;s=point;?s{circle(r):"c";_:"other"}"#;
-        assert_eq!(run_str(src, Some("f"), vec![]), Value::Text(Arc::new("other".to_string())));
+        assert_eq!(
+            run_str(src, Some("f"), vec![]),
+            Value::Text(Arc::new("other".to_string()))
+        );
     }
 
     #[test]
