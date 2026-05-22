@@ -10521,7 +10521,10 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_slice(&output.stdout).expect("spec --json ai must be valid JSON");
         let flags = v["flags"].as_array().expect("flags must be an array");
-        assert!(!flags.is_empty(), "flags array must contain at least one entry");
+        assert!(
+            !flags.is_empty(),
+            "flags array must contain at least one entry"
+        );
         for f in flags {
             let name = f["name"].as_str().expect("each flag must have a name");
             let stability = f["stability"]
