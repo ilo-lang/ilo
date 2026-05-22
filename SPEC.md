@@ -158,6 +158,28 @@ Phase 2 captures run natively on every engine: the tree interpreter, the registe
 
 ---
 
+### Trailing-semicolon semantics
+
+`;` is the **statement separator** in ilo. A trailing `;` — one that appears after the last statement with nothing following it before the next structural boundary — is **always silently consumed** (ignored). It is never required, never an error, and never changes the meaning of the body. This applies uniformly across all three body contexts:
+
+| Context | Header/body separator | Trailing `;` handling |
+|---------|----------------------|----------------------|
+| Top-level function declaration | `name params>return;body` — the `;` after the return type separates the header from the body; it is **optional** when a newline is present | A trailing `;` after the last statement is consumed and ignored |
+| Inline lambda | `(params>return;body)` — the `;` after the return type separates the header from the body; it is **optional** | A trailing `;` before the closing `)` is consumed and ignored |
+| Match / guard arm body | `arm:body;` — `;` terminates an arm and starts the next; a trailing `;` before `}` is consumed and ignored | Consumed silently; arm body is parsed as-is |
+
+The parser calls `parse_body_with` (for function bodies) and `parse_lambda_body` (for inline-lambda bodies). After consuming each `;` separator between statements, if the next token is at a body-end boundary (`EOF`, `}`, `)`, or the start of a new sibling function declaration) the loop breaks without error. No statement is emitted for the trailing `;`.
+
+**Practical rules:**
+
+- `f>n;42` and `f>n;42;` are identical — both parse to a single-statement body returning `42`.
+- `(x:n>n;+x 1)` and `(x:n>n;+x 1;)` are identical inline lambdas.
+- `?x{a:1;b:2;}` and `?x{a:1;b:2}` parse identically — the trailing `;` before `}` is silently dropped.
+- A `;` at the very start of a body (before any statement) is **not** a trailing semicolon — it is a missing-statement parse error (`ILO-P001`/`ILO-P003`). Only a `;` after a valid statement is silently consumed.
+- The header/body separator `;` in `name params>return;body` is similarly optional when the token stream contains a newline at that boundary (the lexer converts indented newlines to `;`). The parser checks `peek() == Semi` and advances past it if present.
+
+---
+
 ## Naming
 
 Short names everywhere. 1–3 chars.
