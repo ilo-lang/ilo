@@ -102,3 +102,117 @@ fn trace_missing_file_exits_nonzero() {
         "expected error message, got: {stderr}"
     );
 }
+
+// ── trace command: --depth expr ───────────────────────────────────────────────
+
+#[test]
+fn trace_depth_expr_emits_expr_kind_events() {
+    let (ok, stdout, _stderr) =
+        run_args(&["trace", "--depth", "expr", "examples/trace-demo.ilo", "add", "3", "4"]);
+    assert!(ok, "expected exit 0");
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(!lines.is_empty(), "expected at least one trace line");
+
+    // At least one event must have kind=expr.
+    let has_expr = lines.iter().any(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        v["kind"] == "expr"
+    });
+    assert!(has_expr, "expected at least one kind=expr event");
+
+    // All lines must be valid JSON with schemaVersion=1.
+    for line in &lines {
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("invalid JSON: {e}"));
+        assert_eq!(v["schemaVersion"], 1);
+        assert!(v.get("kind").is_some(), "missing kind in {line}");
+        let kind = v["kind"].as_str().unwrap();
+        match kind {
+            "stmt" => {
+                assert!(v.get("stmt").is_some(), "stmt event missing stmt key");
+                assert!(v.get("bindings").is_some(), "stmt event missing bindings key");
+            }
+            "expr" => {
+                assert!(v.get("expr").is_some(), "expr event missing expr key");
+                assert!(v.get("refs").is_some(), "expr event missing refs key");
+                assert!(v.get("result").is_some(), "expr event missing result key");
+            }
+            other => panic!("unexpected kind: {other}"),
+        }
+    }
+}
+
+// ── trace command: --watch ────────────────────────────────────────────────────
+
+#[test]
+fn trace_watch_filters_to_relevant_bindings() {
+    let (ok, stdout, _stderr) =
+        run_args(&["trace", "--watch", "a", "examples/trace-demo.ilo", "add", "3", "4"]);
+    assert!(ok, "expected exit 0");
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(!lines.is_empty(), "expected at least one line after --watch a");
+
+    // Every emitted stmt event must have 'a' in its bindings.
+    for line in &lines {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        if v["kind"] == "stmt" {
+            assert!(
+                v["bindings"].get("a").is_some(),
+                "--watch a: stmt event without 'a' in bindings: {line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn trace_watch_unknown_var_emits_nothing() {
+    let (ok, stdout, _stderr) = run_args(&[
+        "trace",
+        "--watch",
+        "__no_such_var__",
+        "examples/trace-demo.ilo",
+        "add",
+        "3",
+        "4",
+    ]);
+    assert!(ok, "expected exit 0");
+    assert!(
+        stdout.trim().is_empty(),
+        "expected no output for unknown watch var, got: {stdout}"
+    );
+}
+
+#[test]
+fn trace_depth_expr_watch_filters_expr_events() {
+    let (ok, stdout, _stderr) = run_args(&[
+        "trace",
+        "--depth",
+        "expr",
+        "--watch",
+        "a",
+        "examples/trace-demo.ilo",
+        "add",
+        "3",
+        "4",
+    ]);
+    assert!(ok, "expected exit 0");
+
+    // All expr events must reference 'a' in their refs.
+    for line in stdout.lines() {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        if v["kind"] == "expr" {
+            let refs: Vec<&str> = v["refs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r.as_str().unwrap())
+                .collect();
+            assert!(
+                refs.contains(&"a"),
+                "--watch a: expr event without 'a' in refs: {line}"
+            );
+        }
+    }
+}

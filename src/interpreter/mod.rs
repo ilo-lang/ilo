@@ -23,6 +23,19 @@ pub struct TraceEvent {
     pub result: Value,
 }
 
+/// One trace event emitted after each sub-expression evaluates (depth=expr).
+#[derive(Debug)]
+pub struct ExprTraceEvent {
+    /// 1-based source line, or 0 if unknown.
+    pub line: usize,
+    /// Source text of the expression (trimmed), or empty if unavailable.
+    pub expr: String,
+    /// Names referenced by this expression (Ref nodes touched).
+    pub refs: Vec<String>,
+    /// The value produced by this expression.
+    pub result: Value,
+}
+
 // Thread-local trace sink. When `Some`, `eval_body` fires it after each
 // statement. Set to `Some` by `run_with_trace` and cleared on return.
 std::thread_local! {
@@ -33,6 +46,15 @@ std::thread_local! {
     // Source text used to look up statement spans; set alongside TRACE_HOOK.
     static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
+
+    // Expression-level hook (depth=expr).
+    #[allow(clippy::type_complexity)]
+    static EXPR_TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(ExprTraceEvent)>>> =
+        const { std::cell::RefCell::new(None) };
+
+    // Current statement span — updated by eval_body so eval_expr can use it.
+    static CURRENT_STMT_SPAN: std::cell::RefCell<Span> =
+        const { std::cell::RefCell::new(Span { start: 0, end: 0 }) };
 }
 
 /// Run `program` with a per-statement trace callback.
@@ -46,22 +68,45 @@ pub fn run_with_trace<F>(
 where
     F: FnMut(TraceEvent) + 'static,
 {
-    // Install the hook.
+    run_with_trace_opts(program, func_name, args, on_event, None::<fn(ExprTraceEvent)>)
+}
+
+/// Run `program` with per-statement and optional per-expression trace callbacks.
+pub fn run_with_trace_opts<F, G>(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    on_stmt: F,
+    on_expr: Option<G>,
+) -> Result<Value>
+where
+    F: FnMut(TraceEvent) + 'static,
+    G: FnMut(ExprTraceEvent) + 'static,
+{
+    // Install the hooks.
     TRACE_HOOK.with(|h| {
-        *h.borrow_mut() = Some(Box::new(on_event));
+        *h.borrow_mut() = Some(Box::new(on_stmt));
     });
     TRACE_SOURCE.with(|s| {
         *s.borrow_mut() = program.source.clone();
     });
+    if let Some(expr_hook) = on_expr {
+        EXPR_TRACE_HOOK.with(|h| {
+            *h.borrow_mut() = Some(Box::new(expr_hook));
+        });
+    }
 
     let result = run_with_env(program, func_name, args, Env::new());
 
-    // Always clear the hook, even on error.
+    // Always clear the hooks, even on error.
     TRACE_HOOK.with(|h| {
         *h.borrow_mut() = None;
     });
     TRACE_SOURCE.with(|s| {
         *s.borrow_mut() = None;
+    });
+    EXPR_TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = None;
     });
 
     result
@@ -7964,6 +8009,8 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         // Tail position only propagates to the LAST statement. Earlier
         // statements are not in tail position by definition.
         let stmt_is_tail = is_tail && i + 1 == n;
+        // Update current span so sub-expression trace events can report a line.
+        CURRENT_STMT_SPAN.with(|s| *s.borrow_mut() = spanned.span);
         match eval_stmt(env, &spanned.node, stmt_is_tail) {
             Ok(Some(BodyResult::Return(v))) => {
                 fire_trace_event(env, spanned, v.clone());
@@ -8058,6 +8105,72 @@ fn fire_trace_event(env: &Env, spanned: &Spanned<Stmt>, result: Value) {
             });
         }
     });
+}
+
+/// Fire the EXPR_TRACE_HOOK (if installed) after a sub-expression evaluates.
+/// `span` is the byte span of the expression; `expr_text` is the source slice.
+#[inline]
+fn fire_expr_trace_event(expr: &Expr, span: Span, result: &Value) {
+    let has_hook = EXPR_TRACE_HOOK.with(|h| h.borrow().is_some());
+    if !has_hook {
+        return;
+    }
+
+    // Collect Ref names touched by this expression.
+    let refs = collect_refs(expr);
+
+    let (line, expr_text) = TRACE_SOURCE.with(|src| {
+        if let Some(ref source) = *src.borrow() {
+            let sm = crate::ast::SourceMap::new(source);
+            let (line, _col) = sm.lookup(span.start);
+            // Use the span slice when available, else fall back to line text.
+            let text = source
+                .get(span.start..span.end)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| sm.line_text(source, line).trim().to_string());
+            (line, text)
+        } else {
+            (0, String::new())
+        }
+    });
+
+    EXPR_TRACE_HOOK.with(|h| {
+        if let Some(ref mut hook) = *h.borrow_mut() {
+            hook(ExprTraceEvent {
+                line,
+                expr: expr_text,
+                refs,
+                result: result.clone(),
+            });
+        }
+    });
+}
+
+/// Collect all `Ref` names reachable from an expression (shallow, non-recursive
+/// into function bodies / closures).
+fn collect_refs(expr: &Expr) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_refs_inner(expr, &mut out);
+    out
+}
+
+fn collect_refs_inner(expr: &Expr, out: &mut Vec<String>) {
+    match expr {
+        Expr::Ref(name) => out.push(name.clone()),
+        Expr::Field { object, .. } => collect_refs_inner(object, out),
+        Expr::Index { object, .. } => collect_refs_inner(object, out),
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_refs_inner(a, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_refs_inner(left, out);
+            collect_refs_inner(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_refs_inner(operand, out),
+        _ => {}
+    }
 }
 
 /// If `value` is the self-rebind accumulator shape `name = mset name k v`,
@@ -8651,6 +8764,11 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             };
             arg_vals.extend(extra_captures);
             let result = call_function(env, &callee, arg_vals)?;
+            // Fire sub-expression event for this call (depth=expr mode).
+            {
+                let span = CURRENT_STMT_SPAN.with(|s| *s.borrow());
+                fire_expr_trace_event(expr, span, &result);
+            }
             match *unwrap {
                 UnwrapMode::None => Ok(result),
                 UnwrapMode::Propagate => match result {
@@ -8706,7 +8824,13 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             }
             let l = eval_expr(env, left)?;
             let r = eval_expr(env, right)?;
-            eval_binop(op, &l, &r)
+            let result = eval_binop(op, &l, &r)?;
+            // Fire sub-expression event for this binary op (depth=expr mode).
+            {
+                let span = CURRENT_STMT_SPAN.with(|s| *s.borrow());
+                fire_expr_trace_event(expr, span, &result);
+            }
+            Ok(result)
         }
         Expr::UnaryOp { op, operand } => {
             let val = eval_expr(env, operand)?;

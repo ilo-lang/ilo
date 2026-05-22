@@ -426,6 +426,16 @@ pub enum SkillCmd {
 
 // ── Trace ──────────────────────────────────────────────────────────────────────
 
+/// Granularity of trace events.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TraceDepth {
+    /// Emit one event per statement (default).
+    #[default]
+    Statement,
+    /// Emit one event per sub-expression in addition to per-statement events.
+    Expr,
+}
+
 #[derive(Args, Debug)]
 pub struct TraceArgs {
     /// Source file to trace.
@@ -433,6 +443,14 @@ pub struct TraceArgs {
 
     /// Entry function name (defaults to first function).
     pub func: Option<String>,
+
+    /// Trace granularity: `statement` (default) or `expr` (per sub-expression).
+    #[arg(long = "depth", value_enum, default_value = "statement")]
+    pub depth: TraceDepth,
+
+    /// Only emit events that touch this variable name (may be repeated).
+    #[arg(long = "watch", value_name = "NAME", action = clap::ArgAction::Append)]
+    pub watch: Vec<String>,
 
     /// Call arguments passed to the entry function.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
