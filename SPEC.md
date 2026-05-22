@@ -331,7 +331,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 ```
 1-char  e
 2-char  at hd pi tl rd wr ct
-3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
+3-char  abs avg b64 bor cap cat cel chr cos del det dot env ewm exp fft fld flr
         flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
         mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
         run sin slc spl srt str sum tan tau trm unq upr wra wrl wro zip
@@ -339,7 +339,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `band`, `bxor`, `bnot`, `bshl`, `bshr`, `brot`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `ones`, `linspace`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
@@ -1318,6 +1318,37 @@ b64u-dec! (b64u "hello, world!")             -- "hello, world!"
 ```
 
 Both decoders return `Result` so malformed input surfaces typed at the boundary; both encoders are total. Use `!` to auto-unwrap inside an `R`-returning function, or pattern-match on the Result to handle the Err arm explicitly.
+
+### Bitwise ops
+
+`band`, `bor`, `bxor`, `bnot`, `bshl`, `bshr`, `brot` are the bitwise builtin cluster (ILO-58 MVP). All operate on `f64` values via `u32` mod 2^32 conversion and return `f64`. This bridges the crypto-track gap without introducing a new integer type.
+
+| builtin | signature | description |
+|---------|-----------|-------------|
+| `band x y` | `n n > n` | bitwise AND |
+| `bor x y` | `n n > n` | bitwise OR |
+| `bxor x y` | `n n > n` | bitwise XOR |
+| `bnot x` | `n > n` | bitwise NOT (32-bit: all 32 bits flipped) |
+| `bshl x n` | `n n > n` | logical shift left (shift amount mod 32) |
+| `bshr x n` | `n n > n` | logical shift right (shift amount mod 32) |
+| `brot x n` | `n n > n` | rotate left 32-bit (rotate count mod 32) |
+
+All inputs are converted to `u32` via `(x as i64) as u32`, which gives mod 2^32 truncation for positive values. Shift and rotate counts are taken mod 32 so out-of-range amounts don't panic. All seven are tree-bridge eligible — VM and Cranelift inherit through the bridge without new opcodes.
+
+```ilo
+band 12 10    -- 8   (0b1100 & 0b1010)
+bor  12 10    -- 14  (0b1100 | 0b1010)
+bxor 12 10    -- 6   (0b1100 ^ 0b1010)
+bnot 0        -- 4294967295 (all 32 bits set)
+bshl 1 4      -- 16
+bshr 256 3    -- 32
+brot 1 1      -- 2
+brot 1 31     -- 2147483648 (bit 31 set)
+```
+
+Note: these ops use 32-bit semantics for portability across platforms. Values above 2^32 are truncated. For full 64-bit bitwise math, file a follow-up for native `u64`/`i64` types.
+
+---
 
 ### Crypto primitives
 
