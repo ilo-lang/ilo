@@ -87,7 +87,7 @@ struct FuncSig {
     /// `Decl::Function::type_params`. Empty for functions with no generic
     /// type param block (legacy behaviour: type vars remain `Ty::Unknown`,
     /// compatible with anything).
-    type_bounds: std::collections::HashMap<String, crate::ast::Bound>,
+    type_bounds: std::collections::HashMap<String, Vec<crate::ast::Bound>>,
 }
 
 #[derive(Clone)]
@@ -4058,7 +4058,7 @@ impl VerifyContext {
                         .collect();
                     let ret = convert_type_with_aliases(return_type, &self.aliases);
                     self.validate_named_types_in_sig(name, &converted_params, &ret);
-                    let type_bounds: std::collections::HashMap<String, crate::ast::Bound> =
+                    let type_bounds: std::collections::HashMap<String, Vec<crate::ast::Bound>> =
                         type_params.iter().cloned().collect();
                     self.functions.insert(
                         name.clone(),
@@ -5166,40 +5166,42 @@ impl VerifyContext {
                                     && letter.chars().next().map_or(false, |c| c.is_lowercase())
                                     && !matches!(letter.as_str(), "n" | "t" | "b")
                                 {
-                                    // Check bound satisfaction first
-                                    if let Some(bound) = type_bounds.get(letter) {
-                                        let satisfies = match bound {
-                                            crate::ast::Bound::Any => true,
-                                            crate::ast::Bound::Comparable => matches!(
-                                                arg_ty,
-                                                Ty::Number | Ty::Text | Ty::Bool | Ty::Unknown
-                                            ),
-                                            crate::ast::Bound::Numeric => {
-                                                matches!(arg_ty, Ty::Number | Ty::Unknown)
-                                            }
-                                            crate::ast::Bound::Text => {
-                                                matches!(arg_ty, Ty::Text | Ty::Unknown)
-                                            }
-                                        };
-                                        if !satisfies {
-                                            self.err(
-                                                "ILO-T044",
-                                                func,
-                                                format!(
-                                                    "type argument for generic '{letter}' in '{}' must satisfy bound {bound}, got {arg_ty}",
-                                                    callee
+                                    // Check bound satisfaction for all bounds in the conjunction
+                                    if let Some(bounds) = type_bounds.get(letter) {
+                                        for bound in bounds {
+                                            let satisfies = match bound {
+                                                crate::ast::Bound::Any => true,
+                                                crate::ast::Bound::Comparable => matches!(
+                                                    arg_ty,
+                                                    Ty::Number | Ty::Text | Ty::Bool | Ty::Unknown
                                                 ),
-                                                Some(format!(
-                                                    "bound {bound} allows: {}",
-                                                    match bound {
-                                                        crate::ast::Bound::Comparable => "n, t, b",
-                                                        crate::ast::Bound::Numeric => "n",
-                                                        crate::ast::Bound::Text => "t",
-                                                        crate::ast::Bound::Any => "any type",
-                                                    }
-                                                )),
-                                                Some(span),
-                                            );
+                                                crate::ast::Bound::Numeric => {
+                                                    matches!(arg_ty, Ty::Number | Ty::Unknown)
+                                                }
+                                                crate::ast::Bound::Text => {
+                                                    matches!(arg_ty, Ty::Text | Ty::Unknown)
+                                                }
+                                            };
+                                            if !satisfies {
+                                                self.err(
+                                                    "ILO-T044",
+                                                    func,
+                                                    format!(
+                                                        "type argument for generic '{letter}' in '{}' must satisfy bound {bound}, got {arg_ty}",
+                                                        callee
+                                                    ),
+                                                    Some(format!(
+                                                        "bound {bound} allows: {}",
+                                                        match bound {
+                                                            crate::ast::Bound::Comparable => "n, t, b",
+                                                            crate::ast::Bound::Numeric => "n",
+                                                            crate::ast::Bound::Text => "t",
+                                                            crate::ast::Bound::Any => "any type",
+                                                        }
+                                                    )),
+                                                    Some(span),
+                                                );
+                                            }
                                         }
                                     }
                                     // Check cross-call-site consistency

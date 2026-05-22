@@ -127,15 +127,19 @@ pub struct Param {
 pub enum Decl {
     /// `name<a:Comparable b> params>return;body`
     /// `type_params` holds bounded generic type-variable declarations.
-    /// Syntax: `<letter>` or `<letter:Bound>`, space-separated inside `<...>`.
-    /// When absent the vec is empty and existing `a`/`b`/etc. type-variable
-    /// behaviour (treat as Unknown / accept any type) is preserved.
+    /// Syntax: `<letter>` or `<letter:Bound1+Bound2>`, space-separated inside
+    /// `<...>`.  Multiple bounds are joined with `+` (conjunction): the type
+    /// variable must satisfy ALL listed bounds.  When absent the vec is empty
+    /// and existing `a`/`b`/etc. type-variable behaviour (treat as Unknown /
+    /// accept any type) is preserved.
     Function {
         name: String,
-        /// Generic type-variable declarations: `<a:Comparable b:Numeric c>`.
-        /// Empty means no explicit generic params (legacy behaviour).
+        /// Generic type-variable declarations: `<a:Comparable b:Numeric+Comparable c>`.
+        /// Each entry is `(var_name, bounds)` where `bounds` is a conjunction
+        /// (all must be satisfied).  Empty bounds list means `Any`.
+        /// Empty outer vec means no explicit generic params (legacy behaviour).
         #[serde(skip)]
-        type_params: Vec<(String, Bound)>,
+        type_params: Vec<(String, Vec<Bound>)>,
         params: Vec<Param>,
         return_type: Type,
         body: Vec<Spanned<Stmt>>,
