@@ -22,6 +22,7 @@
 //! If the directory does not exist the resolver emits `ILO-P017` with a hint
 //! to run `ilo add owner/repo`.
 
+use semver::{Version, VersionReq};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -109,6 +110,92 @@ pub fn resolve_pkg_path(path: &str) -> Result<PathBuf, String> {
     Ok(file_path)
 }
 
+// ── semver constraint resolution ──────────────────────────────────────────────
+
+/// Return true when `ref_str` is a semver constraint rather than a plain git ref.
+///
+/// Recognised forms:
+/// - `^MAJOR`, `^MAJOR.MINOR`, `^MAJOR.MINOR.PATCH`  — caret (compatible)
+/// - `~MAJOR.MINOR`, `~MAJOR.MINOR.PATCH`             — tilde (patch-compatible)
+/// - `MAJOR.MINOR.PATCH`                              — exact semver triple
+pub fn is_semver_constraint(ref_str: &str) -> bool {
+    if ref_str.starts_with('^') || ref_str.starts_with('~') {
+        return true;
+    }
+    // Bare X.Y.Z — three numeric components.
+    let parts: Vec<&str> = ref_str.splitn(3, '.').collect();
+    if parts.len() == 3 {
+        return parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()));
+    }
+    false
+}
+
+/// Resolve a semver constraint string to a concrete git tag that can be checked
+/// out.  Queries the remote via `git ls-remote --tags` (no network clone needed).
+///
+/// Returns `Ok(tag_name)` for the highest matching version tag, or an error
+/// message suitable for printing to stderr.
+pub fn resolve_semver_ref(url: &str, constraint_str: &str) -> Result<String, String> {
+    // Parse constraint — add `=` prefix for bare X.Y.Z so semver accepts it.
+    let req_str = if constraint_str.starts_with('^') || constraint_str.starts_with('~') {
+        constraint_str.to_string()
+    } else {
+        format!("={constraint_str}")
+    };
+    let req = VersionReq::parse(&req_str)
+        .map_err(|e| format!("invalid semver constraint '{}': {}", constraint_str, e))?;
+
+    // List tags from remote without cloning.
+    let output = Command::new("git")
+        .args(["ls-remote", "--tags", url])
+        .output()
+        .map_err(|e| format!("git ls-remote failed: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git ls-remote returned non-zero for {}",
+            url
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse lines like: `<sha>\trefs/tags/v1.2.3`
+    // Skip `^{}` peeled entries — they are the dereferenced commit, but we want
+    // the tag name; the resolver will checkout by tag name anyway.
+    let mut best: Option<(Version, String)> = None;
+    for line in stdout.lines() {
+        let Some((_sha, tag_ref)) = line.split_once('\t') else {
+            continue;
+        };
+        if tag_ref.ends_with("^{}") {
+            continue;
+        }
+        let tag_name = tag_ref
+            .strip_prefix("refs/tags/")
+            .unwrap_or(tag_ref);
+
+        // Accept `v1.2.3` or `1.2.3`.
+        let version_str = tag_name.strip_prefix('v').unwrap_or(tag_name);
+        let Ok(version) = Version::parse(version_str) else {
+            continue;
+        };
+
+        if req.matches(&version) {
+            let replace = match &best {
+                None => true,
+                Some((prev, _)) => version > *prev,
+            };
+            if replace {
+                best = Some((version, tag_name.to_string()));
+            }
+        }
+    }
+
+    best.map(|(_, tag)| tag)
+        .ok_or_else(|| format!("no tag found matching semver constraint '{}'", constraint_str))
+}
+
 // ── `ilo add` ──────────────────────────────────────────────────────────────────
 
 /// Fetch (or re-fetch) a package into the local cache and update `ilo.lock`.
@@ -125,8 +212,30 @@ pub fn cmd_add(spec: &str) -> i32 {
         return 1;
     };
 
-    let git_ref = git_ref.unwrap_or("HEAD");
     let url = format!("https://github.com/{owner}/{repo}.git");
+
+    // Resolve semver constraints to a concrete tag before cloning.
+    // `resolved_owned` keeps the heap allocation alive for the lifetime of
+    // the borrow in `git_ref`.
+    let resolved_owned: Option<String> = match git_ref {
+        Some(r) if is_semver_constraint(r) => {
+            match resolve_semver_ref(&url, r) {
+                Ok(tag) => {
+                    println!("resolved semver '{}' → {}", r, tag);
+                    Some(tag)
+                }
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    return 1;
+                }
+            }
+        }
+        _ => None,
+    };
+    let git_ref: &str = match &resolved_owned {
+        Some(tag) => tag.as_str(),
+        None => git_ref.unwrap_or("HEAD"),
+    };
 
     let Some(dest) = pkg_dir_for(owner, repo) else {
         eprintln!("error: could not determine home directory");
@@ -372,6 +481,21 @@ mod tests {
         // this IS treated as a package path.  Unambiguous local files must use
         // a leading `./`.
         assert!(is_pkg_path("relative/path.ilo"));
+    }
+
+    #[test]
+    fn semver_constraint_detection() {
+        assert!(is_semver_constraint("^1.2"));
+        assert!(is_semver_constraint("^1"));
+        assert!(is_semver_constraint("~1.2.3"));
+        assert!(is_semver_constraint("1.2.3"));
+        // Not semver constraints:
+        assert!(!is_semver_constraint("v1.2.3"));
+        assert!(!is_semver_constraint("main"));
+        assert!(!is_semver_constraint("HEAD"));
+        assert!(!is_semver_constraint("abc123"));
+        // Two-part bare version is NOT treated as semver (ambiguous git tag).
+        assert!(!is_semver_constraint("1.2"));
     }
 
     #[test]
