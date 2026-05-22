@@ -5894,6 +5894,12 @@ ilo has no tuple type."
                 let _ = fn_name;
                 Ty::Unknown
             }
+            // `todo "reason"` and `panic "reason"` are divergent expressions:
+            // they abort at runtime and satisfy any return type.
+            Expr::Todo(reason) | Expr::Panic(reason) => {
+                self.infer_expr(func, scope, reason, span);
+                Ty::Unknown
+            }
         }
     }
 
@@ -10637,5 +10643,37 @@ mod tests {
     fn verify_fmt2_valid_returns_text() {
         // Sanity: valid call typechecks.
         assert!(parse_and_verify("f>t;fmt2 3.14 2").is_ok());
+    }
+
+    // ---- todo / panic typed expressions (ILO-410) ----
+
+    #[test]
+    fn verify_todo_satisfies_number_return() {
+        // `todo` in a number-returning function should not cause a type error.
+        assert!(parse_and_verify("f>n;todo \"not yet\"").is_ok());
+    }
+
+    #[test]
+    fn verify_panic_satisfies_number_return() {
+        assert!(parse_and_verify("f>n;panic \"unreachable\"").is_ok());
+    }
+
+    #[test]
+    fn verify_todo_satisfies_text_return() {
+        assert!(parse_and_verify("f>t;todo \"stub\"").is_ok());
+    }
+
+    #[test]
+    fn verify_panic_satisfies_text_return() {
+        assert!(parse_and_verify("f>t;panic \"stub\"").is_ok());
+    }
+
+    #[test]
+    fn verify_todo_in_branch() {
+        // `todo` as one branch of a ternary should not cause type errors.
+        assert!(
+            parse_and_verify("f x:n>n;?=x 0(todo \"zero case\")(+x 1)").is_ok(),
+            "todo in ternary branch should typecheck"
+        );
     }
 }

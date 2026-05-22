@@ -6274,6 +6274,17 @@ impl RegCompiler {
                 }
                 dest
             }
+            // `todo "reason"` / `panic "reason"`: compile reason, wrap as
+            // Err, then OP_PANIC_UNWRAP to abort with the message. The
+            // returned dest register is never read (execution halts at the
+            // panic), but we allocate one to satisfy the register contract.
+            Expr::Todo(reason) | Expr::Panic(reason) => {
+                let dest = self.alloc_reg();
+                let reason_reg = self.compile_expr(reason);
+                self.emit_abc(OP_WRAPERR, reason_reg, reason_reg, 0);
+                self.emit_abc(OP_PANIC_UNWRAP, 0, reason_reg, 0);
+                dest
+            }
         }
     }
 }

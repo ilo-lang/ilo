@@ -153,6 +153,7 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 collect_calls(cap, calls, types);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => collect_calls(inner, calls, types),
         Expr::Literal(_) | Expr::Ref(_) => {}
     }
 }

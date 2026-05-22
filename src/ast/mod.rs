@@ -397,6 +397,14 @@ pub enum Expr {
         fn_name: String,
         captures: Vec<Expr>,
     },
+
+    /// Gleam-style `todo "reason"` — satisfies any return type; panics at runtime
+    /// with the given reason message. Use when a branch is not yet implemented.
+    Todo(Box<Expr>),
+
+    /// Gleam-style `panic "reason"` — satisfies any return type; panics at runtime
+    /// with the given reason message. Use to mark branches that should never execute.
+    Panic(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -721,6 +729,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(cap);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => resolve_aliases_expr(inner),
         Expr::Literal(_) | Expr::Field { .. } | Expr::Index { .. } => {}
     }
 }
@@ -936,6 +945,7 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 desugar_expr(c, scope, rf);
             }
         }
+        Expr::Todo(inner) | Expr::Panic(inner) => desugar_expr(inner, scope, rf),
         Expr::Literal(_) | Expr::Ref(_) => {}
     }
 

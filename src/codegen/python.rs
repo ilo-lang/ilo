@@ -1044,6 +1044,14 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             };
             format!("(lambda *_a: {}(*_a{}))", py_name(fn_name), cap_str)
         }
+        Expr::Todo(reason) => {
+            let msg = emit_expr(out, level, reason);
+            format!("(_ := (_ for _ in ()).throw(NotImplementedError({msg})))")
+        }
+        Expr::Panic(reason) => {
+            let msg = emit_expr(out, level, reason);
+            format!("(_ := (_ for _ in ()).throw(RuntimeError({msg})))")
+        }
     }
 }
 

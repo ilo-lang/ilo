@@ -647,6 +647,8 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
             let caps: Vec<String> = captures.iter().map(|c| fmt_expr(c, mode)).collect();
             format!("{}[{}]", fn_name, caps.join(" "))
         }
+        Expr::Todo(reason) => format!("todo {}", fmt_expr(reason, mode)),
+        Expr::Panic(reason) => format!("panic {}", fmt_expr(reason, mode)),
     }
 }
 
