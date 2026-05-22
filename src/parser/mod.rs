@@ -307,6 +307,21 @@ impl Parser {
         }
     }
 
+    /// Return the next token's text as an effect-variant name if it looks like
+    /// an identifier or a keyword that can serve as a variant name in an effect
+    /// set clause (e.g. `timeout`, `retry`). Returns `None` for tokens that
+    /// cannot be variant names (operators, type constructors, etc).
+    fn peek_as_effect_variant(&self) -> Option<String> {
+        match self.peek() {
+            Some(Token::Ident(s)) => Some(s.clone()),
+            // Keywords that are valid as variant names
+            Some(Token::Timeout) => Some("timeout".to_string()),
+            Some(Token::Retry) => Some("retry".to_string()),
+            Some(Token::With) => Some("with".to_string()),
+            _ => None,
+        }
+    }
+
     fn advance(&mut self) -> Option<&Token> {
         let tok = self.tokens.get(self.pos).map(|(t, _)| t);
         if tok.is_some() {
@@ -1448,6 +1463,36 @@ statement boundary; bind the chain to a local first. For example, split \
         // against `f2`, not against whatever ident starts the next line.
         self.check_fn_header_boundary_or_record(&name, start)?;
         let return_type = self.parse_type_or_record_fail(&name)?;
+        // Optional effect-set clause: `^variant|variant|...` after the return type.
+        // Declares which error variants may propagate out of this function.
+        // `^` is used to mirror match-arm error syntax (`^e` catches errors).
+        // Example: `process order:order > R order t ^invalid|timeout`
+        let effect_set = if self.peek() == Some(&Token::Caret) {
+            self.advance();
+            let mut variants = Vec::new();
+            // Consume: word (|word)* — word can be an Ident or any keyword token
+            // that is valid as a variant name (e.g. `timeout`, `retry`).
+            if let Some(v) = self.peek_as_effect_variant() {
+                variants.push(v);
+                self.advance();
+                while self.peek() == Some(&Token::Pipe) {
+                    self.advance();
+                    if let Some(v) = self.peek_as_effect_variant() {
+                        variants.push(v);
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            if variants.is_empty() {
+                Some(vec![]) // `^` with no variants = empty effect set (pure)
+            } else {
+                Some(variants)
+            }
+        } else {
+            None
+        };
         // The header/body boundary is normally a `;`, but a newline (filtered
         // out before parsing) leaves no separator. Accept either: consume a
         // `;` if present, otherwise fall straight into the body.
@@ -1480,6 +1525,7 @@ statement boundary; bind the chain to a local first. For example, split \
             type_params,
             params,
             return_type,
+            effect_set,
             body,
             span: start.merge(end),
         })
@@ -5666,6 +5712,7 @@ For variable-position list indexing bind the head first: \
             type_params: vec![],
             params: lifted_params,
             return_type,
+            effect_set: None,
             body,
             span,
         });
@@ -12576,5 +12623,38 @@ mod tests {
             "should not fire multi-line hint here; hint: {:?}",
             e.hint
         );
+    }
+
+    // ── Effect sets (ILO-361) ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_effect_set_single_variant() {
+        // `f a:n>R n t ^zero;...` — single declared variant
+        let prog = parse_str(r#"f a:n>R n t ^zero;=a 0 ^"zero";~a"#);
+        let Decl::Function { effect_set, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        assert_eq!(effect_set.as_deref(), Some(["zero".to_string()].as_slice()));
+    }
+
+    #[test]
+    fn parse_effect_set_multiple_variants() {
+        // `f a:n>R n t ^invalid|timeout;...`
+        let prog = parse_str(r#"f a:n>R n t ^invalid|timeout;=a 0 ^"invalid";~a"#);
+        let Decl::Function { effect_set, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        let set = effect_set.as_ref().expect("expected Some");
+        assert_eq!(set, &["invalid".to_string(), "timeout".to_string()]);
+    }
+
+    #[test]
+    fn parse_no_effect_set_is_none() {
+        // No `^` clause → effect_set is None
+        let prog = parse_str("f x:n>n;x");
+        let Decl::Function { effect_set, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        assert!(effect_set.is_none());
     }
 }

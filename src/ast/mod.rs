@@ -167,7 +167,7 @@ impl UsePredicate {
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Decl {
-    /// `name<a:Comparable b> params>return;body`
+    /// `name<a:Comparable b> params>return ^Variant|Variant;body`
     /// `type_params` holds bounded generic type-variable declarations.
     /// Syntax: `<letter>` or `<letter:Bound>`, space-separated inside `<...>`.
     /// When absent the vec is empty and existing `a`/`b`/etc. type-variable
@@ -180,6 +180,11 @@ pub enum Decl {
         type_params: Vec<(String, Bound)>,
         params: Vec<Param>,
         return_type: Type,
+        /// Optional declared effect set: error variants that may propagate out.
+        /// Written as `^Variant|Variant` after the return type.
+        /// `None` = unannotated (no enforcement); `Some(vec)` = declared set.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        effect_set: Option<Vec<String>>,
         body: Vec<Spanned<Stmt>>,
         #[serde(skip)]
         span: Span,
@@ -1378,6 +1383,7 @@ mod tests {
             name: "f".to_string(),
             params: vec![],
             return_type: Type::Number,
+            effect_set: None,
             body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(
                 Literal::Number(1.0),
             )))],
@@ -1410,6 +1416,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::While {
                     condition: Expr::Call {
                         function: "length".to_string(),
@@ -1457,6 +1464,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Return(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
@@ -1486,6 +1494,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Destructure {
                     bindings: vec!["a".to_string(), "b".to_string()],
                     value: Expr::Call {
@@ -1522,6 +1531,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Break(Some(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
@@ -1551,6 +1561,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![
                     Spanned::unknown(Stmt::Break(None)),
                     Spanned::unknown(Stmt::Continue),
@@ -1573,6 +1584,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::NilCoalesce {
                     value: Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1616,6 +1628,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Record {
                     type_name: "point".to_string(),
                     fields: vec![(
@@ -1654,6 +1667,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
                     subject: Some(Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1703,6 +1717,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::With {
                     object: Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1752,6 +1767,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
                 span: Span { start: 0, end: 13 },
             }],
@@ -1775,6 +1791,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: None,
                     arms: vec![MatchArm {
@@ -1813,6 +1830,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
                     subject: None,
                     arms: vec![MatchArm {

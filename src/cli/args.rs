@@ -412,6 +412,12 @@ pub struct CheckArgs {
     /// exit-code decision is elevated.
     #[arg(long)]
     pub strict: bool,
+
+    /// Print the inferred effect set (propagated error variants) for every
+    /// Result-returning function after checking. Useful for auditing which
+    /// errors a function may raise and for writing `^variant|...` annotations.
+    #[arg(long)]
+    pub show_effects: bool,
 }
 
 // ── Test ───────────────────────────────────────────────────────────────────────

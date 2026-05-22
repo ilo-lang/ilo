@@ -4708,6 +4708,64 @@ impl VerifyContext {
         }
     }
 
+    /// Like `verify_bodies` but also checks declared effect sets against inferred ones.
+    fn verify_bodies_with_effects(&mut self, program: &Program) {
+        self.verify_bodies(program);
+        // Effect-set mismatch check: for functions with a declared `^variant|...`
+        // clause, warn if the inferred body effects contain variants not in the set.
+        for decl in &program.declarations {
+            if let Decl::Function {
+                name,
+                body,
+                effect_set: Some(declared),
+                return_type,
+                ..
+            } = decl
+            {
+                if self.parse_failed_fns.contains_key(name) {
+                    continue;
+                }
+                // Only check Result-returning functions.
+                if !matches!(return_type, Type::Result(_, _)) {
+                    continue;
+                }
+                let mut inferred = std::collections::BTreeSet::new();
+                collect_err_literals(body, &mut inferred);
+                // Remove <dynamic> from comparison — we can't statically verify those.
+                inferred.remove("<dynamic>");
+                let declared_set: std::collections::BTreeSet<String> =
+                    declared.iter().cloned().collect();
+                let mut undeclared: Vec<String> =
+                    inferred.difference(&declared_set).cloned().collect();
+                undeclared.sort();
+                if !undeclared.is_empty() {
+                    let last_span = body.last().map(|s| s.span);
+                    let declared_str = if declared.is_empty() {
+                        "empty".to_string()
+                    } else {
+                        declared.join("|")
+                    };
+                    self.warn(
+                        "ILO-E001",
+                        name,
+                        format!(
+                            "effect set mismatch: declared `^{}` but body may raise `{}`",
+                            declared_str,
+                            undeclared.join("|")
+                        ),
+                        Some(format!(
+                            "add `{}` to the effect set: `^{}|{}`",
+                            undeclared.join("|"),
+                            declared_str,
+                            undeclared.join("|")
+                        )),
+                        last_span,
+                    );
+                }
+            }
+        }
+    }
+
     fn verify_body(&mut self, func: &str, scope: &mut Scope, stmts: &[Spanned<Stmt>]) -> Ty {
         let mut last_ty = Ty::Nil;
         for (i, spanned) in stmts.iter().enumerate() {
@@ -6878,26 +6936,225 @@ ilo has no tuple type."
     }
 }
 
+/// Inferred effect set for a single function: the error variants that may
+/// propagate out of the function body.
+#[derive(Debug, Clone)]
+pub struct FnEffects {
+    /// Function name.
+    pub name: String,
+    /// Declared effect set from signature (`^v1|v2`), if any.
+    pub declared: Option<Vec<String>>,
+    /// Inferred effect set from body analysis.
+    pub inferred: Vec<String>,
+}
+
 #[derive(Debug)]
 pub struct VerifyResult {
     pub errors: Vec<VerifyError>,
     pub warnings: Vec<VerifyError>,
+    /// Effect sets per function (populated when `show_effects` is requested).
+    pub effects: Vec<FnEffects>,
+}
+
+/// Collect all string literals that appear directly in `^expr` (Err constructor)
+/// positions within the given statements, recursively.
+fn collect_err_literals(stmts: &[Spanned<Stmt>], out: &mut std::collections::BTreeSet<String>) {
+    for spanned in stmts {
+        collect_err_literals_stmt(&spanned.node, out);
+    }
+}
+
+fn collect_err_literals_stmt(stmt: &Stmt, out: &mut std::collections::BTreeSet<String>) {
+    match stmt {
+        Stmt::Expr(e) | Stmt::Return(e) => collect_err_literals_expr(e, out),
+        Stmt::Let { value, .. } => collect_err_literals_expr(value, out),
+        Stmt::Destructure { value, .. } => collect_err_literals_expr(value, out),
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_err_literals_expr(condition, out);
+            collect_err_literals(body, out);
+            if let Some(eb) = else_body {
+                collect_err_literals(eb, out);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_err_literals_expr(condition, out);
+            collect_err_literals(body, out);
+        }
+        Stmt::ForEach {
+            collection, body, ..
+        } => {
+            collect_err_literals_expr(collection, out);
+            collect_err_literals(body, out);
+        }
+        Stmt::ForRange {
+            start,
+            end,
+            step,
+            body,
+            ..
+        } => {
+            collect_err_literals_expr(start, out);
+            collect_err_literals_expr(end, out);
+            if let Some(s) = step {
+                collect_err_literals_expr(s, out);
+            }
+            collect_err_literals(body, out);
+        }
+        Stmt::Match { subject, arms } => {
+            if let Some(s) = subject {
+                collect_err_literals_expr(s, out);
+            }
+            for arm in arms {
+                collect_err_literals(&arm.body, out);
+            }
+        }
+        Stmt::Break(Some(e)) => collect_err_literals_expr(e, out),
+        Stmt::Break(None) | Stmt::Continue => {}
+    }
+}
+
+fn collect_err_literals_expr(expr: &Expr, out: &mut std::collections::BTreeSet<String>) {
+    match expr {
+        Expr::Err(inner) => {
+            // Direct error return: `^"variant"` or `^varname`
+            match inner.as_ref() {
+                Expr::Literal(Literal::Text(s)) => {
+                    out.insert(s.clone());
+                }
+                Expr::Ref(name) => {
+                    out.insert(name.clone());
+                }
+                _ => {
+                    // Complex expression — mark as unknown/dynamic
+                    out.insert("<dynamic>".to_string());
+                }
+            }
+            collect_err_literals_expr(inner, out);
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_err_literals_expr(a, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_err_literals_expr(left, out);
+            collect_err_literals_expr(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_err_literals_expr(operand, out),
+        Expr::Ok(inner) => collect_err_literals_expr(inner, out),
+        Expr::Field { object, .. } => collect_err_literals_expr(object, out),
+        Expr::Index { object, .. } => collect_err_literals_expr(object, out),
+        Expr::List(items) => {
+            for i in items {
+                collect_err_literals_expr(i, out);
+            }
+        }
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            for (_, v) in fields {
+                collect_err_literals_expr(v, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            if let Some(s) = subject {
+                collect_err_literals_expr(s, out);
+            }
+            for arm in arms {
+                collect_err_literals(&arm.body, out);
+            }
+        }
+        Expr::NilCoalesce { value, default } => {
+            collect_err_literals_expr(value, out);
+            collect_err_literals_expr(default, out);
+        }
+        Expr::With { object, updates } => {
+            collect_err_literals_expr(object, out);
+            for (_, v) in updates {
+                collect_err_literals_expr(v, out);
+            }
+        }
+        Expr::MakeClosure { .. } | Expr::Literal(_) | Expr::Ref(_) => {}
+        Expr::Todo(inner) => collect_err_literals_expr(inner, out),
+        Expr::Panic(inner) => collect_err_literals_expr(inner, out),
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_err_literals_expr(condition, out);
+            collect_err_literals_expr(then_expr, out);
+            collect_err_literals_expr(else_expr, out);
+        }
+    }
+}
+
+/// Infer the effect set for all functions in the program.
+pub fn infer_effects(program: &Program) -> Vec<FnEffects> {
+    let mut result = Vec::new();
+    for decl in &program.declarations {
+        if let Decl::Function {
+            name,
+            body,
+            effect_set,
+            return_type,
+            ..
+        } = decl
+        {
+            // Only analyse Result-returning functions — others don't propagate errors.
+            let is_result = matches!(return_type, Type::Result(_, _));
+            if !is_result {
+                result.push(FnEffects {
+                    name: name.clone(),
+                    declared: effect_set.clone(),
+                    inferred: vec![],
+                });
+                continue;
+            }
+            let mut inferred_set = std::collections::BTreeSet::new();
+            collect_err_literals(body, &mut inferred_set);
+            result.push(FnEffects {
+                name: name.clone(),
+                declared: effect_set.clone(),
+                inferred: inferred_set.into_iter().collect(),
+            });
+        }
+    }
+    result
 }
 
 /// Run static verification on a parsed program.
 /// Returns errors and warnings separately.
 pub fn verify(program: &Program) -> VerifyResult {
+    verify_with_effects(program, false)
+}
+
+/// Run static verification; optionally populate `VerifyResult::effects`.
+pub fn verify_with_effects(program: &Program, show_effects: bool) -> VerifyResult {
     let mut ctx = VerifyContext::new();
     ctx.parse_failed_fns = program.parse_failed_fns.clone();
 
     // Phase 1: collect declarations
     ctx.collect_declarations(program);
 
-    // Phase 2: verify function bodies
-    ctx.verify_bodies(program);
+    // Phase 2: verify function bodies (includes effect-set mismatch warnings)
+    ctx.verify_bodies_with_effects(program);
+
+    let effects = if show_effects {
+        infer_effects(program)
+    } else {
+        vec![]
+    };
 
     let (warnings, errors) = ctx.errors.into_iter().partition(|e| e.is_warning);
-    VerifyResult { errors, warnings }
+    VerifyResult {
+        errors,
+        warnings,
+        effects,
+    }
 }
 
 #[cfg(test)]
@@ -8276,6 +8533,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
+                    effect_set: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
                         "x".to_string(),
                     )))))],
@@ -8289,6 +8547,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
+                    effect_set: None,
                     body: vec![
                         Spanned::unknown(Stmt::Let {
                             name: "d".to_string(),
@@ -8330,6 +8589,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Number,
+                    effect_set: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
                     span: Span::UNKNOWN,
                 },
@@ -8341,6 +8601,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
+                    effect_set: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
@@ -8375,6 +8636,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
+                    effect_set: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
                         "x".to_string(),
                     )))))],
@@ -8388,6 +8650,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Number,
+                    effect_set: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
@@ -10657,6 +10920,7 @@ mod tests {
                     ty: Type::List(Box::new(Type::Text)),
                 }],
                 return_type: Type::Text,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: Some(Expr::Ref("x".to_string())),
                     arms: vec![arm_list, arm_wild],
@@ -10890,6 +11154,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: Some(Expr::Ref("x".to_string())),
                     arms: vec![
@@ -10932,6 +11197,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Any,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Nil)))],
                 span: Span::UNKNOWN,
             }],
@@ -10962,6 +11228,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Text,
+                effect_set: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ternary {
                     condition: Box::new(Expr::BinOp {
                         op: BinOp::Equals,
@@ -11541,6 +11808,102 @@ mod tests {
             parse_and_verify("f x:n>n;?=x 0(todo \"zero case\")(+x 1)").is_ok(),
             "todo in ternary branch should typecheck"
         );
+    }
+
+    // ── Effect sets (ILO-361) ──────────────────────────────────────────────────
+
+    #[test]
+    fn effect_set_infer_err_literal() {
+        // infer_effects extracts string literal from ^"variant"
+        let code = r#"safe-div a:n b:n>R n t;=b 0 ^"zero";~/a b"#;
+        let effects = {
+            let tokens = crate::lexer::lex(code).expect("lex");
+            let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+                .into_iter()
+                .map(|(t, r)| {
+                    (
+                        t,
+                        crate::ast::Span {
+                            start: r.start,
+                            end: r.end,
+                        },
+                    )
+                })
+                .collect();
+            let (program, _) = crate::parser::parse(token_spans);
+            infer_effects(&program)
+        };
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].name, "safe-div");
+        assert_eq!(effects[0].inferred, vec!["zero".to_string()]);
+        assert!(effects[0].declared.is_none());
+    }
+
+    #[test]
+    fn effect_set_declared_matches_inferred_no_warning() {
+        // No warning when declared set matches inferred
+        let result = parse_and_verify_full(r#"f a:n>R n t ^zero;=a 0 ^"zero";~a"#);
+        let effect_warnings: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-E001")
+            .collect();
+        assert!(
+            effect_warnings.is_empty(),
+            "should have no effect mismatch warning: {:?}",
+            effect_warnings
+        );
+    }
+
+    #[test]
+    fn effect_set_declared_mismatch_emits_warning() {
+        // Warning when declared set misses an inferred variant
+        let result = parse_and_verify_full(r#"f a:n>R n t ^other;=a 0 ^"zero";~a"#);
+        let effect_warnings: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-E001")
+            .collect();
+        assert_eq!(effect_warnings.len(), 1, "expected 1 ILO-E001 warning");
+        assert!(
+            effect_warnings[0].message.contains("zero"),
+            "should mention 'zero'"
+        );
+    }
+
+    #[test]
+    fn effect_set_no_annotation_no_warning() {
+        // Without annotation, no effect mismatch warning is emitted
+        let result = parse_and_verify_full(r#"f a:n>R n t;=a 0 ^"zero";~a"#);
+        let effect_warnings: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-E001")
+            .collect();
+        assert!(effect_warnings.is_empty());
+    }
+
+    #[test]
+    fn effect_set_non_result_fn_ignored() {
+        // Non-Result functions get empty inferred set
+        let code = "f x:n>n;x";
+        let tokens = crate::lexer::lex(code).expect("lex");
+        let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (program, _) = crate::parser::parse(token_spans);
+        let effects = infer_effects(&program);
+        assert_eq!(effects.len(), 1);
+        assert!(effects[0].inferred.is_empty());
     }
 
     // ── ILO-402: Generic sum types ────────────────────────────────────────────
