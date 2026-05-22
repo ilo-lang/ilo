@@ -244,6 +244,8 @@ struct HelperFuncs {
     solve: FuncId,
     inv: FuncId,
     det: FuncId,
+    // Parallel map (ILO-353): native AOT path for OP_PARMAP.
+    parmap: FuncId,
 }
 
 fn declare_helper(
@@ -449,6 +451,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         solve: declare_helper(module, "jit_solve", 3, 1),
         inv: declare_helper(module, "jit_inv", 2, 1),
         det: declare_helper(module, "jit_det", 2, 1),
+        // jit_parmap(fn_bits, xs_bits, concurrency_or_sentinel) -> result_bits
+        parmap: declare_helper(module, "jit_parmap", 3, 1),
     }
 }
 
@@ -1207,6 +1211,16 @@ fn compile_function_body(
                 i += 1 + n_words;
                 continue;
             }
+            // OP_PARMAP is a 2-word instruction; skip the data word so its
+            // register-index bytes aren't mis-classified as opcode writes.
+            if op == OP_PARMAP {
+                if a < reg_count {
+                    non_num_write[a] = true;
+                    non_bool_write[a] = true;
+                }
+                i += 2; // skip OP_PARMAP + data word
+                continue;
+            }
             i += 1;
             if a >= reg_count {
                 continue;
@@ -1258,7 +1272,8 @@ fn compile_function_body(
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
                 | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
                 | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED
+                | OP_PARMAP => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1302,6 +1317,11 @@ fn compile_function_body(
                 if op == OP_MAKE_CLOSURE {
                     let n = (inst & 0xFF) as usize;
                     i += 1 + n.div_ceil(4);
+                    continue;
+                }
+                // OP_PARMAP: 2-word instruction; skip data word.
+                if op == OP_PARMAP {
+                    i += 2;
                     continue;
                 }
                 i += 1;
@@ -4366,6 +4386,31 @@ fn compile_function_body(
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.posth);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            // ── OP_PARMAP: parallel fan-out via jit_parmap helper (ILO-353) ──
+            // Two-instruction sequence:
+            //   OP_PARMAP  A=result  B=fn_reg  C=xs_reg
+            //   data word: bits[23:16] = n_reg  (0xFF = use default concurrency)
+            // We consume the data word at compile time and lower the whole
+            // sequence to a single call to `jit_parmap(fn, xs, concurrency)`.
+            OP_PARMAP => {
+                let fn_val = builder.use_var(vars[b_idx]);
+                let xs_val = builder.use_var(vars[c_idx]);
+                // Consume the next instruction (data word) at compile time.
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let n_reg_byte = ((data_inst >> 16) & 0xFF) as u8;
+                let concurrency_val = if n_reg_byte == 0xFF {
+                    // sentinel: use par_map_default_concurrency inside the helper
+                    builder.ins().iconst(I64, 0xFF_i64)
+                } else {
+                    // explicit register holds the concurrency value at runtime
+                    builder.use_var(vars[n_reg_byte as usize])
+                };
+                let fref = get_func_ref(&mut builder, module, helpers.parmap);
+                let call_inst = builder.ins().call(fref, &[fn_val, xs_val, concurrency_val]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

@@ -19848,6 +19848,180 @@ pub(crate) extern "C" fn jit_posth(url_v: u64, body_v: u64, headers_v: u64) -> u
     }
 }
 
+/// Cranelift JIT/AOT helper for OP_PARMAP (ILO-353).
+///
+/// Executes `par-map fn xs` from native code. Mirrors the VM's OP_PARMAP
+/// dispatch arm exactly, re-using the ACTIVE_PROGRAM TLS slot (set by
+/// `with_active_registry`) so user-fn callees can re-enter the VM.
+///
+/// Args:
+///   fn_bits:              NanVal bits of the function (FnRef or closure).
+///   xs_bits:              NanVal bits of the input list.
+///   concurrency_or_sentinel: requested concurrency level as a u64 integer,
+///                             or 0xFF (the sentinel) to use
+///                             `par_map_default_concurrency()`.
+///
+/// Returns NanVal bits of `L (R _ t)` — a list of `Ok(_)` / `Err(_)` values
+/// in input order, matching tree/VM semantics.  Returns TAG_NIL and sets the
+/// JIT runtime-error channel on type mismatch or missing program.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_parmap(fn_bits: u64, xs_bits: u64, concurrency_or_sentinel: u64) -> u64 {
+    let mut callee = NanVal(fn_bits);
+
+    // Unwrap closure: extract fn ref + captures.
+    let mut closure_captures: Vec<Value> = Vec::new();
+    if callee.is_heap() && (callee.0 & TAG_MASK) == TAG_LIST {
+        let heap = unsafe { callee.as_heap_ref() };
+        if let HeapObj::Closure { kind, id, captures } = heap {
+            closure_captures = captures.iter().map(|v| v.to_value()).collect();
+            callee = NanVal::fnref(*kind, *id);
+        }
+    }
+
+    // Text callee — resolve through the active program's func_names.
+    if callee.is_string() && !callee.is_fnref() {
+        let prog_ptr = ACTIVE_PROGRAM.with(|cell| cell.get());
+        if !prog_ptr.is_null() {
+            let program: &CompiledProgram = unsafe { &*prog_ptr };
+            let name_val = callee.to_value_with_program(&program.func_names);
+            if let Value::Text(name) = name_val {
+                if let Some(idx) = program.func_names.iter().position(|n| n == &*name) {
+                    callee = NanVal::fnref(FnRefKind::User, idx as u32);
+                } else if let Some(b) = crate::builtins::Builtin::from_name(&name) {
+                    callee = NanVal::fnref(FnRefKind::Builtin, b.tag() as u32);
+                }
+            }
+        }
+    }
+
+    if !callee.is_fnref() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("par-map: first arg must be a function reference"),
+            0,
+        );
+        return TAG_NIL;
+    }
+
+    let xs_nv = NanVal(xs_bits);
+    if !xs_nv.is_heap() || (xs_nv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("par-map: second arg must be a list"),
+            0,
+        );
+        return TAG_NIL;
+    }
+
+    let items_nan: Vec<NanVal> = {
+        let slice: &[NanVal] = slice_of(unsafe { xs_nv.as_heap_ref() });
+        slice.to_vec()
+    };
+    let items: Vec<Value> = items_nan.iter().map(|v| v.to_value()).collect();
+
+    let concurrency: usize = if concurrency_or_sentinel == 0xFF {
+        crate::interpreter::par_map_default_concurrency_pub()
+    } else {
+        let n = concurrency_or_sentinel as usize;
+        if n == 0 {
+            jit_set_runtime_error_with_span(
+                VmError::Type("par-map: concurrency must be > 0"),
+                0,
+            );
+            return TAG_NIL;
+        }
+        n
+    };
+
+    // Resolve callee to a dispatchable form.
+    let (fn_kind, fn_id) = callee.fnref_parts();
+    enum ParmapCallee { User(u16), Builtin(String) }
+    let callee_kind = match fn_kind {
+        FnRefKind::User => ParmapCallee::User(fn_id as u16),
+        FnRefKind::Builtin => {
+            let name = crate::builtins::Builtin::from_tag(fn_id as u8)
+                .map(|b| b.name().to_owned())
+                .unwrap_or_default();
+            ParmapCallee::Builtin(name)
+        }
+    };
+
+    // Look up the active program for User callees.
+    let prog_ptr = ACTIVE_PROGRAM.with(|cell| cell.get());
+    if matches!(callee_kind, ParmapCallee::User(_)) && prog_ptr.is_null() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("par-map: no active program (user-fn callee from AOT/JIT)"),
+            0,
+        );
+        return TAG_NIL;
+    }
+    // Cast to usize so the address is trivially Send; reconstructed inside each
+    // scoped thread. SAFETY: CompiledProgram is read-only after compilation;
+    // scoped threads cannot outlive this stack frame.
+    let program_addr: usize = prog_ptr as usize;
+
+    let concurrency = concurrency.max(1);
+    let chunk_size = crate::interpreter::par_map_chunk_size_pub(items.len(), concurrency);
+    let mut results: Vec<Value> = (0..items.len()).map(|_| Value::Nil).collect();
+
+    std::thread::scope(|s| {
+        let item_chunks: Vec<&[Value]> = items.chunks(chunk_size).collect();
+        let mut handles = Vec::with_capacity(item_chunks.len());
+        for chunk in item_chunks.iter() {
+            let chunk_items: Vec<Value> = chunk.to_vec();
+            let captures_t = closure_captures.clone();
+            let program_addr_t = program_addr;
+            let callee_ref: ParmapCallee = match &callee_kind {
+                ParmapCallee::User(idx) => ParmapCallee::User(*idx),
+                ParmapCallee::Builtin(name) => ParmapCallee::Builtin(name.clone()),
+            };
+            handles.push(s.spawn(move || -> Vec<Value> {
+                let mut chunk_results = Vec::with_capacity(chunk_items.len());
+                for item in chunk_items {
+                    let mut call_args = vec![item];
+                    call_args.extend(captures_t.iter().cloned());
+                    let result = match &callee_ref {
+                        ParmapCallee::User(func_idx) => {
+                            let program: &CompiledProgram =
+                                unsafe { &*(program_addr_t as *const CompiledProgram) };
+                            let mut sub_vm = VM::new(program);
+                            sub_vm.call(*func_idx, call_args)
+                                .map(|v| Value::Ok(Box::new(v)))
+                                .unwrap_or_else(|e| {
+                                    Value::Err(Box::new(Value::Text(
+                                        Arc::new(e.error.to_string()),
+                                    )))
+                                })
+                        }
+                        ParmapCallee::Builtin(name) => {
+                            match crate::interpreter::call_builtin_for_bridge(name, call_args) {
+                                Ok(v) => Value::Ok(Box::new(v)),
+                                Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.message)))),
+                            }
+                        }
+                    };
+                    chunk_results.push(result);
+                }
+                chunk_results
+            }));
+        }
+        let mut result_off = 0usize;
+        for handle in handles {
+            let chunk_results = handle.join().unwrap_or_else(|_| {
+                vec![Value::Err(Box::new(Value::Text(Arc::new(
+                    "par-map worker thread panicked".to_string(),
+                ))))]
+            });
+            for v in chunk_results {
+                results[result_off] = v;
+                result_off += 1;
+            }
+        }
+    });
+
+    let nan_items: Vec<NanVal> = results.iter().map(NanVal::from_value).collect();
+    NanVal::heap_list(nan_items).0
+}
+
 // ── AOT runtime init/fini and arena/registry pointer helpers ─────────
 
 /// Async-signal-safe handler installed by `ilo_aot_init`. Writes a single
@@ -20206,7 +20380,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 3);
             }
             OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP | OP_PADLC | OP_PADRC
-            | OP_WINDOW_VIEW | OP_LEN_HAS_K_COUNT => {
+            | OP_WINDOW_VIEW | OP_LEN_HAS_K_COUNT | OP_PARMAP => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader

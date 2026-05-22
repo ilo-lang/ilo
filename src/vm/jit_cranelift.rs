@@ -218,6 +218,8 @@ struct HelperFuncs {
     // Per-thread call-stack tracking for cross-engine error parity.
     push_call_frame: FuncId,
     pop_call_frame: FuncId,
+    // Parallel map (ILO-353): native JIT path for OP_PARMAP.
+    parmap: FuncId,
 }
 
 /// Pack a `Span { start, end }` into a single i64 immediate for passing to
@@ -427,6 +429,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_call_builtin_tree", jit_call_builtin_tree as *const u8),
         ("jit_call_dyn", jit_call_dyn as *const u8),
         ("jit_make_closure", jit_make_closure as *const u8),
+        ("jit_parmap", jit_parmap as *const u8),
         // Call-stack tracking for VmRuntimeError.call_stack parity with
         // VM/tree. See `jit_push_call_frame` / `jit_pop_call_frame` in
         // src/vm/mod.rs for the rationale.
@@ -626,6 +629,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         make_closure: declare_helper(module, "jit_make_closure", 3, 1),
         push_call_frame: declare_helper(module, "jit_push_call_frame", 2, 1),
         pop_call_frame: declare_helper(module, "jit_pop_call_frame", 0, 1),
+        // jit_parmap(fn_bits, xs_bits, concurrency_or_sentinel) -> result_bits
+        parmap: declare_helper(module, "jit_parmap", 3, 1),
     }
 }
 
@@ -1172,6 +1177,15 @@ fn compile_function_body(
                 i += 1 + n_words;
                 continue;
             }
+            // OP_PARMAP: 2-word instruction; skip data word.
+            if op == OP_PARMAP {
+                if a < reg_count {
+                    non_num_write[a] = true;
+                    non_bool_write[a] = true;
+                }
+                i += 2;
+                continue;
+            }
             i += 1;
             if a >= reg_count {
                 continue;
@@ -1231,7 +1245,8 @@ fn compile_function_body(
                 | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED
+                | OP_PARMAP => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1278,6 +1293,11 @@ fn compile_function_body(
                 if op == OP_MAKE_CLOSURE {
                     let n = (inst & 0xFF) as usize;
                     i += 1 + n.div_ceil(4);
+                    continue;
+                }
+                // OP_PARMAP: 2-word instruction; skip data word.
+                if op == OP_PARMAP {
+                    i += 2;
                     continue;
                 }
                 i += 1;
@@ -5025,6 +5045,28 @@ fn compile_function_body(
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.posth);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            // ── OP_PARMAP: parallel fan-out via jit_parmap helper (ILO-353) ──
+            // Two-instruction sequence:
+            //   OP_PARMAP  A=result  B=fn_reg  C=xs_reg
+            //   data word: bits[23:16] = n_reg  (0xFF = use default concurrency)
+            // Consume the data word at compile time and emit a single call to
+            // `jit_parmap(fn_bits, xs_bits, concurrency_or_sentinel)`.
+            OP_PARMAP => {
+                let fn_val = builder.use_var(vars[b_idx]);
+                let xs_val = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let n_reg_byte = ((data_inst >> 16) & 0xFF) as u8;
+                let concurrency_val = if n_reg_byte == 0xFF {
+                    builder.ins().iconst(I64, 0xFF_i64)
+                } else {
+                    builder.use_var(vars[n_reg_byte as usize])
+                };
+                let fref = get_func_ref(&mut builder, module, helpers.parmap);
+                let call_inst = builder.ins().call(fref, &[fn_val, xs_val, concurrency_val]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
