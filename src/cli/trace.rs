@@ -5,11 +5,23 @@
 //! {"schemaVersion":1,"line":7,"stmt":"a = +x y","bindings":{"x":3,"y":4,"a":7},"result":7}
 //! ```
 //!
-//! Touch points: ILO-72.
+//! Touch points: ILO-72 (tree-walker), ILO-343 (VM path).
+//!
+//! ## Engine selection
+//!
+//! `ilo trace` now tries the VM path first:
+//! 1. Compile to bytecode via `crate::vm::compile`.
+//! 2. Run via `crate::vm::run_with_trace`, which uses the same `TRACE_HOOK`
+//!    thread-local and fires one `TraceEvent` per `OP_STMT` boundary.
+//!
+//! If compilation fails (e.g. uncompilable construct) it falls back to the
+//! tree-walker's `interpreter::run_with_trace` so existing behaviour is
+//! preserved. The JIT path is not wired here — JIT trace is tracked in a
+//! follow-up ticket.
 
 use super::args::TraceArgs;
 use crate::ast;
-use crate::interpreter::{TraceEvent, Value, run_with_trace};
+use crate::interpreter::{TraceEvent, Value};
 use crate::lexer;
 use crate::parser;
 
@@ -83,14 +95,38 @@ fn trace_run(t: TraceArgs) -> i32 {
         })
         .collect();
 
-    // Run with trace hook — each event is serialised to one stdout JSON line.
-    let result = run_with_trace(&program, func_name, call_args, emit_event);
-
-    match result {
-        Ok(_) => 0,
-        Err(e) => {
-            eprintln!("ilo trace: runtime error [{}]: {}", e.code, e.message);
-            1
+    // ── VM path (ILO-343) ─────────────────────────────────────────────────────
+    // Try to compile to bytecode and run via the VM's OP_STMT trace path.
+    // Falls back to the tree-walker if compilation fails.
+    match crate::vm::compile(&program) {
+        Ok(compiled) => {
+            let result = crate::vm::run_with_trace(
+                &compiled,
+                func_name,
+                call_args,
+                Some(source.clone()),
+                emit_event,
+            );
+            match result {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("ilo trace: runtime error: {:?}", e.error);
+                    1
+                }
+            }
+        }
+        Err(_compile_err) => {
+            // ── Tree-walker fallback ─────────────────────────────────────────
+            // Use the original ILO-72 tree-walker path.
+            let result =
+                crate::interpreter::run_with_trace(&program, func_name, call_args, emit_event);
+            match result {
+                Ok(_) => 0,
+                Err(e) => {
+                    eprintln!("ilo trace: runtime error [{}]: {}", e.code, e.message);
+                    1
+                }
+            }
         }
     }
 }

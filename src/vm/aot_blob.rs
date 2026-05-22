@@ -149,6 +149,8 @@ impl WireChunk {
                 })
                 .collect(),
             all_regs_numeric: self.all_regs_numeric,
+            // stmt_debug is a compile-time debug table; not serialised in AOT blobs.
+            stmt_debug: Vec::new(),
         }
     }
 }

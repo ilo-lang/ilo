@@ -4426,6 +4426,12 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
+            // ILO-343: OP_STMT is a VM-only trace instruction; JIT trace
+            // is deferred to a follow-up ticket. Emit nothing here so
+            // existing Cranelift tests continue to pass.
+            crate::vm::OP_STMT => {
+                // no-op in JIT codegen
+            }
             _ => {
                 return Err(format!("unsupported opcode {} at instruction {}", op, ip));
             }
