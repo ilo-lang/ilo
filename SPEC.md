@@ -766,7 +766,7 @@ Called like functions, compiled to dedicated opcodes.
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
 | `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
-| `tokcount s` | approximate cl100k_base token count of string `s` (bytes/3.4 stub; within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. ILO-47 tracks replacing the stub with a real BPE tokeniser. *Experimental.* | `n` |
+| `tokcount s` | approximate cl100k_base token count of string `s`. On native targets uses tiktoken-rs cl100k_base BPE (exact OpenAI tokenisation); on WASM falls back to bytes/3.4 stub (within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. *Experimental* (PR #716, ILO-413). | `n` |
 | `run cmd argv` | spawn `cmd` with argv list — secrets scrubbed from child env by default; see [Process spawn](#process-spawn) | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`); secrets scrubbed from child env by default | `R RunResult t` |
 | `run-full-env cmd argv` | like `run` but inherits the full parent env (opt-in; use when child legitimately needs secrets) | `R (M t t) t` |
@@ -803,6 +803,7 @@ Called like functions, compiled to dedicated opcodes.
 | `fmt tmpl args…` | format string - supports `{}` (Display), `{.Nf}` / `{:.Nf}` (N decimals), `{:N}` (right-align width), `{:Nd}` (integer width), `{:<N}` (left-align width). Filled left-to-right; placeholder count must equal arg count. Out-of-scope specs (zero-pad `{:06d}`, sign `{:+}`, hex `{:x}`) are rejected; compose `fmt2` / `padl` / `padr` for those. Literal-template mismatches surface at verify-time (`ILO-T013`); computed-template errors surface at runtime (`ILO-R009`). Lists are formatted as a single value, not splatted: `fmt "{} {}" [a, b]` is an error - use `fmt "{} {}" a b` instead | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
+| `idxof s sub` | Unicode code-point index of the first occurrence of `sub` in `s`; returns nil when not found (use `??` for a default). Index is in code-point units (same as `at`), not raw bytes. Tree-bridge eligible. (0.13.0) | `O n` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
 | `tl xs` | tail (all but first) of list or text | `L` / `t` |
 | `rev xs` | reverse list or text | same type |
@@ -2422,6 +2423,8 @@ ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positio
 ilo check program.ilo [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
 ilo test [path] [--engine vm|jit|all]  -- run `-- run:` / `-- out:` / `-- err:` assertions in .ilo files (exit 0 on all-pass, 1 on any failure)
 ilo build program.ilo -o out     -- AOT compile to a standalone binary (alias for `compile`)
+ilo run program.ilo --emit js    -- transpile to JavaScript and print to stdout (PR #713, ILO-73)
+ilo run program.ilo --emit python -- transpile to Python and print to stdout
 ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)

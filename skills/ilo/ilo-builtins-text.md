@@ -11,6 +11,10 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 `len str trm spl cat has`. `spl "a,b,c" ","` -> `["a","b","c"]`. `has s sub` -> bool. `cat xs sep` joins a list - NOT two-string concat; use `+ a b` for that. `fmt` for templates.
 
+## Text search
+
+`idxof s sub > O n` — first occurrence index of `sub` in `s`, in Unicode code-point units (same scale as `at`). Returns nil when not found; use `??` for a default: `i = ?? (idxof s ",") (len s)`. Tree-bridge eligible (0.13.0).
+
 ## Case / padding / chars
 
 `upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` is the repeat-character idiom (n copies of 1-char `c`): `padr "" 10 "#"` -> `"##########"`. Use it for histogram bars, divider lines.
@@ -78,4 +82,4 @@ dur-parse! "-1h 30m"         -- -5400 (sticky sign)
 
 ## Token counting
 
-`tokcount s > n` approximate cl100k_base token count of `s` (bytes/3.4; within ~5% for English prose). Use for skill-file budget checks and prompt-sizing estimates. *Experimental* — ILO-413 tracks upgrading to a real BPE tokeniser.
+`tokcount s > n` approximate cl100k_base token count of `s`. On native targets uses tiktoken-rs cl100k_base BPE (exact OpenAI tokenisation); on WASM falls back to bytes/3.4 stub (~5% for English prose). Use for skill-file budget checks and prompt-sizing estimates. *Experimental* (ILO-413).
