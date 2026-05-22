@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T005",
+  "long": "## ILO-T005: undefined function\n\nA function was called that is not defined in this file or as a builtin.\n\n**Example:**\n\n    f x:n>n;double x   -- 'double' is not defined\n\n**Fix:** define the function, or correct the spelling.\n\n### Gotcha: call vs binary-op in assignment-RHS\n\nWhitespace-juxtaposition is the call syntax in ilo, so a bare name\nfollowed by another token in an expression is parsed as a call, not as\n\"name then operator\". The classic case:\n\n    f xi:n xj:n>n;dx=xj 0-xi;dx\n\nThis parses as `dx = (xj 0) - xi` — a call to `xj` with argument `0`,\nwhose result is then subtracted from `xi`. Verification fails with\nILO-T005 because `xj` is a number, not a function.\n\nThe agent almost certainly meant one of:\n\n- `dx=-xj xi`              -- subtract: prefix `-`\n- `dx=+xj -0 xi`           -- xj + (0-xi)\n- `nxi=0-xi;dx=+xj nxi`    -- pre-bind the operand\n\nIn ilo's prefix-operator world there is no ambiguity once the operator\nleads the expression. The \"looks like infix\" shape `name expr` is\nalways a call.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "undefined function"
+}

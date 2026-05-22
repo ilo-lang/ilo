@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T001",
+  "long": "## ILO-T001: duplicate type definition\n\nA `type` declaration uses a name that was already defined.\n\n**Fix:** rename one of the types or remove the duplicate.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "duplicate type definition"
+}

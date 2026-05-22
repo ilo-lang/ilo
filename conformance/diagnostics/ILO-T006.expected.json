@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T006",
+  "long": "## ILO-T006: arity mismatch\n\nA function was called with the wrong number of arguments.\n\n**Example:**\n\n    add a:n b:n>n;+a b\n    f x:n>n;add x   -- 'add' expects 2 args, got 1\n\n**Fix:** pass the correct number of arguments.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "arity mismatch"
+}
