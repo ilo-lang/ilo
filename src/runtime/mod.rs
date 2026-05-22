@@ -354,19 +354,11 @@ pub fn call_builtin_for_bridge_with_program_and_caps(
     call_builtin_for_bridge_with_program(name, args, program)
 }
 
-/// Run with tools AND a capability policy.
-
-/// Parse a string into a structured Value given a format name.
-/// Grid formats ("csv", "tsv") → Ok(List of rows).
-/// Graph formats ("json")      → Ok(parsed JSON) or Err(parse error message).
-/// Raw/unknown                 → Ok(plain Text).
-/// Box-Muller transform: sample from N(mu, sigma) using two uniform [0,1) samples.
-/// Delegates to the shared `crate::rng` module so all engines produce the same sequence.
-/// Kept as a thin wrapper because it is exercised directly in unit tests.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
-    crate::rng::normal(mu, sigma)
-}
+// box_muller_normal removed in PR E of ILO-45: was only exercised by the
+// deleted `runtime::tests` module. Production code paths use `crate::rng`
+// directly. The orphan doc-comment lines above were leftover from the
+// deleted `parse_to_value` helper; restored here so `parse_to_value`'s
+// definition below is annotated correctly.
 
 /// Base64url-no-pad encoder. Alphabet per RFC 4648 §5 (URL-safe: `-` / `_`),
 /// no `=` padding. Total — never fails — and allocation-free apart from the
@@ -6955,35 +6947,6 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
         serde_json::Value::Null => Value::Nil,
     }
 }
-
-/// If `expr` is a direct `Expr::Call name args` with no auto-unwrap, the args
-/// evaluate successfully, and `name` resolves to a user-defined function in
-/// `env`, evaluate the args and return `(name, arg_values)` so the caller can
-/// synthesise a `BodyResult::TailCall`.
-///
-/// Returns `None` when the expression isn't shaped like a TCO-eligible call,
-/// in which case the caller falls back to regular `eval_expr`. Returns
-/// `Some(Err(_))` if arg evaluation itself fails (e.g. nested call errored or
-/// propagated via `!`); propagating that error rather than swallowing it
-/// preserves the no-TCO semantics for failure paths.
-///
-/// Constraints (intentionally narrow for the tree-interpreter trampoline):
-/// - `unwrap` must be `None` — `!`/`!!` inspect the call result before
-///   propagating, so they can't be TCO'd without re-checking inside the
-///   trampoline (left for a follow-up).
-/// - `function` must be a direct user-fn name, not a scope-bound FnRef or
-///   Closure. FnRef-via-scope tail calls remain on the host stack (rare in
-///   practice; the common `fac n=...fac -n 1` pattern hits the direct path).
-/// - Tools (`Decl::Tool`) intentionally do not TCO — they're an effect
-///   boundary, not a recursive computation.
-///
-/// `#[inline(never)]` so the helper's frame stays separate from
-/// `eval_stmt`'s. `eval_stmt` is on the hot path for every statement; if
-/// this helper inlined, its `Vec<Value>` arg-buffer would bloat every
-/// `eval_stmt` frame and tip moderately-deep non-tail recursion (e.g.
-/// `fib 10`'s 177 nested frames) into stack overflow on tight-limit CI
-/// builds.
-#[inline(never)]
 
 /// Smallest power of 2 >= n. Used to zero-pad FFT input.
 fn next_pow2(n: usize) -> usize {
