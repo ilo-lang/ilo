@@ -73,6 +73,9 @@ impl Value {
                 }
                 Ok(serde_json::Value::Object(map))
             }
+            Value::LazyStdinLines(_) => {
+                Err("stdin-lines iterator cannot be serialized".to_string())
+            }
         }
     }
 

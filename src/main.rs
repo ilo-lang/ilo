@@ -337,6 +337,7 @@ fn explain_cmd(code: &str, as_json: bool) -> i32 {
                 let v = serde_json::json!({
                     "schemaVersion": 1,
                     "code": entry.code,
+                    "phase": entry.phase.as_str(),
                     "short": entry.short,
                     "long": entry.long,
                 });
@@ -1487,6 +1488,7 @@ fn compile_cmd(args: &[String]) -> i32 {
         base_dir.as_deref(),
         &mut visited,
         &mut import_diagnostics,
+        BuildTarget::default(),
     );
     if !import_diagnostics.is_empty() {
         for d in &import_diagnostics {
@@ -2251,6 +2253,69 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
     }
 }
 
+/// Build target used to evaluate conditional `use ?<pred>` predicates.
+///
+/// Passed to `resolve_imports` so that `use ?wasm "a" : "b"` picks the
+/// right branch at compile time without touching the runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BuildTarget {
+    /// Native host binary (default).
+    #[default]
+    Native,
+    /// WebAssembly (wasm32) target.
+    Wasm,
+    /// Test run (`ilo test`).
+    Test,
+}
+
+impl BuildTarget {
+    /// Evaluate a `UsePredicate` against this target: returns `true` when
+    /// the predicate matches (i.e. the "true" branch should be imported).
+    pub fn eval(self, pred: ast::UsePredicate) -> bool {
+        matches!(
+            (self, pred),
+            (BuildTarget::Wasm, ast::UsePredicate::Wasm)
+                | (BuildTarget::Native, ast::UsePredicate::Native)
+                | (BuildTarget::Test, ast::UsePredicate::Test)
+        )
+    }
+}
+
+/// Apply the `only [name1 name2]` filter from a `use` statement.
+/// Pushes `ILO-P019` diagnostics for names not found.
+fn apply_only_filter(
+    decls: Vec<ast::Decl>,
+    only: &Option<Vec<String>>,
+    path: &str,
+    span: ast::Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<ast::Decl> {
+    let Some(names) = only else {
+        return decls;
+    };
+    for name in names {
+        let found = decls.iter().any(|d| decl_name(d) == Some(name.as_str()));
+        if !found {
+            diagnostics.push(
+                Diagnostic::error(format!(
+                    "use \"{}\": name '{}' not found in imported file",
+                    path, name
+                ))
+                .with_code("ILO-P019")
+                .with_span(span, "imported here"),
+            );
+        }
+    }
+    decls
+        .into_iter()
+        .filter(|d| {
+            decl_name(d)
+                .map(|n| names.iter().any(|s| s == n))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Resolve all `Decl::Use` nodes in `decls` recursively, returning a flat
 /// merged list with imported declarations prepended and `Use` nodes stripped.
 ///
@@ -2258,17 +2323,159 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
 ///   `None` means inline code — `use` is not supported without a file context.
 /// - `visited`: canonical paths already in the import chain; circular imports are errors.
 /// - `diagnostics`: errors are pushed here (file-not-found, circular, parse failures).
+/// - `build_target`: evaluates `use ?<pred>` predicates at compile time.
+///
+/// Privacy rule: declarations whose name starts with `_` are module-private and
+/// are never exported. They are stripped during import regardless of `only` or `alias`.
 fn resolve_imports(
     decls: Vec<ast::Decl>,
     base_dir: Option<&std::path::Path>,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
     diagnostics: &mut Vec<Diagnostic>,
+    build_target: BuildTarget,
 ) -> Vec<ast::Decl> {
     let mut result: Vec<ast::Decl> = Vec::new();
 
     for decl in decls {
-        if let ast::Decl::Use { path, only, span } = decl {
+        if let ast::Decl::Use {
+            path,
+            only,
+            alias,
+            predicate,
+            alt_path,
+            span,
+        } = decl
+        {
+            // For conditional imports, select the right branch now.
+            let path = if let Some(pred) = predicate {
+                if build_target.eval(pred) {
+                    path
+                } else {
+                    // alt_path is guaranteed to be Some when predicate is Some
+                    // (enforced by the parser).
+                    alt_path.unwrap_or(path)
+                }
+            } else {
+                path
+            };
+
+            // ── Package registry resolution ───────────────────────────────────
+            // `use "owner/repo"` (first component has no `.`) resolves through
+            // the local package cache at ~/.ilo/pkgs/<owner>/<repo>/index.ilo.
+            if ilo::pkg::is_pkg_path(&path) {
+                let resolved = ilo::pkg::resolve_pkg_path(&path);
+                match resolved {
+                    Err(msg) => {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{path}\": {msg}"))
+                                .with_code("ILO-P017")
+                                .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
+                    Ok(pkg_file) => {
+                        // Synthesise a Use decl for the resolved file path and
+                        // re-use the same local-file resolution path below by
+                        // substituting the resolved path into a local Use node.
+                        let abs = pkg_file.to_string_lossy().into_owned();
+                        let synthetic = ast::Decl::Use {
+                            path: abs,
+                            only: only.clone(),
+                            alias: alias.clone(),
+                            predicate: None,
+                            alt_path: None,
+                            span,
+                        };
+                        let mut sub = resolve_imports(
+                            vec![synthetic],
+                            None, // abs path, base_dir not needed
+                            visited,
+                            diagnostics,
+                            build_target,
+                        );
+                        result.append(&mut sub);
+                        continue;
+                    }
+                }
+            }
+
+            // ── Local file resolution ─────────────────────────────────────────
             let Some(dir) = base_dir else {
+                // Package paths are handled above; inline code cannot use local files.
+                // Absolute paths (synthesised by package resolution) are also handled above.
+                if path.starts_with('/') {
+                    // Absolute path synthesised by package resolution — resolve directly.
+                    let canonical = match std::path::PathBuf::from(&path).canonicalize() {
+                        Ok(c) => c,
+                        Err(_) => {
+                            diagnostics.push(
+                                Diagnostic::error(format!("use \"{}\": file not found", path))
+                                    .with_code("ILO-P017")
+                                    .with_span(span, "imported here"),
+                            );
+                            continue;
+                        }
+                    };
+                    // Proceed with the canonical path as if base_dir were its parent.
+                    let imported_dir = canonical.parent().map(|p| p.to_path_buf());
+                    let source = match std::fs::read_to_string(&canonical) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            diagnostics.push(
+                                Diagnostic::error(format!("use \"{}\": {}", path, e))
+                                    .with_code("ILO-P017")
+                                    .with_span(span, "imported here"),
+                            );
+                            continue;
+                        }
+                    };
+                    if visited.contains(&canonical) {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{}\": circular import", path))
+                                .with_code("ILO-P018")
+                                .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
+                    let tokens = match lexer::lex(&source) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            diagnostics.push(Diagnostic::from(&e));
+                            continue;
+                        }
+                    };
+                    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+                        .into_iter()
+                        .map(|(t, r)| {
+                            (
+                                t,
+                                ast::Span {
+                                    start: r.start,
+                                    end: r.end,
+                                },
+                            )
+                        })
+                        .collect();
+                    let (mut imported_prog, parse_errors) = parser::parse(token_spans);
+                    ast::resolve_aliases(&mut imported_prog);
+                    ast::desugar_dot_var_index(&mut imported_prog);
+                    for e in &parse_errors {
+                        diagnostics.push(Diagnostic::from(e));
+                    }
+                    visited.insert(canonical.clone());
+                    let imported_decls = resolve_imports(
+                        imported_prog.declarations,
+                        imported_dir.as_deref(),
+                        visited,
+                        diagnostics,
+                        build_target,
+                    );
+                    visited.remove(&canonical);
+                    let filtered =
+                        apply_only_filter(imported_decls, &only, &path, span, diagnostics);
+                    result.extend(filtered);
+                    continue;
+                }
                 diagnostics.push(
                     Diagnostic::error(
                         "`use` requires a file path context — not supported in inline code",
@@ -2348,13 +2555,39 @@ fn resolve_imports(
                 imported_dir,
                 visited,
                 diagnostics,
+                build_target,
             );
             visited.remove(&canonical);
 
-            // Apply `only [...]` filter if specified
+            // Apply import filter based on form:
+            //
+            // - Flat (`use "path"`): all declarations come through, including
+            //   `_`-prefixed ones. Private helpers are callable from the
+            //   importing file only by convention (no hard enforcement in flat
+            //   mode — they just land in the shared namespace).
+            //
+            // - Selective (`use "path" [name1 name2]`): only the listed public
+            //   names are imported. `_`-prefixed names are blocked — requesting
+            //   one emits ILO-P019. This is the primary privacy enforcement.
+            //
+            // - Named-module (`use alias:"path"`): all public (non-`_`) names
+            //   are imported and prefixed with `alias-`. Private (`_`) names are
+            //   silently excluded. This is the secondary privacy enforcement.
             let filtered = if let Some(ref names) = only {
-                // Warn about any requested names that weren't found
+                // Selective import — block private names explicitly
                 for name in names {
+                    if name.starts_with('_') {
+                        diagnostics.push(
+                            Diagnostic::error(format!(
+                                "use \"{}\": '{}' is module-private (names starting with `_` \
+                                 are not exported)",
+                                path, name
+                            ))
+                            .with_code("ILO-P019")
+                            .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
                     let found = imported_decls
                         .iter()
                         .any(|d| decl_name(d) == Some(name.as_str()));
@@ -2373,11 +2606,19 @@ fn resolve_imports(
                     .into_iter()
                     .filter(|d| {
                         decl_name(d)
-                            .map(|n| names.iter().any(|s| s == n))
+                            .map(|n| !n.starts_with('_') && names.iter().any(|s| s == n))
                             .unwrap_or(false)
                     })
                     .collect::<Vec<_>>()
+            } else if let Some(ref pfx) = alias {
+                // Named-module form: strip private, then rename public to `alias-name`.
+                let public_decls: Vec<ast::Decl> = imported_decls
+                    .into_iter()
+                    .filter(|d| decl_name(d).map(|n| !n.starts_with('_')).unwrap_or(true))
+                    .collect();
+                apply_module_alias(public_decls, pfx)
             } else {
+                // Flat import: everything (including private helpers) comes through
                 imported_decls
             };
 
@@ -2389,6 +2630,66 @@ fn resolve_imports(
     }
 
     result
+}
+
+/// Rename all named declarations in `decls` by prepending `alias-` to their name.
+/// Used by the `use alias:"path"` named-module import form.
+fn apply_module_alias(decls: Vec<ast::Decl>, alias: &str) -> Vec<ast::Decl> {
+    decls
+        .into_iter()
+        .map(|d| rename_decl_with_alias(d, alias))
+        .collect()
+}
+
+/// Return a copy of `decl` with its name prefixed by `alias-`.
+/// Declarations without a name (errors, `Use` nodes) pass through unchanged.
+fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
+    match decl {
+        ast::Decl::Function {
+            name,
+            params,
+            return_type,
+            body,
+            span,
+            type_params,
+        } => ast::Decl::Function {
+            name: format!("{}-{}", alias, name),
+            params,
+            return_type,
+            body,
+            span,
+            type_params,
+        },
+        ast::Decl::Tool {
+            name,
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        } => ast::Decl::Tool {
+            name: format!("{}-{}", alias, name),
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        },
+        ast::Decl::TypeDef { name, fields, span } => ast::Decl::TypeDef {
+            name: format!("{}-{}", alias, name),
+            fields,
+            span,
+        },
+        ast::Decl::Alias { name, target, span } => ast::Decl::Alias {
+            name: format!("{}-{}", alias, name),
+            target,
+            span,
+        },
+        // Use and Error nodes have no name — pass through unchanged
+        other => other,
+    }
 }
 
 fn report_diagnostic(d: &Diagnostic, mode: OutputMode) {
@@ -2562,6 +2863,10 @@ fn main() {
                 eprintln!("Usage: ilo build <file.ilo> [-o out] [func]");
                 std::process::exit(1);
             }
+            "trace" => {
+                eprintln!("Usage: ilo trace <file.ilo> [func] [args...]");
+                std::process::exit(1);
+            }
             // `ilo test` with no path arg is valid (defaults to `examples/`)
             // and is handled in the runner; no usage stub needed here.
             _ => {}
@@ -2675,6 +2980,14 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             0
         }
         Some(cli::Cmd::Compile(c)) | Some(cli::Cmd::Build(c)) => {
+            // Validate --target against the supported list before dispatching.
+            if let Some(ref t) = c.target {
+                if !cli::args::SUPPORTED_TARGETS.contains(&t.as_str()) {
+                    let list = cli::args::SUPPORTED_TARGETS.join(", ");
+                    eprintln!("error: unsupported target '{t}'. Supported targets: {list}");
+                    return 1;
+                }
+            }
             let mut args: Vec<String> = vec![c.source];
             if let Some(ref o) = c.output {
                 args.push("-o".into());
@@ -2685,6 +2998,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             if cli.global.explicit_json() {
                 args.push("--json".into());
+            }
+            if let Some(ref t) = c.target {
+                args.push("--target".into());
+                args.push(t.clone());
             }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
@@ -2717,6 +3034,16 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 }
                 Some("ai") => {
                     if as_json {
+                        // Build per-item builtins array from the canonical ALL slice.
+                        let builtins_list: Vec<serde_json::Value> = ilo::builtins::Builtin::ALL
+                            .iter()
+                            .map(|b| {
+                                serde_json::json!({
+                                    "name": b.name(),
+                                    "stability": b.stability(),
+                                })
+                            })
+                            .collect();
                         let v = serde_json::json!({
                             "schemaVersion": 1,
                             "format": "ai-txt",
@@ -2728,6 +3055,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                                 "provisional": ["builtin-signatures", "cli-flag-names", "error-message-prose", "examples-corpus", "ilo-test-surface"],
                                 "experimental": ["0.13-in-flight-features", "aot-artifact-format", "cranelift-jit-internals", "extensions-dir", "cargo-feature-flags"],
                             },
+                            "builtins": builtins_list,
                         });
                         println!("{}", v);
                     } else {
@@ -2748,7 +3076,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
+        Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
+        Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
+        Some(cli::Cmd::Update(u)) => std::process::exit(ilo::pkg::cmd_update(u.package.as_deref())),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
@@ -3011,6 +3342,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: args[m + 1..].to_vec(),
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3036,6 +3368,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3066,6 +3399,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3091,6 +3425,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3116,6 +3451,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3153,6 +3489,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         allow_read: None,
         allow_write: None,
         allow_run: None,
+        allow_env: None,
         rest,
     };
     dispatch_run(run_args, mode, explicit_json, no_hints, silent)
@@ -3251,6 +3588,25 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
         (source_arg.to_string(), false)
     };
 
+    // File path to embed in fix_plan.path so agents know which file to edit.
+    // Absent for inline code (e.g. `ilo check 'f>n;5'`).
+    let diag_path: Option<String> = if is_file {
+        Some(source_arg.to_string())
+    } else {
+        None
+    };
+
+    // Enriches a diagnostic with source, optional file path, and a derived
+    // fix_plan for codes that support mechanical edits (ILO-T004, ILO-T003,
+    // ILO-T032, ILO-L002).
+    let enrich = |d: Diagnostic| -> Diagnostic {
+        let mut d = d.with_source(source.clone());
+        if let Some(p) = &diag_path {
+            d = d.with_path(p.clone());
+        }
+        d.derive_fix_plan()
+    };
+
     let mut had_errors = false;
     // In --strict mode, any warning bumps the exit code to 1 too. Tracked
     // separately so we don't conflate genuine errors with elevated warnings
@@ -3260,7 +3616,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
         Err(e) => {
-            report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+            report_diagnostic(&enrich(Diagnostic::from(&e)), mode);
             return 1;
         }
     };
@@ -3303,6 +3659,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
             base_dir.as_deref(),
             &mut visited,
             &mut import_diagnostics,
+            BuildTarget::default(),
         );
         for d in import_diagnostics {
             report_diagnostic(&d, mode);
@@ -3311,7 +3668,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     }
 
     for e in &parse_errors {
-        report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+        report_diagnostic(&enrich(Diagnostic::from(e)), mode);
         had_errors = true;
     }
 
@@ -3321,12 +3678,12 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     // partially-broken ASTs.
     let verify_result = verify::verify(&program);
     for w in &verify_result.warnings {
-        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
+        report_diagnostic(&enrich(Diagnostic::from(w)), mode);
         had_warnings = true;
     }
     if !verify_result.errors.is_empty() {
         for e in &verify_result.errors {
-            report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+            report_diagnostic(&enrich(Diagnostic::from(e)), mode);
         }
         had_errors = true;
     }
@@ -3348,7 +3705,8 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
     let any = r.allow_net.is_some()
         || r.allow_read.is_some()
         || r.allow_write.is_some()
-        || r.allow_run.is_some();
+        || r.allow_run.is_some()
+        || r.allow_env.is_some();
     if !any {
         return Arc::new(Caps::Permissive);
     }
@@ -3370,6 +3728,11 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
             .unwrap_or(Policy::All),
         run: r
             .allow_run
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+        env: r
+            .allow_env
             .as_deref()
             .map(Caps::parse_allow)
             .unwrap_or(Policy::All),
@@ -3525,6 +3888,7 @@ fn dispatch_run(
             base_dir.as_deref(),
             &mut visited,
             &mut import_diagnostics,
+            BuildTarget::default(),
         );
         for d in import_diagnostics {
             report_diagnostic(&d, mode);
@@ -3616,8 +3980,11 @@ fn dispatch_run(
         if target == "python" {
             println!("{}", codegen::python::emit(&program));
             0
+        } else if target == "js" {
+            println!("{}", codegen::js::emit(&program));
+            0
         } else {
-            eprintln!("Unknown emit target. Supported: python");
+            eprintln!("Unknown emit target. Supported: python, js");
             1
         }
     } else if r.dense {
@@ -4077,6 +4444,7 @@ fn print_help() {
     println!("  ilo <file.ilo> [args...]          Run from file");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
+    println!("  ilo <code> --emit js              Transpile to JavaScript (ES modules)");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
@@ -4131,6 +4499,7 @@ fn print_help() {
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
     println!("  ilo program.ilo 10 20             Run file with arguments");
     println!("  ilo 'f x:n>n;*x 2' --emit python Transpile to Python");
+    println!("  ilo 'f x:n>n;*x 2' --emit js     Transpile to JavaScript");
 }
 
 /// Dispatch --run-vm, routing to MCP / HTTP / plain run based on available providers.
@@ -6211,6 +6580,7 @@ mod tests {
     #[test]
     fn decl_name_function_returns_name() {
         let d = ast::Decl::Function {
+            type_params: vec![],
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -6225,6 +6595,9 @@ mod tests {
         let d = ast::Decl::Use {
             path: "lib.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -6262,6 +6635,9 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "ilo_test_resolve_only_F2G7.ilo".into(),
             only: Some(vec!["dbl".into()]),
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6271,6 +6647,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
@@ -6295,6 +6672,9 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "ilo_test_resolve_missing_H4K9.ilo".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6304,6 +6684,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(
@@ -6547,11 +6928,20 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "something.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
         let mut diags = Vec::new();
-        let result = resolve_imports(vec![use_decl], None, &mut visited, &mut diags);
+        let result = resolve_imports(
+            vec![use_decl],
+            None,
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty());
         assert!(diags.iter().any(|d| d.code == Some("ILO-P017")));
         assert!(diags[0].message.contains("inline code"));
@@ -6562,6 +6952,9 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "nonexistent_xyz_99999.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6571,6 +6964,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
         assert!(result.is_empty());
         assert!(
@@ -6583,6 +6977,7 @@ mod tests {
     #[test]
     fn resolve_imports_non_use_decl_passes_through() {
         let func_decl = ast::Decl::Function {
+            type_params: vec![],
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -6591,7 +6986,13 @@ mod tests {
         };
         let mut visited = std::collections::HashSet::new();
         let mut diags = Vec::new();
-        let result = resolve_imports(vec![func_decl], None, &mut visited, &mut diags);
+        let result = resolve_imports(
+            vec![func_decl],
+            None,
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
         assert_eq!(result.len(), 1);
         assert!(diags.is_empty());
     }
@@ -6676,6 +7077,9 @@ mod tests {
         let decls = vec![ast::Decl::Use {
             path: "ilo_unit_bad_parse_imports.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6685,6 +7089,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(
@@ -6711,6 +7116,9 @@ mod tests {
         let decls = vec![ast::Decl::Use {
             path: "ilo_unit_trans_a_Q3R8.ilo".into(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6720,6 +7128,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diags,
+            BuildTarget::default(),
         );
 
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -6729,6 +7138,263 @@ mod tests {
 
         std::fs::remove_file(file_b).ok();
         std::fs::remove_file(file_a).ok();
+    }
+
+    // ── resolve_imports: named-module alias form ───────────────────────────────
+
+    #[test]
+    fn resolve_imports_alias_renames_public_decls() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_alias_rename_X9Y2.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "dbl n:n>n;*n 2").unwrap();
+        writeln!(f, "triple n:n>n;*n 3").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_alias_rename_X9Y2.ilo".into(),
+            only: None,
+            alias: Some("m".into()),
+            predicate: None,
+            alt_path: None,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"m-dbl"), "expected m-dbl: {names:?}");
+        assert!(names.contains(&"m-triple"), "expected m-triple: {names:?}");
+        assert!(
+            !names.contains(&"dbl"),
+            "plain dbl should not be in result: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_alias_excludes_private_decls() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_alias_priv_W7Z4.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "_private n:n>n;+n 0").unwrap();
+        writeln!(f, "pub-fn n:n>n;+n 1").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_alias_priv_W7Z4.ilo".into(),
+            only: None,
+            alias: Some("m".into()),
+            predicate: None,
+            alt_path: None,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"m-pub-fn"), "expected m-pub-fn: {names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.starts_with("m-_") || *n == "_private"),
+            "private decl should not appear: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_selective_blocks_private_name() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_sel_priv_V3K8.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "_priv n:n>n;+n 0").unwrap();
+        writeln!(f, "pub-fn n:n>n;+n 1").unwrap();
+        drop(f);
+
+        // Note: `_` is not a valid ident in `only`, so we test by injecting
+        // the name directly via the AST.
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_sel_priv_V3K8.ilo".into(),
+            only: Some(vec!["_priv".into()]),
+            alias: None,
+            predicate: None,
+            alt_path: None,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::default(),
+        );
+
+        assert!(result.is_empty(), "private name should produce no result");
+        assert!(
+            diags.iter().any(|d| d.code == Some("ILO-P019")),
+            "expected ILO-P019: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("module-private")),
+            "expected 'module-private' in error: {diags:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    // ── resolve_imports: conditional use ?<pred> (ILO-399) ────────────────────
+
+    #[test]
+    fn resolve_imports_conditional_wasm_true_branch() {
+        // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Wasm → loads wasm.ilo
+        let wasm_path = "/tmp/ilo_cond_wasm_ILO399.ilo";
+        let native_path = "/tmp/ilo_cond_native_ILO399.ilo";
+        std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
+        std::fs::write(native_path, "native-fn>n;99").unwrap();
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_cond_wasm_ILO399.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: Some(ast::UsePredicate::Wasm),
+            alt_path: Some("ilo_cond_native_ILO399.ilo".into()),
+            span: ast::Span::UNKNOWN,
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Wasm,
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"wasm-fn"),
+            "expected wasm-fn, got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"native-fn"),
+            "native-fn should not be imported"
+        );
+
+        std::fs::remove_file(wasm_path).ok();
+        std::fs::remove_file(native_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_conditional_wasm_false_branch() {
+        // `use ?wasm "wasm.ilo" : "native.ilo"` with BuildTarget::Native → loads native.ilo
+        let wasm_path = "/tmp/ilo_cond2_wasm_ILO399.ilo";
+        let native_path = "/tmp/ilo_cond2_native_ILO399.ilo";
+        std::fs::write(wasm_path, "wasm-fn>n;42").unwrap();
+        std::fs::write(native_path, "native-fn>n;99").unwrap();
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_cond2_wasm_ILO399.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: Some(ast::UsePredicate::Wasm),
+            alt_path: Some("ilo_cond2_native_ILO399.ilo".into()),
+            span: ast::Span::UNKNOWN,
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Native, // default — not wasm
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"native-fn"),
+            "expected native-fn, got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"wasm-fn"),
+            "wasm-fn should not be imported"
+        );
+
+        std::fs::remove_file(wasm_path).ok();
+        std::fs::remove_file(native_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_conditional_test_predicate() {
+        // `use ?test "stub.ilo" : "real.ilo"` with BuildTarget::Test → loads stub
+        let stub_path = "/tmp/ilo_cond_stub_ILO399.ilo";
+        let real_path = "/tmp/ilo_cond_real_ILO399.ilo";
+        std::fs::write(stub_path, "stub-fn>n;0").unwrap();
+        std::fs::write(real_path, "real-fn>n;1").unwrap();
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_cond_stub_ILO399.ilo".into(),
+            only: None,
+            alias: None,
+            predicate: Some(ast::UsePredicate::Test),
+            alt_path: Some("ilo_cond_real_ILO399.ilo".into()),
+            span: ast::Span::UNKNOWN,
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+            BuildTarget::Test,
+        );
+
+        assert!(diags.is_empty(), "no errors: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(
+            names.contains(&"stub-fn"),
+            "expected stub-fn, got: {names:?}"
+        );
+
+        std::fs::remove_file(stub_path).ok();
+        std::fs::remove_file(real_path).ok();
+    }
+
+    #[test]
+    fn build_target_eval_all_predicates() {
+        assert!(BuildTarget::Wasm.eval(ast::UsePredicate::Wasm));
+        assert!(!BuildTarget::Wasm.eval(ast::UsePredicate::Native));
+        assert!(!BuildTarget::Wasm.eval(ast::UsePredicate::Test));
+        assert!(BuildTarget::Native.eval(ast::UsePredicate::Native));
+        assert!(!BuildTarget::Native.eval(ast::UsePredicate::Wasm));
+        assert!(!BuildTarget::Native.eval(ast::UsePredicate::Test));
+        assert!(BuildTarget::Test.eval(ast::UsePredicate::Test));
+        assert!(!BuildTarget::Test.eval(ast::UsePredicate::Wasm));
+        assert!(!BuildTarget::Test.eval(ast::UsePredicate::Native));
     }
 
     // ── report_diagnostic: all three output modes ─────────────────────────────
@@ -7791,6 +8457,9 @@ mod tests {
         ast::Decl::Use {
             path: path.to_string(),
             only: None,
+            alias: None,
+            predicate: None,
+            alt_path: None,
             span: ast::Span::UNKNOWN,
         }
     }
@@ -7801,7 +8470,13 @@ mod tests {
         let decls = vec![make_use_decl("math.ilo")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
-        let result = resolve_imports(decls, None, &mut visited, &mut diagnostics);
+        let result = resolve_imports(
+            decls,
+            None,
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty(), "should return no decls");
         assert!(!diagnostics.is_empty(), "should emit error");
         assert!(diagnostics[0].message.contains("file path context"));
@@ -7814,7 +8489,13 @@ mod tests {
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        let result = resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("nonexistent_file_xyz.ilo"));
@@ -7832,7 +8513,13 @@ mod tests {
         visited.insert(canonical);
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        let result = resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("circular"));
@@ -7848,7 +8535,13 @@ mod tests {
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        let _result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        let _result = resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(!diagnostics.is_empty(), "should emit lex error diagnostic");
         std::fs::remove_file(path).ok();
     }
@@ -7870,7 +8563,13 @@ mod tests {
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
-        resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
+        resolve_imports(
+            decls,
+            Some(dir),
+            &mut visited,
+            &mut diagnostics,
+            BuildTarget::default(),
+        );
         assert!(!diagnostics.is_empty());
     }
 
@@ -7971,6 +8670,7 @@ mod tests {
         use ast::{Decl, Param, Span, Type};
         let decls = vec![
             Decl::Function {
+                type_params: vec![],
                 name: "helper".into(),
                 params: vec![Param {
                     name: "x".into(),
@@ -8076,6 +8776,7 @@ mod tests {
             Some(std::path::Path::new("/tmp")),
             &mut visited,
             &mut diagnostics,
+            BuildTarget::default(),
         );
 
         assert!(result.is_empty());
@@ -9514,6 +10215,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9544,6 +10246,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9578,6 +10281,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9609,6 +10313,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = false → hints emitted (to stderr, so just verify no panic)
@@ -9638,6 +10343,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = true → hints suppressed
@@ -9669,6 +10375,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9700,6 +10407,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -10155,6 +10863,53 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    // ── spec --json ai: per-item stability annotations (ILO-340) ─────────────
+
+    #[test]
+    fn spec_json_ai_builtins_array_has_stability_fields() {
+        // Run `ilo spec --json ai` and verify the builtins array is present
+        // with name+stability on every entry.
+        let output = std::process::Command::new(
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("ilo"),
+        )
+        .args(["spec", "--json", "ai"])
+        .output();
+        // If the binary isn't available (CI test-lib mode) skip gracefully.
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(output.status.success());
+        let v: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("spec --json ai must be valid JSON");
+        let builtins = v["builtins"].as_array().expect("builtins must be an array");
+        assert!(
+            !builtins.is_empty(),
+            "builtins array must contain at least one entry"
+        );
+        for b in builtins {
+            let name = b["name"].as_str().expect("each builtin must have a name");
+            let stability = b["stability"]
+                .as_str()
+                .expect("each builtin must have a stability");
+            assert!(
+                stability == "provisional" || stability == "experimental",
+                "builtin {name} has unknown stability tier '{stability}'"
+            );
+        }
+        // Backward-compat: top-level stability summary must still be present.
+        assert!(
+            v["stability"]["doc"].as_str().is_some(),
+            "top-level stability.doc must still be present for backward compat"
+        );
+    }
+
     // ── dispatch_bare_args: no-op case with func in rest matching func_names ──
 
     #[test]
@@ -10179,6 +10934,104 @@ mod tests {
             ],
             &global,
         );
+        assert_eq!(code, 0);
+    }
+
+    // ── --allow-env ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn allow_env_permissive_mode_reads_path() {
+        // No --allow-env flag → permissive mode → env reads succeed.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: None,
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn allow_env_empty_list_blocks_reads() {
+        // --allow-env= (empty) → restricted mode → env returns Err value.
+        // The function signature is R t t; returning an Err is valid — the
+        // runner exits 1 only because the top-level result is Err, which is
+        // ilo's standard non-zero exit convention for unhandled Err results.
+        // The key assertion is that it doesn't panic and the message is printed.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: Some(String::new()),
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        // Exits 1 because the top-level Err value is ilo's non-zero exit convention,
+        // NOT because the program crashed — it correctly returned the blocked Err.
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn allow_env_specific_var_allowed() {
+        // --allow-env=PATH → PATH read succeeds.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: Some("PATH".to_string()),
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
     }
 }

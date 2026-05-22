@@ -73,9 +73,41 @@ that read `ok` / `error` keep working.
 
 ### `ilo check`
 
-One diagnostic JSON object per error / warning to `stdout`. Exit code is
-`0` on a clean check, `1` if any error fired. See
-`reference/diagnostics.md` for the diagnostic schema.
+One diagnostic JSON object per error / warning to **stderr** (NDJSON — one
+JSON object per line). Exit code is `0` on a clean check, `1` if any error
+fired.
+
+Each object has the shape:
+
+```json
+{
+  "severity": "error" | "warning",
+  "code": "ILO-XXXX",
+  "message": "<human-readable summary>",
+  "suggestion": "<prose hint>",
+  "labels": [{ "start": 0, "end": 3, "line": 1, "col": 1, "primary": true, "message": "" }],
+  "notes": ["in function 'f'"],
+  "fix_plan": {
+    "path": "src/foo.ilo",
+    "edits": [
+      { "line_range": [1, 1], "before": "xyzz", "after": "x" }
+    ]
+  }
+}
+```
+
+`fix_plan` is **optional**; it is present for diagnostics where the fix is a
+mechanical text replacement an agent can apply without re-parsing prose.
+`path` within `fix_plan` is absent for inline code (`ilo check '<code>'`).
+
+Codes that currently emit a `fix_plan`:
+
+| Code | Condition | Edit |
+|------|-----------|------|
+| ILO-T004 | undefined variable with `"did you mean 'X'?"` hint | rename span to X |
+| ILO-T003 | undefined type with `"did you mean 'X'?"` hint | rename span to X |
+| ILO-T032 | bare `fmt`/`fmt2` result discarded | prepend `prnt ` before the call |
+| ILO-L002 | underscore identifier | replace with hyphenated form |
 
 ### `ilo build` / `ilo compile --json`
 

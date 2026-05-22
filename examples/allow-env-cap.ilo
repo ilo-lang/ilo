@@ -1,0 +1,29 @@
+-- allow-env-cap.ilo: demonstrates --allow-env capability flag (ILO-345).
+--
+-- Run with PATH and HOME allowed:
+--   ilo run --allow-env=PATH,HOME examples/allow-env-cap.ilo main
+--
+-- Run with all env blocked (empty allowlist):
+--   ilo run --allow-env= examples/allow-env-cap.ilo blocked-demo
+--
+-- Run without any --allow-env flag (permissive / legacy mode):
+--   ilo run examples/allow-env-cap.ilo main
+
+-- read-path: reads the PATH variable using the single-var `env` builtin.
+-- Requires: --allow-env=PATH (or permissive mode, or --allow-env=*)
+read-path>R t t
+  env "PATH"
+
+-- blocked-demo: reads PATH with an empty allowlist; returns the Err message.
+-- Expected: the Err branch fires when --allow-env= is set.
+blocked-demo>R t t
+  env "PATH"
+
+-- main: reads PATH and HOME, then prints a summary of whether each succeeded.
+main>_
+  r-path=read-path()
+  ?{r-path|er: prnt +"PATH blocked: " er
+           ~v:  prnt +"PATH ok, len=" lnt v}
+  r-home=env "HOME"
+  ?{r-home|er: prnt +"HOME blocked: " er
+           ~v:  prnt +"HOME=" v}

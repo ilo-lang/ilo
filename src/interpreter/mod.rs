@@ -2,9 +2,121 @@ use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use crate::caps::Caps;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub mod json;
+
+// ── Trace hook ────────────────────────────────────────────────────────────────
+
+/// One trace event emitted after each statement executes.
+/// Schema matches the ILO-72 proposal:
+/// `{"schemaVersion":1,"line":N,"stmt":"...","bindings":{...},"result":...}`
+#[derive(Debug)]
+pub struct TraceEvent {
+    /// 1-based source line of the statement start, or 0 if unknown.
+    pub line: usize,
+    /// Source text of the statement (trimmed), or empty if unavailable.
+    pub stmt: String,
+    /// All variable bindings visible in the current scope after the statement.
+    pub bindings: Vec<(String, Value)>,
+    /// The value produced by the statement (Nil for side-effect statements).
+    pub result: Value,
+}
+
+/// One trace event emitted after each sub-expression evaluates (depth=expr).
+#[derive(Debug)]
+pub struct ExprTraceEvent {
+    /// 1-based source line, or 0 if unknown.
+    pub line: usize,
+    /// Source text of the expression (trimmed), or empty if unavailable.
+    pub expr: String,
+    /// Names referenced by this expression (Ref nodes touched).
+    pub refs: Vec<String>,
+    /// The value produced by this expression.
+    pub result: Value,
+}
+
+// Thread-local trace sink. When `Some`, `eval_body` fires it after each
+// statement. Set to `Some` by `run_with_trace` and cleared on return.
+std::thread_local! {
+    #[allow(clippy::type_complexity)]
+    static TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(TraceEvent)>>> =
+        const { std::cell::RefCell::new(None) };
+
+    // Source text used to look up statement spans; set alongside TRACE_HOOK.
+    static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+
+    // Expression-level hook (depth=expr).
+    #[allow(clippy::type_complexity)]
+    static EXPR_TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(ExprTraceEvent)>>> =
+        const { std::cell::RefCell::new(None) };
+
+    // Current statement span — updated by eval_body so eval_expr can use it.
+    static CURRENT_STMT_SPAN: std::cell::RefCell<Span> =
+        const { std::cell::RefCell::new(Span { start: 0, end: 0 }) };
+}
+
+/// Run `program` with a per-statement trace callback.
+/// `on_event` is called after each statement in the entry function body.
+pub fn run_with_trace<F>(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    on_event: F,
+) -> Result<Value>
+where
+    F: FnMut(TraceEvent) + 'static,
+{
+    run_with_trace_opts(
+        program,
+        func_name,
+        args,
+        on_event,
+        None::<fn(ExprTraceEvent)>,
+    )
+}
+
+/// Run `program` with per-statement and optional per-expression trace callbacks.
+pub fn run_with_trace_opts<F, G>(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    on_stmt: F,
+    on_expr: Option<G>,
+) -> Result<Value>
+where
+    F: FnMut(TraceEvent) + 'static,
+    G: FnMut(ExprTraceEvent) + 'static,
+{
+    // Install the hooks.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = Some(Box::new(on_stmt));
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = program.source.clone();
+    });
+    if let Some(expr_hook) = on_expr {
+        EXPR_TRACE_HOOK.with(|h| {
+            *h.borrow_mut() = Some(Box::new(expr_hook));
+        });
+    }
+
+    let result = run_with_env(program, func_name, args, Env::new());
+
+    // Always clear the hooks, even on error.
+    TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = None;
+    });
+    TRACE_SOURCE.with(|s| {
+        *s.borrow_mut() = None;
+    });
+    EXPR_TRACE_HOOK.with(|h| {
+        *h.borrow_mut() = None;
+    });
+
+    result
+}
 
 /// A typed key for `Value::Map` and `HeapObj::Map`.
 ///
@@ -108,6 +220,80 @@ pub fn map_key_to_value(k: &MapKey) -> Value {
     }
 }
 
+type StdinLinesInner =
+    Arc<Mutex<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>>>;
+
+/// A lazy handle to stdin's line iterator.
+///
+/// Wraps a `BufRead::lines()` iterator behind `Arc<Mutex<>>` so that
+/// `Value::LazyStdinLines` can be `Clone` (cheaply: only the Arc refcount
+/// is bumped) and `PartialEq` (identity: two handles are equal iff they
+/// share the same underlying stdin). Produced by `for-line stdin` and
+/// consumed by the tree-walker's `Stmt::ForEach` arm, which calls
+/// `next()` on each iteration rather than collecting all lines upfront.
+///
+/// On WASM the variant is never constructed (the builtin returns Err early).
+/// The `Debug` impl shows `<stdin-lines>` to keep output readable.
+#[allow(clippy::type_complexity)]
+pub struct StdinLinesHandle {
+    inner: StdinLinesInner,
+}
+
+impl std::fmt::Debug for StdinLinesHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<stdin-lines>")
+    }
+}
+
+impl Clone for StdinLinesHandle {
+    fn clone(&self) -> Self {
+        StdinLinesHandle {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl PartialEq for StdinLinesHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Default for StdinLinesHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StdinLinesHandle {
+    /// Create a new handle owning a locked stdin lines iterator.
+    #[cfg(not(target_family = "wasm"))]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        use std::io::{BufRead, BufReader};
+        // Wrap stdin in a BufReader (which is Send) rather than holding a
+        // StdinLock (which is not Send). A single ilo program is
+        // single-threaded on the hot path, so the per-read locking that
+        // Stdin does internally is fine.
+        let reader = BufReader::new(std::io::stdin());
+        let stdin_box: Box<
+            dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send,
+        > = Box::new(reader.lines());
+        StdinLinesHandle {
+            inner: Arc::new(Mutex::new(stdin_box)),
+        }
+    }
+
+    /// Pull the next line from the underlying iterator.
+    pub fn next_line(&self) -> Option<std::result::Result<String, std::io::Error>> {
+        self.inner
+            .lock()
+            .expect("StdinLinesHandle lock poisoned")
+            .next()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -143,6 +329,12 @@ pub enum Value {
         tag: String,
         payload: Option<Box<Value>>,
     },
+    /// Lazy stdin line iterator.  Produced by `for-line stdin`.
+    /// Consumed by `Stmt::ForEach`: each iteration calls `next_line()`,
+    /// so lines are read one at a time as the loop runs — stdin is never
+    /// fully buffered.  On WASM the builtin returns `Err` before this
+    /// variant is constructed.
+    LazyStdinLines(StdinLinesHandle),
 }
 
 impl std::fmt::Display for Value {
@@ -214,6 +406,7 @@ impl std::fmt::Display for Value {
                 Some(p) => write!(f, "{tag}({p})"),
                 None => write!(f, "{tag}"),
             },
+            Value::LazyStdinLines(_) => write!(f, "<stdin-lines>"),
         }
     }
 }
@@ -258,6 +451,10 @@ struct Env {
     tokio_runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
     /// CLI capability policy — checked at IO builtin call sites.
     caps: Arc<Caps>,
+    /// Per-call-frame defer stack.  Each entry is `(expr_clone, kind)`.
+    /// Pushed when a `Stmt::Defer` is executed; drained LIFO at function exit.
+    /// Outer frames are saved/restored by `call_function`.
+    defer_stack: Vec<(crate::ast::Expr, crate::ast::DeferKind)>,
 }
 
 impl Env {
@@ -272,6 +469,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps: Arc::new(Caps::default()),
+            defer_stack: Vec::new(),
         }
     }
 
@@ -286,6 +484,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps,
+            defer_stack: Vec::new(),
         }
     }
 
@@ -303,6 +502,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
             caps: Arc::new(Caps::default()),
+            defer_stack: Vec::new(),
         }
     }
 
@@ -321,6 +521,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
             caps,
+            defer_stack: Vec::new(),
         }
     }
 
@@ -2035,6 +2236,47 @@ fn urldec_impl(arg: &Value) -> Result<Value> {
     }
 }
 
+/// `idxof s sub > O n` — Unicode code-point index of the first occurrence of
+/// `sub` in `s`. Returns `Value::Nil` when not found. Index is in code-point
+/// units (same convention as `at`), not raw byte offsets.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
+/// frame; the helper is small enough that the call overhead is in the noise.
+#[inline(never)]
+fn idxof_impl(s_arg: &Value, sub_arg: &Value) -> Result<Value> {
+    let s = match s_arg {
+        Value::Text(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("idxof: first arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    let sub = match sub_arg {
+        Value::Text(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("idxof: second arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    // Empty needle: matches at position 0 (Python / JS semantics).
+    if sub.is_empty() {
+        return Ok(Value::Number(0.0));
+    }
+    // Find the byte offset first (cheap), then count code points up to that
+    // byte to get the char-index.  O(n) but allocation-free.
+    match s.find(sub) {
+        None => Ok(Value::Nil),
+        Some(byte_offset) => {
+            let char_idx = s[..byte_offset].chars().count();
+            Ok(Value::Number(char_idx as f64))
+        }
+    }
+}
+
 #[inline(never)]
 fn b64u_impl(arg: &Value) -> Result<Value> {
     // b64u s > t — base64url-encode the UTF-8 bytes of s using the URL-safe
@@ -2117,6 +2359,54 @@ fn sha256_impl(arg: &Value) -> Result<Value> {
     Ok(Value::Text(Arc::new(hex::encode(digest))))
 }
 
+/// Shared helper: validate and hex-decode a text value for sha256-hex / sha256d.
+/// Returns ILO-T013 on odd-length or non-hex input.
+fn hex_decode_arg(arg: &Value, caller: &str) -> Result<Vec<u8>> {
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{caller} requires text, got {:?}", other),
+            ));
+        }
+    };
+    if s.len() % 2 != 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "{caller}: hex input must have even length, got {} chars",
+                s.len()
+            ),
+        ));
+    }
+    hex::decode(s.as_ref())
+        .map_err(|e| RuntimeError::new("ILO-R009", format!("{caller}: invalid hex input: {e}")))
+}
+
+#[inline(never)]
+fn sha256_hex_impl(arg: &Value) -> Result<Value> {
+    // sha256-hex hex:t > t — SHA-256 of hex-decoded bytes, returned as a
+    // lowercase hex string. Errors (ILO-T013) on odd-length or non-hex input.
+    use sha2::{Digest, Sha256};
+    let bytes = hex_decode_arg(arg, "sha256-hex")?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    Ok(Value::Text(Arc::new(hex::encode(h.finalize()))))
+}
+
+#[inline(never)]
+fn sha256d_impl(arg: &Value) -> Result<Value> {
+    // sha256d hex:t > t — double-SHA256 of hex-decoded bytes (Bitcoin Merkle
+    // protocol: sha256(sha256(x))). Returns lowercase hex of the outer digest.
+    // Errors (ILO-T013) on odd-length or non-hex input.
+    use sha2::{Digest, Sha256};
+    let bytes = hex_decode_arg(arg, "sha256d")?;
+    let inner = Sha256::digest(&bytes);
+    let outer = Sha256::digest(inner);
+    Ok(Value::Text(Arc::new(hex::encode(outer))))
+}
+
 #[inline(never)]
 fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
     // hmac-sha256 key:t msg:t > t — HMAC-SHA256 of msg under key. Returns the
@@ -2150,6 +2440,32 @@ fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
     mac.update(msg.as_bytes());
     let tag = mac.finalize().into_bytes();
     Ok(Value::Text(Arc::new(hex::encode(tag))))
+}
+
+#[inline(never)]
+fn tokcount_impl(arg: &Value) -> Result<Value> {
+    // tokcount s > n — approximate cl100k_base token count of string s.
+    //
+    // STUB: uses a bytes/3.4 approximation (empirical mean bytes-per-token for
+    // English prose under cl100k_base). Correct within ~5% for natural-language
+    // skill files. A follow-up (ILO-47) will replace this with a real BPE
+    // tokeniser (tiktoken-rs or similar) once crate WASM and licence questions
+    // are resolved.
+    //
+    // f64::ceil ensures we round up, matching Python tiktoken's exact count
+    // on short strings where the approximation could otherwise round down
+    // and produce a false-passing token budget check.
+    match arg {
+        Value::Text(s) => {
+            let bytes = s.len() as f64;
+            let count = (bytes / 3.4_f64).ceil();
+            Ok(Value::Number(count))
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!("tokcount requires text, got {:?}", other),
+        )),
+    }
 }
 
 #[inline(never)]
@@ -2255,6 +2571,46 @@ fn ct_eq_impl(a_arg: &Value, b_arg: &Value) -> Result<Value> {
     }
     let eq: bool = a.as_bytes().ct_eq(b.as_bytes()).into();
     Ok(Value::Bool(eq))
+}
+
+#[inline(never)]
+fn hex_rev_impl(arg: &Value) -> Result<Value> {
+    // hex-rev s > t — reverse byte order of a hex-encoded string.
+    // Input is a hex string (any case); length must be even (2 chars per
+    // byte). Odd-length input errors ILO-T013 with a padding hint. Case
+    // is preserved: `abCD` reversed is `CDab`. Total for even-length hex.
+    // Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid).
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hex-rev requires text, got {:?}", other),
+            ));
+        }
+    };
+    if s.len() % 2 != 0 {
+        return Err(RuntimeError::new(
+            "ILO-T013",
+            format!(
+                "hex-rev: input length {} is odd — hex strings must encode whole bytes (2 chars \
+                 per byte); hint: pad to even length first (e.g. prepend \"0\")",
+                s.len()
+            ),
+        ));
+    }
+    // Reverse byte pairs in-place. No heap allocation beyond the output String.
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = s.len();
+    while i >= 2 {
+        i -= 2;
+        // SAFETY: `s` is a valid &str; slicing at even byte boundaries keeps
+        // UTF-8 validity since ASCII hex chars are all single-byte code points.
+        out.push(bytes[i] as char);
+        out.push(bytes[i + 1] as char);
+    }
+    Ok(Value::Text(Arc::new(out)))
 }
 
 // ── Calendar arithmetic cluster ─────────────────────────────────────────────
@@ -2538,6 +2894,1355 @@ fn run_bisect(list_arg: &Value, target_arg: &Value) -> Result<Value> {
     Ok(Value::Number(lo as f64))
 }
 
+// Each builtin lives in its own #[inline(never)] helper so the call_function
+// dispatch frame stays off the Rust call stack for deep-recursion tests
+// (see #494 / #506 / #515 / ILO-341).
+
+#[inline(never)]
+fn median_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "median: cannot take median of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("median: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = nums.len();
+    let m = if n % 2 == 1 {
+        nums[n / 2]
+    } else {
+        (nums[n / 2 - 1] + nums[n / 2]) / 2.0
+    };
+    Ok(Value::Number(m))
+}
+
+#[inline(never)]
+fn quantile_run(items: &[Value], p: f64) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "quantile: cannot take quantile of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("quantile: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p = p.clamp(0.0, 1.0);
+    let n = nums.len();
+    if n == 1 {
+        return Ok(Value::Number(nums[0]));
+    }
+    let pos = p * (n - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    let frac = pos - lo as f64;
+    let q = nums[lo] + frac * (nums[hi] - nums[lo]);
+    Ok(Value::Number(q))
+}
+
+#[inline(never)]
+fn variance_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "variance: cannot take variance of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("variance: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let n = nums.len();
+    if n == 1 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "variance: at least 2 samples required".to_string(),
+        ));
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+    Ok(Value::Number(sse / (n - 1) as f64))
+}
+
+#[inline(never)]
+fn stdev_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "stdev: cannot take stdev of an empty list".to_string(),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("stdev: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let n = nums.len();
+    if n == 1 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "stdev: at least 2 samples required".to_string(),
+        ));
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+    Ok(Value::Number((sse / (n - 1) as f64).sqrt()))
+}
+
+#[inline(never)]
+fn rgx_run(pattern: &str, input: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern)
+        .map_err(|e| RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}")))?;
+    let result: Vec<Value> = if re.captures_len() > 1 {
+        re.captures(input)
+            .map(|caps| {
+                (1..caps.len())
+                    .filter_map(|i| {
+                        caps.get(i)
+                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        re.find_iter(input)
+            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+            .collect()
+    };
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxall_run(pattern: &str, input: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern).map_err(|e| {
+        RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
+    })?;
+    let result: Vec<Value> = if re.captures_len() > 1 {
+        re.captures_iter(input)
+            .map(|caps| {
+                let groups: Vec<Value> = (1..caps.len())
+                    .filter_map(|i| {
+                        caps.get(i)
+                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    })
+                    .collect();
+                Value::List(Arc::new(groups))
+            })
+            .collect()
+    } else {
+        re.find_iter(input)
+            .map(|m| {
+                Value::List(Arc::new(vec![Value::Text(Arc::new(
+                    m.as_str().to_string(),
+                ))]))
+            })
+            .collect()
+    };
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxall1_run(pattern: &str, input: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern).map_err(|e| {
+        RuntimeError::new("ILO-R009", format!("rgxall1: invalid regex pattern: {e}"))
+    })?;
+    let group_count = re.captures_len().saturating_sub(1);
+    if group_count >= 2 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "rgxall1: pattern has {group_count} capture groups; rgxall1 only supports 0 or 1. Use rgxall for L (L t) with every group preserved."
+            ),
+        ));
+    }
+    let result: Vec<Value> = if group_count == 1 {
+        re.captures_iter(input)
+            .filter_map(|caps| {
+                caps.get(1)
+                    .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+            })
+            .collect()
+    } else {
+        re.find_iter(input)
+            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+            .collect()
+    };
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxall_multi_run(pats: &Arc<Vec<Value>>, input: &Arc<String>) -> Result<Value> {
+    let mut result: Vec<Value> = Vec::new();
+    for (i, pat_val) in pats.iter().enumerate() {
+        let pattern = match pat_val {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: pats[{i}] must be a string pattern, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let re = regex::Regex::new(pattern).map_err(|e| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!("rgxall-multi: invalid regex pattern at index {i}: {e}"),
+            )
+        })?;
+        let group_count = re.captures_len().saturating_sub(1);
+        if group_count >= 2 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "rgxall-multi: pattern at index {i} has {group_count} capture groups; rgxall-multi only supports 0 or 1 per pattern. Use rgxall for L (L t) with every group preserved."
+                ),
+            ));
+        }
+        if group_count == 1 {
+            re.captures_iter(input.as_str())
+                .filter_map(|caps| {
+                    caps.get(1)
+                        .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                })
+                .for_each(|v| result.push(v));
+        } else {
+            re.find_iter(input.as_str())
+                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                .for_each(|v| result.push(v));
+        }
+    }
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn rgxsub_run(pattern: &str, replacement: &str, subject: &str) -> Result<Value> {
+    let re = regex::Regex::new(pattern).map_err(|e| {
+        RuntimeError::new("ILO-R009", format!("rgxsub: invalid regex pattern: {e}"))
+    })?;
+    Ok(Value::Text(Arc::new(
+        re.replace_all(subject, replacement).into_owned(),
+    )))
+}
+
+#[inline(never)]
+fn matmul_run(a_rows: &[Value], b_rows: &[Value]) -> Result<Value> {
+    let mut a: Vec<Vec<f64>> = Vec::with_capacity(a_rows.len());
+    let mut a_cols: Option<usize> = None;
+    for row in a_rows.iter() {
+        match row {
+            Value::List(r) => {
+                match a_cols {
+                    None => a_cols = Some(r.len()),
+                    Some(n) if n != r.len() => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "matmul: ragged rows in first arg (expected {n} cols, got {})",
+                                r.len()
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+                let mut nums = Vec::with_capacity(r.len());
+                for v in r.iter() {
+                    match v {
+                        Value::Number(n) => nums.push(*n),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!("matmul: elements must be numbers, got {:?}", other),
+                            ));
+                        }
+                    }
+                }
+                a.push(nums);
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("matmul: rows must be lists, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let mut b: Vec<Vec<f64>> = Vec::with_capacity(b_rows.len());
+    let mut b_cols: Option<usize> = None;
+    for row in b_rows.iter() {
+        match row {
+            Value::List(r) => {
+                match b_cols {
+                    None => b_cols = Some(r.len()),
+                    Some(n) if n != r.len() => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "matmul: ragged rows in second arg (expected {n} cols, got {})",
+                                r.len()
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+                let mut nums = Vec::with_capacity(r.len());
+                for v in r.iter() {
+                    match v {
+                        Value::Number(n) => nums.push(*n),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!("matmul: elements must be numbers, got {:?}", other),
+                            ));
+                        }
+                    }
+                }
+                b.push(nums);
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("matmul: rows must be lists, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let a_rows_n = a.len();
+    let a_cols_n = a_cols.unwrap_or(0);
+    let b_rows_n = b.len();
+    let b_cols_n = b_cols.unwrap_or(0);
+    if a_cols_n != b_rows_n {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "matmul: shape mismatch (a is {a_rows_n}x{a_cols_n}, b is {b_rows_n}x{b_cols_n})"
+            ),
+        ));
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(a_rows_n);
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..a_rows_n {
+        let mut row: Vec<Value> = Vec::with_capacity(b_cols_n);
+        for j in 0..b_cols_n {
+            let mut s = 0.0_f64;
+            for k in 0..a_cols_n {
+                s += a[i][k] * b[k][j];
+            }
+            row.push(Value::Number(s));
+        }
+        out.push(Value::List(Arc::new(row)));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+#[inline(never)]
+fn ifft_run(items: &[Value]) -> Result<Value> {
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "ifft: input list must not be empty".to_string(),
+        ));
+    }
+    let mut re: Vec<f64> = Vec::with_capacity(items.len());
+    let mut im: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::List(pair) if pair.len() == 2 => {
+                let r = match &pair[0] {
+                    Value::Number(n) => *n,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            "ifft: pair elements must be numbers".to_string(),
+                        ));
+                    }
+                };
+                let i = match &pair[1] {
+                    Value::Number(n) => *n,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            "ifft: pair elements must be numbers".to_string(),
+                        ));
+                    }
+                };
+                re.push(r);
+                im.push(i);
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "ifft: each element must be a [real, imag] pair, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    let n = next_pow2(re.len());
+    re.resize(n, 0.0);
+    im.resize(n, 0.0);
+    cooley_tukey(&mut re, &mut im, true);
+    let result: Vec<Value> = re.into_iter().map(Value::Number).collect();
+    Ok(Value::List(Arc::new(result)))
+}
+
+#[inline(never)]
+fn where_run(cond: &[Value], xs: &[Value], ys: &[Value]) -> Result<Value> {
+    if cond.len() != xs.len() || cond.len() != ys.len() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "where: length mismatch — cond={}, xs={}, ys={}; all three lists must be the same length",
+                cond.len(),
+                xs.len(),
+                ys.len()
+            ),
+        ));
+    }
+    let mut out = Vec::with_capacity(cond.len());
+    for (i, c) in cond.iter().enumerate() {
+        match c {
+            Value::Bool(true) => out.push(xs[i].clone()),
+            Value::Bool(false) => out.push(ys[i].clone()),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "where: cond element at index {} must be a bool, got {:?}",
+                        i, other
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+// --- per-builtin #[inline(never)] helpers (ILO-408 batch 2) ---
+// Each helper keeps its body out of call_function's already-huge stack frame
+// so debug-build stack overflows are avoided on deep-recursion tests.
+
+/// `#[inline(never)]` keeps Clamp (+ inline Min/Max 2-arg + Argmax/Argmin)
+/// out of call_function's frame.
+#[inline(never)]
+fn clamp_run(x: f64, lo: f64, hi: f64) -> Value {
+    Value::Number(x.min(hi).max(lo))
+}
+
+/// `#[inline(never)]` — chunks n xs > L (L a)
+#[inline(never)]
+fn chunks_run(n_raw: f64, list_arg: &Value) -> Result<Value> {
+    if n_raw.fract() != 0.0 || n_raw <= 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("chunks: size must be a positive integer, got {n_raw}"),
+        ));
+    }
+    let n = n_raw as usize;
+    let xs = match list_arg {
+        Value::List(items) => items,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("chunks: requires a list, got {:?}", other),
+            ));
+        }
+    };
+    let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
+    for chunk in xs.chunks(n) {
+        out.push(Value::List(Arc::new(chunk.to_vec())));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — ewm xs a > L n
+#[inline(never)]
+fn ewm_run(list_arg: &Value, a: f64) -> Result<Value> {
+    let items = match list_arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ewm: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    if !(0.0..=1.0).contains(&a) {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("ewm: smoothing factor a must be in [0, 1], got {}", a),
+        ));
+    }
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(n) => nums.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ewm: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let out: Vec<Value> = ewm_compute(&nums, a)
+        .into_iter()
+        .map(Value::Number)
+        .collect();
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — cap s > t (capitalise first Unicode scalar)
+/// Also handles the padl/padr arm that immediately follows in source order
+/// (they form one logical "arm" for the script counter since no `if builtin ==`
+/// separates them).
+#[inline(never)]
+fn cap_run(arg: &Value) -> Result<Value> {
+    match arg {
+        Value::Text(s) => {
+            let mut chars = s.chars();
+            let out = match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            };
+            Ok(Value::Text(Arc::new(out)))
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!("cap requires text, got {:?}", other),
+        )),
+    }
+}
+
+/// `#[inline(never)]` — padl/padr s width [pad_char] > t
+#[inline(never)]
+fn padl_padr_run(is_left: bool, args: &[Value]) -> Result<Value> {
+    let name = if is_left { "padl" } else { "padr" };
+    let s = match &args[0] {
+        Value::Text(t) => t.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} arg 1 requires text, got {:?}", other),
+            ));
+        }
+    };
+    let w = match &args[1] {
+        Value::Number(n) => {
+            if !n.is_finite() || n.fract() != 0.0 {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} width must be a non-negative integer, got {n}"),
+                ));
+            }
+            if *n < 0.0 {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} width must be non-negative, got {n}"),
+                ));
+            }
+            *n as usize
+        }
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} arg 2 requires number, got {:?}", other),
+            ));
+        }
+    };
+    let pad_char: char = if args.len() == 3 {
+        match &args[2] {
+            Value::Text(t) => {
+                let mut iter = t.chars();
+                match (iter.next(), iter.next()) {
+                    (Some(c), None) => c,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "{name} pad char must be a 1-character string, got {:?}",
+                                t.as_str()
+                            ),
+                        ));
+                    }
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "{name} pad char must be a 1-character string, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        }
+    } else {
+        ' '
+    };
+    let char_count = s.chars().count();
+    if char_count >= w {
+        return Ok(Value::Text(s));
+    }
+    let pad: String = std::iter::repeat_n(pad_char, w - char_count).collect();
+    let out = if is_left {
+        format!("{pad}{s}")
+    } else {
+        format!("{s}{pad}")
+    };
+    Ok(Value::Text(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — wr path content [fmt] > R t t
+#[inline(never)]
+fn wr_run(env: &mut Env, args: Vec<Value>) -> Result<Value> {
+    let path = match &args[0] {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("wr: first arg must be a text path, got {:?}", other),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_write(path.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let content = if args.len() == 3 {
+        let fmt = match &args[2] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wr: format arg must be text, got {:?}", other),
+                ));
+            }
+        };
+        match fmt.as_str() {
+            "csv" | "tsv" => {
+                let sep = if fmt.as_str() == "csv" { ',' } else { '\t' };
+                let rows = match &args[1] {
+                    Value::List(l) => l,
+                    other => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!("wr: data for {fmt} must be a list of rows, got {:?}", other),
+                        ));
+                    }
+                };
+                write_csv_tsv(rows, sep)?
+            }
+            "json" => {
+                fn value_to_json_local(v: &Value) -> serde_json::Value {
+                    match v {
+                        Value::Number(n) => serde_json::Value::from(*n),
+                        Value::Text(s) => serde_json::Value::from(s.as_str()),
+                        Value::Bool(b) => serde_json::Value::from(*b),
+                        Value::List(l) => {
+                            serde_json::Value::Array(l.iter().map(value_to_json_local).collect())
+                        }
+                        Value::Map(m) => {
+                            let obj: serde_json::Map<String, serde_json::Value> = m
+                                .iter()
+                                .map(|(k, v)| (k.to_display_string(), value_to_json_local(v)))
+                                .collect();
+                            serde_json::Value::Object(obj)
+                        }
+                        Value::Nil => serde_json::Value::Null,
+                        other => serde_json::Value::from(format!("{other}")),
+                    }
+                }
+                serde_json::to_string_pretty(&value_to_json_local(&args[1]))
+                    .unwrap_or_else(|e| format!("json error: {e}"))
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wr: unknown format '{other}', expected csv, tsv, or json"),
+                ));
+            }
+        }
+    } else {
+        match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wr: second arg must be text content, got {:?}", other),
+                ));
+            }
+        }
+    };
+    match std::fs::write(path.as_str(), &content) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+    }
+}
+
+/// `#[inline(never)]` — fmt template args... > t
+#[inline(never)]
+fn fmt_run(args: &[Value]) -> Result<Value> {
+    let template = match &args[0] {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("fmt first arg must be text template, got {:?}", other),
+            ));
+        }
+    };
+    let mut result = String::new();
+    let mut arg_idx = 1;
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{'
+            && (chars.peek() == Some(&'}')
+                || chars.peek() == Some(&':')
+                || chars.peek() == Some(&'.'))
+        {
+            let mut spec = String::from("{");
+            let mut terminated = false;
+            for sc in chars.by_ref() {
+                spec.push(sc);
+                if sc == '}' {
+                    terminated = true;
+                    break;
+                }
+            }
+            if !terminated {
+                result.push_str(&spec);
+                continue;
+            }
+            match parse_fmt_spec(&spec) {
+                Some(FmtSpec::Bare) => {
+                    if arg_idx < args.len() {
+                        result.push_str(&format!("{}", args[arg_idx]));
+                        arg_idx += 1;
+                    } else {
+                        result.push_str("{}");
+                    }
+                }
+                Some(spec_kind) => {
+                    if arg_idx >= args.len() {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!("fmt template spec `{spec}` has no matching value arg"),
+                        ));
+                    }
+                    let rendered = apply_fmt_spec(&spec_kind, &args[arg_idx]).map_err(|e| {
+                        RuntimeError::new("ILO-R009", format!("fmt spec `{spec}`: {e}"))
+                    })?;
+                    result.push_str(&rendered);
+                    arg_idx += 1;
+                }
+                None => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "fmt: unsupported placeholder spec `{spec}`. \
+                             Supported: `{{}}`, `{{.Nf}}` / `{{:.Nf}}` (decimal places), \
+                             `{{:N}}` (right-align width), `{{:Nd}}` (integer width), \
+                             `{{:<N}}` (left-align width). Zero-padded widths and hex/sign \
+                             are out of scope; compose via `fmt2` / `padl` / `padr`."
+                        ),
+                    ));
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(Value::Text(Arc::new(result)))
+}
+
+/// `#[inline(never)]` — flt fn [ctx] xs > L a
+#[inline(never)]
+fn flt_run(
+    env: &mut Env,
+    fn_name: &str,
+    captures: Vec<Value>,
+    ctx: Option<Value>,
+    items: Arc<Vec<Value>>,
+) -> Result<Value> {
+    let mut keep: Vec<bool> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        let mut call_args = match &ctx {
+            Some(c) => vec![item.clone(), c.clone()],
+            None => vec![item.clone()],
+        };
+        call_args.extend(captures.iter().cloned());
+        match call_function(env, fn_name, call_args)? {
+            Value::Bool(true) => keep.push(true),
+            Value::Bool(false) => keep.push(false),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("flt: predicate must return bool, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let mut items = items;
+    if Arc::strong_count(&items) == 1 {
+        let inner = Arc::make_mut(&mut items);
+        let mut idx = 0usize;
+        inner.retain(|_| {
+            let k = keep[idx];
+            idx += 1;
+            k
+        });
+        Ok(Value::List(items))
+    } else {
+        let mut result = Vec::with_capacity(keep.iter().filter(|k| **k).count());
+        for (item, &k) in items.iter().zip(keep.iter()) {
+            if k {
+                result.push(item.clone());
+            }
+        }
+        Ok(Value::List(Arc::new(result)))
+    }
+}
+
+/// `#[inline(never)]` — grp fn xs > M t (L a)
+#[inline(never)]
+fn grp_run(
+    env: &mut Env,
+    fn_name: &str,
+    captures: Vec<Value>,
+    items: Arc<Vec<Value>>,
+) -> Result<Value> {
+    let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
+        std::collections::HashMap::new();
+    for item in items.iter() {
+        let mut call_args = vec![item.clone()];
+        call_args.extend(captures.iter().cloned());
+        let key = call_function(env, fn_name, call_args)?;
+        let map_key = match &key {
+            Value::Text(s) => MapKey::Text((**s).clone()),
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("grp: numeric key must be finite, got {n}"),
+                    ));
+                }
+                MapKey::Int(n.floor() as i64)
+            }
+            Value::Bool(b) => MapKey::Text(format!("{b}")),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "grp: key function must return a string, number, or bool, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        groups.entry(map_key).or_default().push(item.clone());
+    }
+    let map: HashMap<MapKey, Value> = groups
+        .into_iter()
+        .map(|(k, v)| (k, Value::List(Arc::new(v))))
+        .collect();
+    Ok(Value::Map(Arc::new(map)))
+}
+
+/// `#[inline(never)]` — uniqby fn xs > L a
+#[inline(never)]
+fn uniqby_run(
+    env: &mut Env,
+    fn_name: &str,
+    captures: Vec<Value>,
+    items: Arc<Vec<Value>>,
+) -> Result<Value> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<Value> = Vec::new();
+    for item in items.iter() {
+        let mut call_args = vec![item.clone()];
+        call_args.extend(captures.iter().cloned());
+        let key = call_function(env, fn_name, call_args)?;
+        let key_str = match &key {
+            Value::Text(s) => format!("t:{s}"),
+            Value::Number(n) => {
+                if *n == (*n as i64) as f64 {
+                    format!("n:{}", *n as i64)
+                } else {
+                    format!("n:{n}")
+                }
+            }
+            Value::Bool(b) => format!("b:{b}"),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "uniqby: key function must return a string, number, or bool, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        if seen.insert(key_str) {
+            out.push(item.clone());
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — post url body [headers] > R t t
+#[inline(never)]
+fn post_run(env: &mut Env, args: Vec<Value>) -> Result<Value> {
+    let (url, body) = match (&args[0], &args[1]) {
+        (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+        _ => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("pst requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let headers = if args.len() == 3 {
+        match &args[2] {
+            Value::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let vs: String = match v {
+                        Value::Text(s) => (**s).clone(),
+                        other => format!("{other:?}"),
+                    };
+                    (k.to_display_string(), vs)
+                })
+                .collect::<Vec<_>>(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pst headers must be M t t, got {:?}", other),
+                ));
+            }
+        }
+    } else {
+        vec![]
+    };
+    #[cfg(feature = "http")]
+    {
+        let mut req = minreq::post(url.as_str()).with_body(body.as_str());
+        for (k, v) in &headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        match req.send() {
+            Ok(resp) => match resp.as_str() {
+                Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "response is not valid UTF-8: {e}"
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (url, body, headers);
+        Ok(Value::Err(Box::new(Value::Text(
+            "http feature not enabled".to_string().into(),
+        ))))
+    }
+}
+
+/// `#[inline(never)]` — put/pat url body [headers] > R t t
+#[inline(never)]
+fn put_pat_run(env: &mut Env, builtin: Option<Builtin>, args: Vec<Value>) -> Result<Value> {
+    let name = builtin.unwrap().name();
+    let (url, body) = match (&args[0], &args[1]) {
+        (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+        _ => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let headers = if args.len() == 3 {
+        match &args[2] {
+            Value::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let vs: String = match v {
+                        Value::Text(s) => (**s).clone(),
+                        other => format!("{other:?}"),
+                    };
+                    (k.to_display_string(), vs)
+                })
+                .collect::<Vec<_>>(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} headers must be M t t, got {:?}", other),
+                ));
+            }
+        }
+    } else {
+        vec![]
+    };
+    #[cfg(feature = "http")]
+    {
+        let mut req = match builtin {
+            Some(Builtin::Put) => minreq::put(url.as_str()),
+            Some(Builtin::Pat) => minreq::patch(url.as_str()),
+            _ => unreachable!(),
+        }
+        .with_body(body.as_str());
+        for (k, v) in &headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        match req.send() {
+            Ok(resp) => match resp.as_str() {
+                Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "response is not valid UTF-8: {e}"
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (url, body, headers);
+        Ok(Value::Err(Box::new(Value::Text(
+            "http feature not enabled".to_string().into(),
+        ))))
+    }
+}
+
+/// `#[inline(never)]` — del/hed/opt url [headers] > R t t
+#[inline(never)]
+fn del_hed_opt_run(env: &mut Env, builtin: Option<Builtin>, args: Vec<Value>) -> Result<Value> {
+    let name = builtin.unwrap().name();
+    let url = match &args[0] {
+        Value::Text(u) => u.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name} requires text (url), got {:?}", other),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+    }
+    let headers = if args.len() == 2 {
+        match &args[1] {
+            Value::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    let vs: String = match v {
+                        Value::Text(s) => (**s).clone(),
+                        other => format!("{other:?}"),
+                    };
+                    (k.to_display_string(), vs)
+                })
+                .collect::<Vec<_>>(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} headers must be M t t, got {:?}", other),
+                ));
+            }
+        }
+    } else {
+        vec![]
+    };
+    #[cfg(feature = "http")]
+    {
+        let mut req = match builtin {
+            Some(Builtin::Del) => minreq::delete(url.as_str()),
+            Some(Builtin::Hed) => minreq::head(url.as_str()),
+            Some(Builtin::Opt) => minreq::options(url.as_str()),
+            _ => unreachable!(),
+        };
+        for (k, v) in &headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        match req.send() {
+            Ok(resp) => match resp.as_str() {
+                Ok(body) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string()))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "response is not valid UTF-8: {e}"
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (url, headers);
+        Ok(Value::Err(Box::new(Value::Text(
+            "http feature not enabled".to_string().into(),
+        ))))
+    }
+}
+
+/// `#[inline(never)]` — rolling-window reducers: rsum/ravg/rmin n xs > L n
+#[inline(never)]
+fn rolling_window_run(env_name: &str, b: Builtin, n_f: f64, list_arg: &Value) -> Result<Value> {
+    let name = env_name;
+    if !n_f.is_finite() || n_f.fract() != 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "{name}: window size n must be a non-negative integer, got {}",
+                n_f
+            ),
+        ));
+    }
+    if n_f <= 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("{name}: window size n must be >= 1, got {}", n_f),
+        ));
+    }
+    let n = n_f as usize;
+    let items = match list_arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: second arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(v) => nums.push(*v),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let computed = match b {
+        Builtin::Rsum => rsum_compute(n, &nums),
+        Builtin::Ravg => ravg_compute(n, &nums),
+        Builtin::Rmin => rmin_compute(n, &nums),
+        _ => unreachable!(),
+    };
+    let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `#[inline(never)]` — argmax/argmin xs > n
+#[inline(never)]
+fn argmax_argmin_run(is_min: bool, name: &str, arg: &Value) -> Result<Value> {
+    let items = match arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    if items.is_empty() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("{name}: cannot take {name} of an empty list"),
+        ));
+    }
+    let mut best_idx: usize = 0;
+    let mut best_val: Option<f64> = None;
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            Value::Number(n) => {
+                if n.is_nan() {
+                    return Ok(Value::Number(f64::NAN));
+                }
+                match best_val {
+                    None => {
+                        best_val = Some(*n);
+                        best_idx = i;
+                    }
+                    Some(cur) => {
+                        let better = if is_min { *n < cur } else { *n > cur };
+                        if better {
+                            best_val = Some(*n);
+                            best_idx = i;
+                        }
+                    }
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    Ok(Value::Number(best_idx as f64))
+}
+
+/// `#[inline(never)]` — setunion/setinter/setdiff xs ys > L a
+#[inline(never)]
+fn setops_run(builtin: Option<Builtin>, xs_arg: &Value, ys_arg: &Value) -> Result<Value> {
+    let op_name = match builtin {
+        Some(Builtin::Setunion) => "setunion",
+        Some(Builtin::Setinter) => "setinter",
+        Some(Builtin::Setdiff) => "setdiff",
+        _ => unreachable!(),
+    };
+    let xs = match xs_arg {
+        Value::List(items) => items,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{op_name} arg 1 requires a list, got {:?}", other),
+            ));
+        }
+    };
+    let ys = match ys_arg {
+        Value::List(items) => items,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{op_name} arg 2 requires a list, got {:?}", other),
+            ));
+        }
+    };
+    fn key_for(v: &Value, op_name: &str) -> std::result::Result<String, RuntimeError> {
+        match v {
+            Value::Text(s) => Ok(format!("t:{s}")),
+            Value::Number(n) => {
+                if *n == (*n as i64) as f64 {
+                    Ok(format!("n:{}", *n as i64))
+                } else {
+                    Ok(format!("n:{n}"))
+                }
+            }
+            Value::Bool(b) => Ok(format!("b:{b}")),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "{op_name}: elements must be text, number, or bool, got {:?}",
+                    other
+                ),
+            )),
+        }
+    }
+    use std::collections::{HashMap, HashSet};
+    let mut set_a: HashSet<String> = HashSet::new();
+    let mut a_first: HashMap<String, Value> = HashMap::new();
+    for v in xs.iter() {
+        let k = key_for(v, op_name)?;
+        if set_a.insert(k.clone()) {
+            a_first.insert(k, v.clone());
+        }
+    }
+    let mut set_b: HashSet<String> = HashSet::new();
+    let mut b_first: HashMap<String, Value> = HashMap::new();
+    for v in ys.iter() {
+        let k = key_for(v, op_name)?;
+        if set_b.insert(k.clone()) {
+            b_first.insert(k, v.clone());
+        }
+    }
+    let (result_keys, value_lookup): (Vec<String>, &HashMap<String, Value>) = match builtin {
+        Some(Builtin::Setunion) => {
+            let mut keys: Vec<String> = set_a.union(&set_b).cloned().collect();
+            let mut merged = a_first;
+            for (k, v) in &b_first {
+                merged.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            keys.sort();
+            let mut out: Vec<Value> = Vec::with_capacity(keys.len());
+            for k in &keys {
+                if let Some(v) = merged.get(k) {
+                    out.push(v.clone());
+                }
+            }
+            return Ok(Value::List(Arc::new(out)));
+        }
+        Some(Builtin::Setinter) => (
+            set_a.intersection(&set_b).cloned().collect::<Vec<_>>(),
+            &a_first,
+        ),
+        Some(Builtin::Setdiff) => (
+            set_a.difference(&set_b).cloned().collect::<Vec<_>>(),
+            &a_first,
+        ),
+        _ => unreachable!(),
+    };
+    let mut keys = result_keys;
+    keys.sort();
+    let mut out: Vec<Value> = Vec::with_capacity(keys.len());
+    for k in &keys {
+        if let Some(v) = value_lookup.get(k) {
+            out.push(v.clone());
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -2807,9 +4512,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 };
                 Ok(Value::Text(Arc::new(s)))
             }
+            Value::Text(_) => Ok(args[0].clone()),
             other => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("str requires a number, got {:?}", other),
+                format!("str requires a number or text, got {:?}", other),
             )),
         };
     }
@@ -2901,85 +4607,36 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Clamp) && args.len() == 3 {
         return match (&args[0], &args[1], &args[2]) {
-            (Value::Number(x), Value::Number(lo), Value::Number(hi)) => {
-                // Semantics: result = max(lo, min(hi, x)). When lo > hi the
-                // outer max wins and returns lo, so the result is always >= lo.
-                Ok(Value::Number(x.min(*hi).max(*lo)))
-            }
+            (Value::Number(x), Value::Number(lo), Value::Number(hi)) => Ok(clamp_run(*x, *lo, *hi)),
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "clamp requires three numbers".to_string(),
             )),
         };
     }
-    if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 2 {
+    if builtin == Some(Builtin::Min) && args.len() == 2 {
         return match (&args[0], &args[1]) {
-            (Value::Number(a), Value::Number(b)) => {
-                let result = if builtin == Some(Builtin::Min) {
-                    a.min(*b)
-                } else {
-                    a.max(*b)
-                };
-                Ok(Value::Number(result))
-            }
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.min(*b))),
             _ => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("{} requires two numbers", name),
+                "min requires two numbers".to_string(),
             )),
         };
     }
-    if matches!(builtin, Some(Builtin::Argmax | Builtin::Argmin)) && args.len() == 1 {
-        // arg{max,min} xs:L n > n — index of the {max,min} element. numpy
-        // convention: first occurrence wins on ties (strict `<`/`>`).
-        // NaN-propagation: any NaN element makes the result NaN (mirrors
-        // `max`/`min` 1-arg list form on NaN — see `vm_min_max_lst`).
-        let items = match &args[0] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name}: arg must be a list, got {:?}", other),
-                ));
-            }
-        };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
+    if builtin == Some(Builtin::Max) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.max(*b))),
+            _ => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("{name}: cannot take {name} of an empty list"),
-            ));
-        }
-        let is_min = builtin == Some(Builtin::Argmin);
-        let mut best_idx: usize = 0;
-        let mut best_val: Option<f64> = None;
-        for (i, item) in items.iter().enumerate() {
-            match item {
-                Value::Number(n) => {
-                    if n.is_nan() {
-                        return Ok(Value::Number(f64::NAN));
-                    }
-                    match best_val {
-                        None => {
-                            best_val = Some(*n);
-                            best_idx = i;
-                        }
-                        Some(cur) => {
-                            let better = if is_min { *n < cur } else { *n > cur };
-                            if better {
-                                best_val = Some(*n);
-                                best_idx = i;
-                            }
-                        }
-                    }
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name}: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        return Ok(Value::Number(best_idx as f64));
+                "max requires two numbers".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Argmax) && args.len() == 1 {
+        return argmax_argmin_run(false, "argmax", &args[0]);
+    }
+    if builtin == Some(Builtin::Argmin) && args.len() == 1 {
+        return argmax_argmin_run(true, "argmin", &args[0]);
     }
     if builtin == Some(Builtin::Argsort) && args.len() == 1 {
         // argsort xs:L n > L n — sorted-index permutation (ascending).
@@ -3486,6 +5143,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Urldec) && args.len() == 1 {
         return urldec_impl(&args[0]);
     }
+    if builtin == Some(Builtin::Idxof) && args.len() == 2 {
+        return idxof_impl(&args[0], &args[1]);
+    }
     if builtin == Some(Builtin::B64u) && args.len() == 1 {
         return b64u_impl(&args[0]);
     }
@@ -3509,6 +5169,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::CtEq) && args.len() == 2 {
         return ct_eq_impl(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Sha256Hex) && args.len() == 1 {
+        return sha256_hex_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Sha256d) && args.len() == 1 {
+        return sha256d_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::HexRev) && args.len() == 1 {
+        return hex_rev_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Tokcount) && args.len() == 1 {
+        return tokcount_impl(&args[0]);
     }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
@@ -3772,134 +5444,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if n_raw.fract() != 0.0 || n_raw <= 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("chunks: size must be a positive integer, got {n_raw}"),
-            ));
-        }
-        let n = n_raw as usize;
-        let xs = match &args[1] {
-            Value::List(items) => items,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("chunks: requires a list, got {:?}", other),
-                ));
-            }
-        };
-        let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
-        for chunk in xs.chunks(n) {
-            out.push(Value::List(Arc::new(chunk.to_vec())));
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return chunks_run(n_raw, &args[1]);
     }
-    if matches!(
-        builtin,
-        Some(Builtin::Setunion) | Some(Builtin::Setinter) | Some(Builtin::Setdiff)
-    ) && args.len() == 2
-    {
-        let op_name = match builtin {
-            Some(Builtin::Setunion) => "setunion",
-            Some(Builtin::Setinter) => "setinter",
-            Some(Builtin::Setdiff) => "setdiff",
-            _ => unreachable!(),
-        };
-        let xs = match &args[0] {
-            Value::List(items) => items,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{op_name} arg 1 requires a list, got {:?}", other),
-                ));
-            }
-        };
-        let ys = match &args[1] {
-            Value::List(items) => items,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{op_name} arg 2 requires a list, got {:?}", other),
-                ));
-            }
-        };
-        // Build type-prefixed string keys to avoid Number(5)/Text("5") collisions
-        // (same precedent as uniqby post-hotfix). Restrict elements to t/n/b.
-        fn key_for(v: &Value, op_name: &str) -> std::result::Result<String, RuntimeError> {
-            match v {
-                Value::Text(s) => Ok(format!("t:{s}")),
-                Value::Number(n) => {
-                    if *n == (*n as i64) as f64 {
-                        Ok(format!("n:{}", *n as i64))
-                    } else {
-                        Ok(format!("n:{n}"))
-                    }
-                }
-                Value::Bool(b) => Ok(format!("b:{b}")),
-                other => Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "{op_name}: elements must be text, number, or bool, got {:?}",
-                        other
-                    ),
-                )),
-            }
-        }
-        use std::collections::{HashMap, HashSet};
-        let mut set_a: HashSet<String> = HashSet::new();
-        let mut a_first: HashMap<String, Value> = HashMap::new();
-        for v in xs.iter() {
-            let k = key_for(v, op_name)?;
-            if set_a.insert(k.clone()) {
-                a_first.insert(k, v.clone());
-            }
-        }
-        let mut set_b: HashSet<String> = HashSet::new();
-        let mut b_first: HashMap<String, Value> = HashMap::new();
-        for v in ys.iter() {
-            let k = key_for(v, op_name)?;
-            if set_b.insert(k.clone()) {
-                b_first.insert(k, v.clone());
-            }
-        }
-        let (result_keys, value_lookup): (Vec<String>, &HashMap<String, Value>) = match builtin {
-            Some(Builtin::Setunion) => {
-                let mut keys: Vec<String> = set_a.union(&set_b).cloned().collect();
-                // Need a combined lookup; clone into a single map.
-                // Use a static-ish approach: merge into a_first below.
-                let mut merged = a_first;
-                for (k, v) in &b_first {
-                    merged.entry(k.clone()).or_insert_with(|| v.clone());
-                }
-                keys.sort();
-                // Return early with merged map by re-binding locally.
-                let mut out: Vec<Value> = Vec::with_capacity(keys.len());
-                for k in &keys {
-                    if let Some(v) = merged.get(k) {
-                        out.push(v.clone());
-                    }
-                }
-                return Ok(Value::List(Arc::new(out)));
-            }
-            Some(Builtin::Setinter) => (
-                set_a.intersection(&set_b).cloned().collect::<Vec<_>>(),
-                &a_first,
-            ),
-            Some(Builtin::Setdiff) => (
-                set_a.difference(&set_b).cloned().collect::<Vec<_>>(),
-                &a_first,
-            ),
-            _ => unreachable!(),
-        };
-        let mut keys = result_keys;
-        keys.sort();
-        let mut out: Vec<Value> = Vec::with_capacity(keys.len());
-        for k in &keys {
-            if let Some(v) = value_lookup.get(k) {
-                out.push(v.clone());
-            }
-        }
-        return Ok(Value::List(Arc::new(out)));
+    if builtin == Some(Builtin::Setunion) && args.len() == 2 {
+        return setops_run(builtin, &args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Setinter) && args.len() == 2 {
+        return setops_run(builtin, &args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Setdiff) && args.len() == 2 {
+        return setops_run(builtin, &args[0], &args[1]);
     }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
@@ -4392,211 +5946,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(get_many_fetch(&urls))));
     }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
-        let (url, body) = match (&args[0], &args[1]) {
-            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
-            _ => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("pst requires (t, t), got ({:?}, {:?})", args[0], args[1]),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_net(url.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let headers = if args.len() == 3 {
-            match &args[2] {
-                Value::Map(m) => m
-                    .iter()
-                    .map(|(k, v)| {
-                        let vs: String = match v {
-                            Value::Text(s) => (**s).clone(),
-                            other => format!("{other:?}"),
-                        };
-                        (k.to_display_string(), vs)
-                    })
-                    .collect::<Vec<_>>(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("pst headers must be M t t, got {:?}", other),
-                    ));
-                }
-            }
-        } else {
-            vec![]
-        };
-        return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = minreq::post(url.as_str()).with_body(body.as_str());
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, body, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
-        };
+        return post_run(env, args);
     }
-    // HTTP verb cluster (#5z). Same shape as `pst` (PUT, PATCH) or `get`
-    // (DELETE, HEAD, OPTIONS) — optional 3rd-arg (PUT/PAT) or 2nd-arg
-    // (DEL/HD/OPT) `M t t` headers map. Returns `R t t`.
-    if matches!(builtin, Some(Builtin::Put) | Some(Builtin::Pat))
-        && (args.len() == 2 || args.len() == 3)
-    {
-        let name = builtin.unwrap().name();
-        let (url, body) = match (&args[0], &args[1]) {
-            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
-            _ => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} requires (t, t), got ({:?}, {:?})", args[0], args[1]),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_net(url.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let headers = if args.len() == 3 {
-            match &args[2] {
-                Value::Map(m) => m
-                    .iter()
-                    .map(|(k, v)| {
-                        let vs: String = match v {
-                            Value::Text(s) => (**s).clone(),
-                            other => format!("{other:?}"),
-                        };
-                        (k.to_display_string(), vs)
-                    })
-                    .collect::<Vec<_>>(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} headers must be M t t, got {:?}", other),
-                    ));
-                }
-            }
-        } else {
-            vec![]
-        };
-        return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = match builtin {
-                    Some(Builtin::Put) => minreq::put(url.as_str()),
-                    Some(Builtin::Pat) => minreq::patch(url.as_str()),
-                    _ => unreachable!(),
-                }
-                .with_body(body.as_str());
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, body, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
-        };
+    // HTTP verb cluster (#5z). Delegated to #[inline(never)] helpers so the
+    // call_function frame stays small. Each verb gets an explicit `if builtin ==`
+    // guard so the check-dispatch-arms script can measure them individually.
+    if builtin == Some(Builtin::Put) && (args.len() == 2 || args.len() == 3) {
+        return put_pat_run(env, builtin, args);
     }
-    if matches!(
-        builtin,
-        Some(Builtin::Del) | Some(Builtin::Hed) | Some(Builtin::Opt)
-    ) && (args.len() == 1 || args.len() == 2)
-    {
-        let name = builtin.unwrap().name();
-        let url = match &args[0] {
-            Value::Text(u) => u.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} requires text (url), got {:?}", other),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_net(url.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let headers = if args.len() == 2 {
-            match &args[1] {
-                Value::Map(m) => m
-                    .iter()
-                    .map(|(k, v)| {
-                        let vs: String = match v {
-                            Value::Text(s) => (**s).clone(),
-                            other => format!("{other:?}"),
-                        };
-                        (k.to_display_string(), vs)
-                    })
-                    .collect::<Vec<_>>(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} headers must be M t t, got {:?}", other),
-                    ));
-                }
-            }
-        } else {
-            vec![]
-        };
-        return {
-            #[cfg(feature = "http")]
-            {
-                let mut req = match builtin {
-                    Some(Builtin::Del) => minreq::delete(url.as_str()),
-                    Some(Builtin::Hed) => minreq::head(url.as_str()),
-                    Some(Builtin::Opt) => minreq::options(url.as_str()),
-
-                    _ => unreachable!(),
-                };
-                for (k, v) in &headers {
-                    req = req.with_header(k.as_str(), v.as_str());
-                }
-                match req.send() {
-                    Ok(resp) => match resp.as_str() {
-                        Ok(body) => {
-                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
-                        }
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                            "response is not valid UTF-8: {e}"
-                        )))))),
-                    },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-                }
-            }
-            #[cfg(not(feature = "http"))]
-            {
-                let _ = (url, headers);
-                Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string().into(),
-                ))))
-            }
-        };
+    if builtin == Some(Builtin::Pat) && (args.len() == 2 || args.len() == 3) {
+        return put_pat_run(env, builtin, args);
+    }
+    if builtin == Some(Builtin::Del) && (args.len() == 1 || args.len() == 2) {
+        return del_hed_opt_run(env, builtin, args);
+    }
+    if builtin == Some(Builtin::Hed) && (args.len() == 1 || args.len() == 2) {
+        return del_hed_opt_run(env, builtin, args);
+    }
+    if builtin == Some(Builtin::Opt) && (args.len() == 1 || args.len() == 2) {
+        return del_hed_opt_run(env, builtin, args);
     }
     if builtin == Some(Builtin::GetTo) && args.len() == 2 {
         let url = match &args[0] {
@@ -4935,105 +6303,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Cap) && args.len() == 1 {
-        return match &args[0] {
-            Value::Text(s) => {
-                let mut chars = s.chars();
-                let out = match chars.next() {
-                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                };
-                Ok(Value::Text(Arc::new(out)))
-            }
-            other => Err(RuntimeError::new(
-                "ILO-R009",
-                format!("cap requires text, got {:?}", other),
-            )),
-        };
+        return cap_run(&args[0]);
     }
-    if (builtin == Some(Builtin::Padl) || builtin == Some(Builtin::Padr))
-        && (args.len() == 2 || args.len() == 3)
-    {
-        let name = if builtin == Some(Builtin::Padl) {
-            "padl"
-        } else {
-            "padr"
-        };
-        let s = match &args[0] {
-            Value::Text(t) => t.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} arg 1 requires text, got {:?}", other),
-                ));
-            }
-        };
-        let w = match &args[1] {
-            Value::Number(n) => {
-                if !n.is_finite() || n.fract() != 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} width must be a non-negative integer, got {n}"),
-                    ));
-                }
-                if *n < 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name} width must be non-negative, got {n}"),
-                    ));
-                }
-                *n as usize
-            }
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name} arg 2 requires number, got {:?}", other),
-                ));
-            }
-        };
-        // Resolve pad char: explicit arg validated as a 1-Unicode-scalar string,
-        // or ' ' when omitted (2-arg form). Single-char enforcement keeps width-in-chars
-        // semantics meaningful — a multi-char pad would make the output not line up to `w`.
-        let pad_char: char = if args.len() == 3 {
-            match &args[2] {
-                Value::Text(t) => {
-                    let mut iter = t.chars();
-                    match (iter.next(), iter.next()) {
-                        (Some(c), None) => c,
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "{name} pad char must be a 1-character string, got {:?}",
-                                    t.as_str()
-                                ),
-                            ));
-                        }
-                    }
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "{name} pad char must be a 1-character string, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            }
-        } else {
-            ' '
-        };
-        let char_count = s.chars().count();
-        if char_count >= w {
-            return Ok(Value::Text(s));
-        }
-        let pad: String = std::iter::repeat_n(pad_char, w - char_count).collect();
-        let out = if builtin == Some(Builtin::Padl) {
-            format!("{pad}{s}")
-        } else {
-            format!("{s}{pad}")
-        };
-        return Ok(Value::Text(Arc::new(out)));
+    if builtin == Some(Builtin::Padl) && (args.len() == 2 || args.len() == 3) {
+        return padl_padr_run(true, &args);
+    }
+    if builtin == Some(Builtin::Padr) && (args.len() == 2 || args.len() == 3) {
+        return padl_padr_run(false, &args);
     }
     if builtin == Some(Builtin::Ord) && args.len() == 1 {
         return match &args[0] {
@@ -5128,81 +6404,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Fmt) && !args.is_empty() {
-        let template = match &args[0] {
-            Value::Text(s) => s.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("fmt first arg must be text template, got {:?}", other),
-                ));
-            }
-        };
-        let mut result = String::new();
-        let mut arg_idx = 1;
-        let mut chars = template.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '{'
-                && (chars.peek() == Some(&'}')
-                    || chars.peek() == Some(&':')
-                    || chars.peek() == Some(&'.'))
-            {
-                // Collect spec body up to '}'.
-                let mut spec = String::from("{");
-                let mut terminated = false;
-                for sc in chars.by_ref() {
-                    spec.push(sc);
-                    if sc == '}' {
-                        terminated = true;
-                        break;
-                    }
-                }
-                if !terminated {
-                    // Unterminated brace — leave as literal (matches the old
-                    // permissive behaviour for `{a:1}` style non-placeholder
-                    // text that just happens to start with `{`).
-                    result.push_str(&spec);
-                    continue;
-                }
-                match parse_fmt_spec(&spec) {
-                    Some(FmtSpec::Bare) => {
-                        if arg_idx < args.len() {
-                            result.push_str(&format!("{}", args[arg_idx]));
-                            arg_idx += 1;
-                        } else {
-                            result.push_str("{}");
-                        }
-                    }
-                    Some(spec_kind) => {
-                        if arg_idx >= args.len() {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!("fmt template spec `{spec}` has no matching value arg"),
-                            ));
-                        }
-                        let rendered = apply_fmt_spec(&spec_kind, &args[arg_idx]).map_err(|e| {
-                            RuntimeError::new("ILO-R009", format!("fmt spec `{spec}`: {e}"))
-                        })?;
-                        result.push_str(&rendered);
-                        arg_idx += 1;
-                    }
-                    None => {
-                        return Err(RuntimeError::new(
-                            "ILO-R009",
-                            format!(
-                                "fmt: unsupported placeholder spec `{spec}`. \
-                                 Supported: `{{}}`, `{{.Nf}}` / `{{:.Nf}}` (decimal places), \
-                                 `{{:N}}` (right-align width), `{{:Nd}}` (integer width), \
-                                 `{{:<N}}` (left-align width). Zero-padded widths and hex/sign \
-                                 are out of scope; compose via `fmt2` / `padl` / `padr`."
-                            ),
-                        ));
-                    }
-                }
-            } else {
-                result.push(c);
-            }
-        }
-        return Ok(Value::Text(Arc::new(result)));
+        return fmt_run(&args);
     }
     if builtin == Some(Builtin::Ls) && args.len() == 1 {
         // lsd dir > R (L t) t — list non-recursive directory entries (filenames
@@ -5455,6 +6657,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         return match std::fs::metadata(path.as_str()) {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(md) if md.is_dir() => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
@@ -5479,6 +6684,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         return match std::fs::metadata(path.as_str()) {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(md) => match md.modified() {
@@ -5505,6 +6713,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if env.caps.check_read(path.as_str()).is_err() {
+            return Ok(Value::Bool(false));
+        }
         let is = std::fs::metadata(path.as_str())
             .map(|m| m.is_file())
             .unwrap_or(false);
@@ -5522,6 +6733,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if env.caps.check_read(path.as_str()).is_err() {
+            return Ok(Value::Bool(false));
+        }
         let is = std::fs::metadata(path.as_str())
             .map(|m| m.is_dir())
             .unwrap_or(false);
@@ -5586,6 +6800,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         if let Err(msg) = env.caps.check_read(path.as_str()) {
             return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
         }
+        // rd always returns raw text — no extension-based auto-parse.
+        // 2-arg form (rd path fmt) is kept for explicit csv/tsv override but
+        // callers wanting JSON must use `rd-json` or `rd path + jpar`.
         let fmt = if args.len() == 2 {
             match &args[1] {
                 Value::Text(s) => s.as_str().to_owned(),
@@ -5597,16 +6814,32 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         } else {
-            // auto-detect from extension
-            std::path::Path::new(path.as_str())
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("raw")
-                .to_lowercase()
+            "raw".to_owned()
         };
         return match std::fs::read_to_string(path.as_str()) {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(content) => match parse_format(&fmt, &content) {
+                Ok(v) => Ok(Value::Ok(Box::new(v))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e))))),
+            },
+        };
+    }
+    if builtin == Some(Builtin::RdJson) && args.len() == 1 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rd-json requires text path, got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        return match std::fs::read_to_string(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(content) => match parse_format("json", &content) {
                 Ok(v) => Ok(Value::Ok(Box::new(v))),
                 Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e))))),
             },
@@ -5669,91 +6902,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Rdinl) && args.is_empty() {
         return rdinl_impl();
     }
+    // for-line stdin > LazyStdinLines — lazy line iterator over stdin.
+    // Takes exactly one argument: the text literal "stdin".
+    // Returns Value::LazyStdinLines (not wrapped in Result) so it can be
+    // passed directly to `@binding (for-line stdin) {...}` foreach.
+    // On WASM stdin is unavailable; returns Err immediately.
+    if builtin == Some(Builtin::ForLine) && args.len() == 1 {
+        return for_line_impl(&args[0]);
+    }
     if builtin == Some(Builtin::Wr) && (args.len() == 2 || args.len() == 3) {
-        let path = match &args[0] {
-            Value::Text(s) => s.clone(),
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("wr: first arg must be a text path, got {:?}", other),
-                ));
-            }
-        };
-        if let Err(msg) = env.caps.check_write(path.as_str()) {
-            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
-        }
-        let content = if args.len() == 3 {
-            let fmt = match &args[2] {
-                Value::Text(s) => s.clone(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("wr: format arg must be text, got {:?}", other),
-                    ));
-                }
-            };
-            match fmt.as_str() {
-                "csv" | "tsv" => {
-                    let sep = if fmt.as_str() == "csv" { ',' } else { '\t' };
-                    let rows = match &args[1] {
-                        Value::List(l) => l,
-                        other => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "wr: data for {fmt} must be a list of rows, got {:?}",
-                                    other
-                                ),
-                            ));
-                        }
-                    };
-                    write_csv_tsv(rows, sep)?
-                }
-                "json" => {
-                    fn value_to_json(v: &Value) -> serde_json::Value {
-                        match v {
-                            Value::Number(n) => serde_json::Value::from(*n),
-                            Value::Text(s) => serde_json::Value::from(s.as_str()),
-                            Value::Bool(b) => serde_json::Value::from(*b),
-                            Value::List(l) => {
-                                serde_json::Value::Array(l.iter().map(value_to_json).collect())
-                            }
-                            Value::Map(m) => {
-                                let obj: serde_json::Map<String, serde_json::Value> = m
-                                    .iter()
-                                    .map(|(k, v)| (k.to_display_string(), value_to_json(v)))
-                                    .collect();
-                                serde_json::Value::Object(obj)
-                            }
-                            Value::Nil => serde_json::Value::Null,
-                            other => serde_json::Value::from(format!("{other}")),
-                        }
-                    }
-                    serde_json::to_string_pretty(&value_to_json(&args[1]))
-                        .unwrap_or_else(|e| format!("json error: {e}"))
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("wr: unknown format '{other}', expected csv, tsv, or json"),
-                    ));
-                }
-            }
-        } else {
-            match &args[1] {
-                Value::Text(s) => (**s).clone(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("wr: second arg must be text content, got {:?}", other),
-                    ));
-                }
-            }
-        };
-        return match std::fs::write(path.as_str(), &content) {
-            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
-            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-        };
+        return wr_run(env, args);
     }
     if builtin == Some(Builtin::Wra) && args.len() == 2 {
         let path = match &args[0] {
@@ -5787,6 +6945,33 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
                 Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        };
+    }
+    if builtin == Some(Builtin::Wro) && args.len() == 2 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: first arg must be a text path, got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let content = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: second arg must be text content, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::write(path.as_str(), content.as_bytes()) {
+            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
@@ -6009,13 +7194,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
 
     if builtin == Some(Builtin::Env) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(key) => match std::env::var(key.as_str()) {
-                Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
-                Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                    "env var '{}' not set",
-                    key
-                )))))),
-            },
+            Value::Text(key) => {
+                if let Err(msg) = env.caps.check_env(key.as_str()) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+                }
+                match std::env::var(key.as_str()) {
+                    Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
+                    Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "env var '{}' not set",
+                        key
+                    )))))),
+                }
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("env requires text, got {:?}", other),
@@ -6029,6 +7219,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // for future failure modes (non-UTF-8 vars, sandboxed envs). std::env::vars()
     // silently skips non-UTF-8 entries today, so the snapshot is always Ok.
     if builtin == Some(Builtin::EnvAll) && args.is_empty() {
+        // env-all reads the entire environment; check capability using "*" sentinel.
+        if let Err(msg) = env.caps.check_env("*") {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let map: std::collections::HashMap<MapKey, Value> = std::env::vars()
             .map(|(k, v)| (MapKey::Text(k), Value::Text(Arc::new(v))))
             .collect();
@@ -6158,14 +7352,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )
         })?;
         let captures = closure_captures(&args[0]);
-        // Consume args so we can move the input List Arc and try Arc::make_mut
-        // for the RC=1 in-place compact fast path. When the input is sole-owned
-        // we mutate the underlying Vec via Vec::retain — N kept items skip the
-        // per-item Value::clone() the cold path pays. When shared we fall
-        // through to a fresh allocation.
         let mut args_iter = args.into_iter();
-        let fn_arg = args_iter.next().unwrap();
-        let _ = fn_arg;
+        let _ = args_iter.next(); // fn arg
         let (ctx, list_arg) = if args_iter.len() == 2 {
             let c = args_iter.next().unwrap();
             let l = args_iter.next().unwrap();
@@ -6173,7 +7361,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         } else {
             (None, args_iter.next().unwrap())
         };
-        let mut items = match list_arg {
+        let items = match list_arg {
             Value::List(l) => l,
             other => {
                 return Err(RuntimeError::new(
@@ -6182,48 +7370,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        // First pass: evaluate the predicate once per item, recording a bitmap
-        // of keeps so we never call the predicate twice. The predicate may
-        // panic — we don't reorder side effects relative to the cold path.
-        let mut keep: Vec<bool> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            let mut call_args = match &ctx {
-                Some(c) => vec![item.clone(), c.clone()],
-                None => vec![item.clone()],
-            };
-            call_args.extend(captures.iter().cloned());
-            match call_function(env, &fn_name, call_args)? {
-                Value::Bool(true) => keep.push(true),
-                Value::Bool(false) => keep.push(false),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("flt: predicate must return bool, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        // Second pass: branch on RC. Sole-owned -> retain in place (zero
-        // per-item Value::clone()s). Shared -> clone-collect kept items only
-        // (cheaper than cloning the full Vec when many items are dropped).
-        return if Arc::strong_count(&items) == 1 {
-            let inner = Arc::make_mut(&mut items);
-            let mut idx = 0usize;
-            inner.retain(|_| {
-                let k = keep[idx];
-                idx += 1;
-                k
-            });
-            Ok(Value::List(items))
-        } else {
-            let mut result = Vec::with_capacity(keep.iter().filter(|k| **k).count());
-            for (item, &k) in items.iter().zip(keep.iter()) {
-                if k {
-                    result.push(item.clone());
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
-        };
+        return flt_run(env, &fn_name, captures, ctx, items);
     }
     if builtin == Some(Builtin::Ct) && (args.len() == 2 || args.len() == 3) {
         // ct fn xs / ct fn ctx xs  → number of elements where fn returns true.
@@ -6415,40 +7562,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut out: Vec<Value> = Vec::new();
-        for item in items.iter() {
-            let mut call_args = vec![item.clone()];
-            call_args.extend(captures.iter().cloned());
-            let key = call_function(env, &fn_name, call_args)?;
-            // Prefix the hashed key with a type tag so values from distinct
-            // domains never alias each other. Without this, `Number(5)` and
-            // `Text("5")` both stringify to `"5"` and collide.
-            let key_str = match &key {
-                Value::Text(s) => format!("t:{s}"),
-                Value::Number(n) => {
-                    if *n == (*n as i64) as f64 {
-                        format!("n:{}", *n as i64)
-                    } else {
-                        format!("n:{n}")
-                    }
-                }
-                Value::Bool(b) => format!("b:{b}"),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "uniqby: key function must return a string, number, or bool, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            if seen.insert(key_str) {
-                out.push(item.clone());
-            }
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return uniqby_run(env, &fn_name, captures, items);
     }
 
     if builtin == Some(Builtin::Grp) && args.len() == 2 {
@@ -6471,41 +7585,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
-            std::collections::HashMap::new();
-        for item in items.iter() {
-            let mut call_args = vec![item.clone()];
-            call_args.extend(captures.iter().cloned());
-            let key = call_function(env, &fn_name, call_args)?;
-            let map_key = match &key {
-                Value::Text(s) => MapKey::Text((**s).clone()),
-                Value::Number(n) => {
-                    if !n.is_finite() {
-                        return Err(RuntimeError::new(
-                            "ILO-R009",
-                            format!("grp: numeric key must be finite, got {n}"),
-                        ));
-                    }
-                    MapKey::Int(n.floor() as i64)
-                }
-                Value::Bool(b) => MapKey::Text(format!("{b}")),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "grp: key function must return a string, number, or bool, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            groups.entry(map_key).or_default().push(item.clone());
-        }
-        let map: HashMap<MapKey, Value> = groups
-            .into_iter()
-            .map(|(k, v)| (k, Value::List(Arc::new(v))))
-            .collect();
-        return Ok(Value::Map(Arc::new(map)));
+        return grp_run(env, &fn_name, captures, items);
     }
     if builtin == Some(Builtin::Frq) && args.len() == 1 {
         let items = match &args[0] {
@@ -6628,113 +7708,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        // Extract a as Vec<Vec<f64>>
-        let mut a: Vec<Vec<f64>> = Vec::with_capacity(a_rows.len());
-        let mut a_cols: Option<usize> = None;
-        for row in a_rows.iter() {
-            match row {
-                Value::List(r) => {
-                    match a_cols {
-                        None => a_cols = Some(r.len()),
-                        Some(n) if n != r.len() => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "matmul: ragged rows in first arg (expected {n} cols, got {})",
-                                    r.len()
-                                ),
-                            ));
-                        }
-                        _ => {}
-                    }
-                    let mut nums = Vec::with_capacity(r.len());
-                    for v in r.iter() {
-                        match v {
-                            Value::Number(n) => nums.push(*n),
-                            other => {
-                                return Err(RuntimeError::new(
-                                    "ILO-R009",
-                                    format!("matmul: elements must be numbers, got {:?}", other),
-                                ));
-                            }
-                        }
-                    }
-                    a.push(nums);
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("matmul: rows must be lists, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let mut b: Vec<Vec<f64>> = Vec::with_capacity(b_rows.len());
-        let mut b_cols: Option<usize> = None;
-        for row in b_rows.iter() {
-            match row {
-                Value::List(r) => {
-                    match b_cols {
-                        None => b_cols = Some(r.len()),
-                        Some(n) if n != r.len() => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                format!(
-                                    "matmul: ragged rows in second arg (expected {n} cols, got {})",
-                                    r.len()
-                                ),
-                            ));
-                        }
-                        _ => {}
-                    }
-                    let mut nums = Vec::with_capacity(r.len());
-                    for v in r.iter() {
-                        match v {
-                            Value::Number(n) => nums.push(*n),
-                            other => {
-                                return Err(RuntimeError::new(
-                                    "ILO-R009",
-                                    format!("matmul: elements must be numbers, got {:?}", other),
-                                ));
-                            }
-                        }
-                    }
-                    b.push(nums);
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("matmul: rows must be lists, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let a_rows_n = a.len();
-        let a_cols_n = a_cols.unwrap_or(0);
-        let b_rows_n = b.len();
-        let b_cols_n = b_cols.unwrap_or(0);
-        if a_cols_n != b_rows_n {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "matmul: shape mismatch (a is {a_rows_n}x{a_cols_n}, b is {b_rows_n}x{b_cols_n})"
-                ),
-            ));
-        }
-        let mut out: Vec<Value> = Vec::with_capacity(a_rows_n);
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..a_rows_n {
-            let mut row: Vec<Value> = Vec::with_capacity(b_cols_n);
-            for j in 0..b_cols_n {
-                let mut s = 0.0_f64;
-                for k in 0..a_cols_n {
-                    s += a[i][k] * b[k][j];
-                }
-                row.push(Value::Number(s));
-            }
-            out.push(Value::List(Arc::new(row)));
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return matmul_run(a_rows, b_rows);
     }
     if builtin == Some(Builtin::Matvec) && args.len() == 2 {
         // Out-of-line helper to keep this arm's frame off the giant
@@ -6892,15 +7866,6 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Ewm) && args.len() == 2 {
-        let items = match &args[0] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("ewm: first arg must be a list, got {:?}", other),
-                ));
-            }
-        };
         let a = match &args[1] {
             Value::Number(n) => *n,
             other => {
@@ -6910,90 +7875,45 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if !(0.0..=1.0).contains(&a) {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("ewm: smoothing factor a must be in [0, 1], got {}", a),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("ewm: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let out: Vec<Value> = ewm_compute(&nums, a)
-            .into_iter()
-            .map(Value::Number)
-            .collect();
-        return Ok(Value::List(Arc::new(out)));
+        return ewm_run(&args[0], a);
     }
     // Rolling-window reducers — rsum / ravg / rmin (n, xs).
-    if let Some(b) = builtin
-        && matches!(b, Builtin::Rsum | Builtin::Ravg | Builtin::Rmin)
-        && args.len() == 2
-    {
-        let name = b.name();
+    // Explicit per-verb guards so check-dispatch-arms measures each arm individually.
+    if builtin == Some(Builtin::Rsum) && args.len() == 2 {
         let n_f = match &args[0] {
             Value::Number(n) => *n,
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("{name}: first arg n must be a number, got {:?}", other),
+                    format!("rsum: first arg n must be a number, got {:?}", other),
                 ));
             }
         };
-        if !n_f.is_finite() || n_f.fract() != 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "{name}: window size n must be a non-negative integer, got {}",
-                    n_f
-                ),
-            ));
-        }
-        if n_f <= 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("{name}: window size n must be >= 1, got {}", n_f),
-            ));
-        }
-        let n = n_f as usize;
-        let items = match &args[1] {
-            Value::List(l) => l,
+        return rolling_window_run("rsum", Builtin::Rsum, n_f, &args[1]);
+    }
+    if builtin == Some(Builtin::Ravg) && args.len() == 2 {
+        let n_f = match &args[0] {
+            Value::Number(n) => *n,
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("{name}: second arg must be a list, got {:?}", other),
+                    format!("ravg: first arg n must be a number, got {:?}", other),
                 ));
             }
         };
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(v) => nums.push(*v),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name}: list elements must be numbers, got {:?}", other),
-                    ));
-                }
+        return rolling_window_run("ravg", Builtin::Ravg, n_f, &args[1]);
+    }
+    if builtin == Some(Builtin::Rmin) && args.len() == 2 {
+        let n_f = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rmin: first arg n must be a number, got {:?}", other),
+                ));
             }
-        }
-        let computed = match b {
-            Builtin::Rsum => rsum_compute(n, &nums),
-            Builtin::Ravg => ravg_compute(n, &nums),
-            Builtin::Rmin => rmin_compute(n, &nums),
-            _ => unreachable!(),
         };
-        let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
-        return Ok(Value::List(Arc::new(out)));
+        return rolling_window_run("rmin", Builtin::Rmin, n_f, &args[1]);
     }
     if builtin == Some(Builtin::Where) && args.len() == 3 {
         // where cond xs ys > L a — parallel-list conditional select.
@@ -7026,34 +7946,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if cond.len() != xs.len() || cond.len() != ys.len() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "where: length mismatch — cond={}, xs={}, ys={}; all three lists must be the same length",
-                    cond.len(),
-                    xs.len(),
-                    ys.len()
-                ),
-            ));
-        }
-        let mut out = Vec::with_capacity(cond.len());
-        for (i, c) in cond.iter().enumerate() {
-            match c {
-                Value::Bool(true) => out.push(xs[i].clone()),
-                Value::Bool(false) => out.push(ys[i].clone()),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "where: cond element at index {} must be a bool, got {:?}",
-                            i, other
-                        ),
-                    ));
-                }
-            }
-        }
-        return Ok(Value::List(Arc::new(out)));
+        return where_run(cond, xs, ys);
     }
     if builtin == Some(Builtin::Avg) && args.len() == 1 {
         let items = match &args[0] {
@@ -7095,38 +7988,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "median: cannot take median of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("median: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        // Per the NaN contract for math builtins (PR #162): if any input is
-        // NaN, propagate NaN rather than silently sorting it to an arbitrary
-        // position via `partial_cmp(...).unwrap_or(Equal)`.
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let n = nums.len();
-        let m = if n % 2 == 1 {
-            nums[n / 2]
-        } else {
-            (nums[n / 2 - 1] + nums[n / 2]) / 2.0
-        };
-        return Ok(Value::Number(m));
+        return median_run(items);
     }
     if builtin == Some(Builtin::Quantile) && args.len() == 2 {
         let items = match &args[0] {
@@ -7147,40 +8009,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "quantile: cannot take quantile of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("quantile: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        // NaN-propagation: if any input is NaN, return NaN (see median).
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let p = p.clamp(0.0, 1.0);
-        let n = nums.len();
-        if n == 1 {
-            return Ok(Value::Number(nums[0]));
-        }
-        let pos = p * (n - 1) as f64;
-        let lo = pos.floor() as usize;
-        let hi = pos.ceil() as usize;
-        let frac = pos - lo as f64;
-        let q = nums[lo] + frac * (nums[hi] - nums[lo]);
-        return Ok(Value::Number(q));
+        return quantile_run(items, p);
     }
     if builtin == Some(Builtin::Variance) && args.len() == 1 {
         let items = match &args[0] {
@@ -7192,38 +8021,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "variance: cannot take variance of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("variance: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let n = nums.len();
-        if n == 1 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "variance: at least 2 samples required".to_string(),
-            ));
-        }
-        // NaN-propagation: any NaN input → NaN result.
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
-        return Ok(Value::Number(sse / (n - 1) as f64));
+        return variance_run(items);
     }
     if builtin == Some(Builtin::Stdev) && args.len() == 1 {
         let items = match &args[0] {
@@ -7235,38 +8033,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "stdev: cannot take stdev of an empty list".to_string(),
-            ));
-        }
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(n) => nums.push(*n),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("stdev: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let n = nums.len();
-        if n == 1 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "stdev: at least 2 samples required".to_string(),
-            ));
-        }
-        // NaN-propagation: any NaN input → NaN result.
-        if nums.iter().any(|x| x.is_nan()) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
-        return Ok(Value::Number((sse / (n - 1) as f64).sqrt()));
+        return stdev_run(items);
     }
     if builtin == Some(Builtin::Rgx) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -7287,28 +8054,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}"))
-        })?;
-        let result: Vec<Value> = if re.captures_len() > 1 {
-            // Has capture groups — return list of captured group strings
-            re.captures(input)
-                .map(|caps| {
-                    (1..caps.len())
-                        .filter_map(|i| {
-                            caps.get(i)
-                                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            // No capture groups — return list of all matches
-            re.find_iter(input)
-                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                .collect()
-        };
-        return Ok(Value::List(Arc::new(result)));
+        return rgx_run(pattern, input);
     }
     if builtin == Some(Builtin::Rgxall) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -7332,43 +8078,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
-        })?;
-        // Outer shape is always L (L t). Inner-list contents depend on the
-        // pattern:
-        // - No capture groups: inner list is [whole_match] (length 1).
-        // - With capture groups: inner list holds only the groups that
-        //   *participated* in this particular match, in declaration order.
-        //   For straight patterns like `(\w+)=(\d+)` that means N declared
-        //   groups = N inner-list entries on every match. For alternation
-        //   patterns like `(a)|(b)`, only the branch that fired contributes,
-        //   so the inner list can be shorter than the declared group count.
-        //   This matches the `rgx` family's existing filter_map semantics
-        //   and avoids the empty-string-sentinel ambiguity of an alternative
-        //   "always emit N slots" design.
-        let result: Vec<Value> = if re.captures_len() > 1 {
-            re.captures_iter(input)
-                .map(|caps| {
-                    let groups: Vec<Value> = (1..caps.len())
-                        .filter_map(|i| {
-                            caps.get(i)
-                                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                        })
-                        .collect();
-                    Value::List(Arc::new(groups))
-                })
-                .collect()
-        } else {
-            re.find_iter(input)
-                .map(|m| {
-                    Value::List(Arc::new(vec![Value::Text(Arc::new(
-                        m.as_str().to_string(),
-                    ))]))
-                })
-                .collect()
-        };
-        return Ok(Value::List(Arc::new(result)));
+        return rgxall_run(pattern, input);
     }
     if builtin == Some(Builtin::Rgxall1) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -7392,43 +8102,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgxall1: invalid regex pattern: {e}"))
-        })?;
-        // Single-capture-group convenience over rgxall.
-        // - 0 groups: returns the flat list of whole matches (L t).
-        // - 1 group: returns the flat list of capture-1 strings (L t),
-        //   skipping any match where group 1 did not participate
-        //   (parallels rgxall's filter_map semantics for non-participating
-        //   groups under alternation).
-        // - 2+ groups: runtime error pointing the user back at rgxall, which
-        //   returns L (L t) and preserves every group on every match.
-        //   We surface this at runtime rather than verify time because the
-        //   group-count check requires inspecting the literal pattern, and
-        //   patterns often arrive as values from bindings; the verifier
-        //   doesn't track regex group arity.
-        let group_count = re.captures_len().saturating_sub(1);
-        if group_count >= 2 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "rgxall1: pattern has {group_count} capture groups; rgxall1 only supports 0 or 1. Use rgxall for L (L t) with every group preserved."
-                ),
-            ));
-        }
-        let result: Vec<Value> = if group_count == 1 {
-            re.captures_iter(input)
-                .filter_map(|caps| {
-                    caps.get(1)
-                        .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                })
-                .collect()
-        } else {
-            re.find_iter(input)
-                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                .collect()
-        };
-        return Ok(Value::List(Arc::new(result)));
+        return rgxall1_run(pattern, input);
     }
     if builtin == Some(Builtin::RgxallMulti) && args.len() == 2 {
         // rgxall-multi pats:L t line:t > L t
@@ -7468,49 +8142,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut result: Vec<Value> = Vec::new();
-        for (i, pat_val) in pats.iter().enumerate() {
-            let pattern = match pat_val {
-                Value::Text(s) => s.as_str(),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "rgxall-multi: pats[{i}] must be a string pattern, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            let re = regex::Regex::new(pattern).map_err(|e| {
-                RuntimeError::new(
-                    "ILO-R009",
-                    format!("rgxall-multi: invalid regex pattern at index {i}: {e}"),
-                )
-            })?;
-            let group_count = re.captures_len().saturating_sub(1);
-            if group_count >= 2 {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "rgxall-multi: pattern at index {i} has {group_count} capture groups; rgxall-multi only supports 0 or 1 per pattern. Use rgxall for L (L t) with every group preserved."
-                    ),
-                ));
-            }
-            if group_count == 1 {
-                re.captures_iter(input.as_str())
-                    .filter_map(|caps| {
-                        caps.get(1)
-                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                    })
-                    .for_each(|v| result.push(v));
-            } else {
-                re.find_iter(input.as_str())
-                    .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
-                    .for_each(|v| result.push(v));
-            }
-        }
-        return Ok(Value::List(Arc::new(result)));
+        return rgxall_multi_run(&pats, &input);
     }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
         let pattern = match &args[0] {
@@ -7549,12 +8181,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let re = regex::Regex::new(pattern).map_err(|e| {
-            RuntimeError::new("ILO-R009", format!("rgxsub: invalid regex pattern: {e}"))
-        })?;
-        return Ok(Value::Text(Arc::new(
-            re.replace_all(subject, replacement).into_owned(),
-        )));
+        return rgxsub_run(pattern, replacement, subject);
     }
     if builtin == Some(Builtin::Flat) && args.len() == 1 {
         let items = match &args[0] {
@@ -7625,55 +8252,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        if items.is_empty() {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "ifft: input list must not be empty".to_string(),
-            ));
-        }
-        let mut re: Vec<f64> = Vec::with_capacity(items.len());
-        let mut im: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::List(pair) if pair.len() == 2 => {
-                    let r = match &pair[0] {
-                        Value::Number(n) => *n,
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                "ifft: pair elements must be numbers".to_string(),
-                            ));
-                        }
-                    };
-                    let i = match &pair[1] {
-                        Value::Number(n) => *n,
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "ILO-R009",
-                                "ifft: pair elements must be numbers".to_string(),
-                            ));
-                        }
-                    };
-                    re.push(r);
-                    im.push(i);
-                }
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "ifft: each element must be a [real, imag] pair, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            }
-        }
-        let n = next_pow2(re.len());
-        re.resize(n, 0.0);
-        im.resize(n, 0.0);
-        cooley_tukey(&mut re, &mut im, true);
-        let result: Vec<Value> = re.into_iter().map(Value::Number).collect();
-        return Ok(Value::List(Arc::new(result)));
+        return ifft_run(items);
     }
 
     // Sum type variant constructor: `Circle 5.0` or `red` (no payload)
@@ -7743,13 +8322,15 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
             let saved_vars = std::mem::take(&mut env.vars);
             let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
+            // Save and reset the defer stack for this call frame.
+            let saved_defers = std::mem::take(&mut env.defer_stack);
 
             let mut cur_params = params;
             let mut cur_body = body;
             let mut cur_args = args;
             let mut cur_func_name = func_name;
 
-            let final_result = loop {
+            let body_result = loop {
                 env.vars.clear();
                 env.scope_marks.clear();
                 env.scope_marks.push(0);
@@ -7803,9 +8384,30 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     },
                 }
             };
+
+            // Run deferred expressions LIFO.  `defer` always fires; `errdefer`
+            // fires only on the error path.  The error path covers both:
+            //   1. A Rust-level RuntimeError (e.g. ILO-R004 arity mismatch).
+            //   2. The function returning a `Value::Err(...)` ilo error value
+            //      (e.g. `ret ^"msg"` or a `!`-propagated error).
+            // Defer errors are silently ignored so a failing defer doesn't
+            // hide the original error.
+            let is_error = matches!(&body_result, Err(_) | Ok(Value::Err(_)));
+            let frame_defers = std::mem::take(&mut env.defer_stack);
+            for (defer_expr, defer_kind) in frame_defers.into_iter().rev() {
+                let should_run = match defer_kind {
+                    crate::ast::DeferKind::Always => true,
+                    crate::ast::DeferKind::OnError => is_error,
+                };
+                if should_run {
+                    let _ = eval_expr(env, &defer_expr);
+                }
+            }
+
             env.vars = saved_vars;
             env.scope_marks = saved_marks;
-            final_result
+            env.defer_stack = saved_defers;
+            body_result
         }
         Decl::Tool { name, .. } => {
             if let Some(ref _provider) = env.tool_provider {
@@ -7895,6 +8497,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
+        Value::LazyStdinLines(_) => serde_json::Value::String("<stdin-lines>".to_string()),
     }
 }
 
@@ -7993,15 +8596,44 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         // Tail position only propagates to the LAST statement. Earlier
         // statements are not in tail position by definition.
         let stmt_is_tail = is_tail && i + 1 == n;
+        // Update current span so sub-expression trace events can report a line.
+        CURRENT_STMT_SPAN.with(|s| *s.borrow_mut() = spanned.span);
         match eval_stmt(env, &spanned.node, stmt_is_tail) {
-            Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
-            Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
-            Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
+            Ok(Some(BodyResult::Return(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                return Ok(BodyResult::Return(v));
+            }
+            Ok(Some(BodyResult::Break(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                return Ok(BodyResult::Break(v));
+            }
+            Ok(Some(BodyResult::Continue)) => {
+                fire_trace_event(env, spanned, Value::Nil);
+                return Ok(BodyResult::Continue);
+            }
             Ok(Some(BodyResult::TailCall { callee, args })) => {
+                fire_trace_event(env, spanned, Value::Nil);
                 return Ok(BodyResult::TailCall { callee, args });
             }
-            Ok(Some(BodyResult::Value(v))) => last = v,
-            Ok(None) => {}
+            Ok(Some(BodyResult::Value(v))) => {
+                fire_trace_event(env, spanned, v.clone());
+                last = v;
+            }
+            Ok(None) => {
+                // For Let statements the assigned value is available in env.
+                // Use it as the result so the trace shows what was bound.
+                let result = if let Stmt::Let { name, .. } = &spanned.node {
+                    env.vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k == name)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(Value::Nil)
+                } else {
+                    Value::Nil
+                };
+                fire_trace_event(env, spanned, result);
+            }
             Err(mut e) => {
                 // Auto-unwrap propagation: convert to early return
                 if let Some(val) = e.propagate_value.take() {
@@ -8018,6 +8650,114 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<Bo
         }
     }
     Ok(BodyResult::Value(last))
+}
+
+/// Fire the TRACE_HOOK (if installed) after a statement executes.
+/// Extracts line number from the span and collects current bindings.
+#[inline]
+fn fire_trace_event(env: &Env, spanned: &Spanned<Stmt>, result: Value) {
+    let has_hook = TRACE_HOOK.with(|h| h.borrow().is_some());
+    if !has_hook {
+        return;
+    }
+
+    let span = spanned.span;
+
+    // Resolve 1-based line number from the span.
+    let (line, stmt_text) = TRACE_SOURCE.with(|src| {
+        if let Some(ref source) = *src.borrow() {
+            let sm = crate::ast::SourceMap::new(source);
+            let (line, _col) = sm.lookup(span.start);
+            let text = sm.line_text(source, line).trim().to_string();
+            (line, text)
+        } else {
+            (0, String::new())
+        }
+    });
+
+    // Snapshot current bindings.
+    let bindings: Vec<(String, Value)> = env
+        .vars
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    TRACE_HOOK.with(|h| {
+        if let Some(ref mut hook) = *h.borrow_mut() {
+            hook(TraceEvent {
+                line,
+                stmt: stmt_text,
+                bindings,
+                result,
+            });
+        }
+    });
+}
+
+/// Fire the EXPR_TRACE_HOOK (if installed) after a sub-expression evaluates.
+/// `span` is the byte span of the expression; `expr_text` is the source slice.
+#[inline]
+fn fire_expr_trace_event(expr: &Expr, span: Span, result: &Value) {
+    let has_hook = EXPR_TRACE_HOOK.with(|h| h.borrow().is_some());
+    if !has_hook {
+        return;
+    }
+
+    // Collect Ref names touched by this expression.
+    let refs = collect_refs(expr);
+
+    let (line, expr_text) = TRACE_SOURCE.with(|src| {
+        if let Some(ref source) = *src.borrow() {
+            let sm = crate::ast::SourceMap::new(source);
+            let (line, _col) = sm.lookup(span.start);
+            // Use the span slice when available, else fall back to line text.
+            let text = source
+                .get(span.start..span.end)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| sm.line_text(source, line).trim().to_string());
+            (line, text)
+        } else {
+            (0, String::new())
+        }
+    });
+
+    EXPR_TRACE_HOOK.with(|h| {
+        if let Some(ref mut hook) = *h.borrow_mut() {
+            hook(ExprTraceEvent {
+                line,
+                expr: expr_text,
+                refs,
+                result: result.clone(),
+            });
+        }
+    });
+}
+
+/// Collect all `Ref` names reachable from an expression (shallow, non-recursive
+/// into function bodies / closures).
+fn collect_refs(expr: &Expr) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_refs_inner(expr, &mut out);
+    out
+}
+
+fn collect_refs_inner(expr: &Expr, out: &mut Vec<String>) {
+    match expr {
+        Expr::Ref(name) => out.push(name.clone()),
+        Expr::Field { object, .. } => collect_refs_inner(object, out),
+        Expr::Index { object, .. } => collect_refs_inner(object, out),
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_refs_inner(a, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_refs_inner(left, out);
+            collect_refs_inner(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_refs_inner(operand, out),
+        _ => {}
+    }
 }
 
 /// If `value` is the self-rebind accumulator shape `name = mset name k v`,
@@ -8073,7 +8813,9 @@ fn expr_refers_to(name: &str, expr: &Expr) -> bool {
         Expr::UnaryOp { operand, .. } => expr_refers_to(name, operand),
         Expr::Ok(inner) | Expr::Err(inner) => expr_refers_to(name, inner),
         Expr::List(items) => items.iter().any(|e| expr_refers_to(name, e)),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_refers_to(name, e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_refers_to(name, e))
+        }
         // Conservative: assume Match arms might reference `name`. Falls back
         // to the general path, which is correct (just slower) in the rare
         // case where a self-rebind RHS is wrapped in a match.
@@ -8094,6 +8836,7 @@ fn expr_refers_to(name: &str, expr: &Expr) -> bool {
                 || expr_refers_to(name, else_expr)
         }
         Expr::MakeClosure { captures, .. } => captures.iter().any(|c| expr_refers_to(name, c)),
+        Expr::Todo(inner) | Expr::Panic(inner) => expr_refers_to(name, inner),
         Expr::Literal(_) => false,
     }
 }
@@ -8237,6 +8980,12 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             {
                 let val = eval_self_rebind_concat(env, rhs_expr, prev)?;
                 env.set(name, val);
+                return Ok(None);
+            }
+            // `_=expr` — explicit discard bind. Evaluate for side effects only;
+            // do not allocate a slot for `_` (it's a sigil, not a real binding).
+            if name == "_" {
+                eval_expr(env, value)?;
                 return Ok(None);
             }
             let val = eval_expr(env, value)?;
@@ -8404,6 +9153,47 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                     }
                     Ok(Some(BodyResult::Value(last)))
                 }
+                // `for-line stdin` produces a lazy stdin iterator.
+                // We read one line at a time so the loop can process
+                // unbounded streams (e.g. `tail -f`) without buffering.
+                // Partial trailing lines at EOF are emitted unchanged.
+                // I/O errors terminate the loop via RuntimeError.
+                Value::LazyStdinLines(handle) => {
+                    let mut last = Value::Nil;
+                    loop {
+                        let line = handle.next_line();
+                        match line {
+                            None => break,
+                            Some(Err(e)) => {
+                                return Err(RuntimeError::new(
+                                    "ILO-R012",
+                                    format!("for-line: stdin read error: {}", e),
+                                ));
+                            }
+                            Some(Ok(s)) => {
+                                env.push_scope();
+                                env.define(binding, Value::Text(Arc::new(s)));
+                                let result = eval_body(env, body, false);
+                                env.pop_scope();
+                                match result? {
+                                    BodyResult::Return(v) => {
+                                        return Ok(Some(BodyResult::Return(v)));
+                                    }
+                                    BodyResult::Break(v) => {
+                                        last = v;
+                                        break;
+                                    }
+                                    BodyResult::Continue => continue,
+                                    BodyResult::TailCall { .. } => {
+                                        unreachable!("TailCall escaping non-tail loop body");
+                                    }
+                                    BodyResult::Value(v) => last = v,
+                                }
+                            }
+                        }
+                    }
+                    Ok(Some(BodyResult::Value(last)))
+                }
                 _ => Err(RuntimeError::new("ILO-R007", "foreach requires a list")),
             }
         }
@@ -8411,6 +9201,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             binding,
             start,
             end,
+            step,
             body,
         } => {
             let start_val = eval_expr(env, start)?;
@@ -8428,8 +9219,17 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 Value::Number(n) => n as i64,
                 _ => return Err(RuntimeError::new("ILO-R007", "range end must be a number")),
             };
+            let st: i64 = if let Some(step_expr) = step {
+                match eval_expr(env, step_expr)? {
+                    Value::Number(n) => n as i64,
+                    _ => return Err(RuntimeError::new("ILO-R007", "range step must be a number")),
+                }
+            } else {
+                1
+            };
             let mut last = Value::Nil;
-            for i in s..e {
+            let mut i = s;
+            while i < e {
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
                 // Range body is not in tail position; see ForEach above.
@@ -8443,12 +9243,16 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                         last = v;
                         break;
                     }
-                    BodyResult::Continue => continue,
+                    BodyResult::Continue => {
+                        i += st;
+                        continue;
+                    }
                     BodyResult::TailCall { .. } => {
                         unreachable!("TailCall escaping non-tail range body");
                     }
                     BodyResult::Value(v) => last = v,
                 }
+                i += st;
             }
             Ok(Some(BodyResult::Value(last)))
         }
@@ -8487,6 +9291,12 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             Ok(Some(BodyResult::Break(val)))
         }
         Stmt::Continue => Ok(Some(BodyResult::Continue)),
+        Stmt::Defer { expr, kind } => {
+            // Register the cleanup expression onto the per-frame defer stack.
+            // Execution happens at function exit (LIFO), handled by call_function.
+            env.defer_stack.push((expr.clone(), *kind));
+            Ok(None)
+        }
         Stmt::Expr(expr) => {
             // Tail context: dispatch via the helper so the TailCall
             // synthesis locals (Option<Result<(String, Vec<Value>)>>) stay
@@ -8611,6 +9421,11 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             };
             arg_vals.extend(extra_captures);
             let result = call_function(env, &callee, arg_vals)?;
+            // Fire sub-expression event for this call (depth=expr mode).
+            {
+                let span = CURRENT_STMT_SPAN.with(|s| *s.borrow());
+                fire_expr_trace_event(expr, span, &result);
+            }
             match *unwrap {
                 UnwrapMode::None => Ok(result),
                 UnwrapMode::Propagate => match result {
@@ -8666,7 +9481,13 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             }
             let l = eval_expr(env, left)?;
             let r = eval_expr(env, right)?;
-            eval_binop(op, &l, &r)
+            let result = eval_binop(op, &l, &r)?;
+            // Fire sub-expression event for this binary op (depth=expr mode).
+            {
+                let span = CURRENT_STMT_SPAN.with(|s| *s.borrow());
+                fire_expr_trace_event(expr, span, &result);
+            }
+            Ok(result)
         }
         Expr::UnaryOp { op, operand } => {
             let val = eval_expr(env, operand)?;
@@ -8692,6 +9513,16 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 vals.push(eval_expr(env, item)?);
             }
             Ok(Value::List(Arc::new(vals)))
+        }
+        Expr::AnonRecord { fields } => {
+            let mut field_map = HashMap::new();
+            for (name, val_expr) in fields {
+                field_map.insert(name.clone(), eval_expr(env, val_expr)?);
+            }
+            Ok(Value::Record {
+                type_name: "__anon".to_string(),
+                fields: field_map,
+            })
         }
         Expr::Record { type_name, fields } => {
             let mut field_map = HashMap::new();
@@ -8777,6 +9608,20 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 fn_name: fn_name.clone(),
                 captures: cap_vals,
             })
+        }
+        Expr::Todo(reason) => {
+            let msg = match eval_expr(env, reason)? {
+                Value::Text(s) => s.to_string(),
+                v => format!("{v}"),
+            };
+            Err(RuntimeError::new("ILO-R020", format!("todo: {msg}")))
+        }
+        Expr::Panic(reason) => {
+            let msg = match eval_expr(env, reason)? {
+                Value::Text(s) => s.to_string(),
+                v => format!("{v}"),
+            };
+            Err(RuntimeError::new("ILO-R021", format!("panic: {msg}")))
         }
     }
 }
@@ -8941,6 +9786,15 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
             } else {
                 None
             }
+        }
+        Pattern::Or(alts) => {
+            // Matches if any alternative matches; bindings from the first matching alt.
+            for alt in alts {
+                if let Some(bindings) = match_pattern(alt, value) {
+                    return Some(bindings);
+                }
+            }
+            None
         }
     }
 }
@@ -9108,6 +9962,35 @@ fn rdinl_impl() -> Result<Value> {
             }
             Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))),
         })
+    }
+}
+
+/// `for-line` implementation — returns a lazy stdin line iterator.
+///
+/// Takes one argument which must be the text "stdin". Returns
+/// `Value::LazyStdinLines` so callers can iterate with `@binding` foreach.
+/// On WASM stdin is unavailable; returns `Err` immediately.
+fn for_line_impl(source: &Value) -> Result<Value> {
+    match source {
+        Value::Text(s) if s.as_str() == "stdin" => {
+            #[cfg(target_family = "wasm")]
+            {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                    "for-line: stdin not available on wasm".to_string(),
+                )))));
+            }
+            #[cfg(not(target_family = "wasm"))]
+            {
+                Ok(Value::LazyStdinLines(StdinLinesHandle::new()))
+            }
+        }
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "for-line: argument must be the text \"stdin\", got {:?}",
+                other
+            ),
+        )),
     }
 }
 
@@ -10469,12 +11352,9 @@ mod tests {
 
     #[test]
     fn err_str_wrong_type() {
-        let err = run_str_err(
-            r#"f x:t>t;str x"#,
-            Some("f"),
-            vec![Value::Text(Arc::new("hi".to_string()))],
-        );
-        assert!(err.contains("str requires a number"));
+        // str now accepts text (identity) and number; bool triggers the error
+        let err = run_str_err(r#"f x:_ >t;str x"#, Some("f"), vec![Value::Bool(true)]);
+        assert!(err.contains("str requires"));
     }
 
     #[test]
@@ -11032,6 +11912,7 @@ mod tests {
         Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11042,6 +11923,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11110,6 +11992,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "c".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11122,6 +12005,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "b".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11132,6 +12016,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "a".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -13635,6 +14520,68 @@ mod tests {
         assert!(err.contains("rd") || err.contains("format"), "got: {err}");
     }
 
+    // ILO-374: rd on a .json path must return raw text, not a parsed value.
+    #[test]
+    fn interpret_rd_json_path_returns_raw_text() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_interp_rd_json_raw.json");
+        std::fs::write(&path, r#"{"key":"value"}"#).unwrap();
+        let path_str = path.to_str().unwrap().to_string();
+        let result = run_str(
+            "f p:t>R t t;rd p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path_str))],
+        );
+        std::fs::remove_file(&path).ok();
+        match &result {
+            Value::Ok(inner) => assert!(
+                matches!(inner.as_ref(), Value::Text(_)),
+                "rd on .json must return raw text, not {:?}",
+                inner
+            ),
+            other => panic!("expected Ok(text), got {other:?}"),
+        }
+    }
+
+    // ILO-374: rd-json reads and parses a JSON file.
+    #[test]
+    fn interpret_rd_json_builtin_parses_json() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_interp_rd_json_builtin.json");
+        std::fs::write(&path, r#"{"key":"value"}"#).unwrap();
+        let path_str = path.to_str().unwrap().to_string();
+        let result = run_str(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path_str))],
+        );
+        std::fs::remove_file(&path).ok();
+        match &result {
+            Value::Ok(inner) => assert!(
+                !matches!(inner.as_ref(), Value::Text(_)),
+                "rd-json must return parsed value, not raw text"
+            ),
+            other => panic!("expected Ok(parsed), got {other:?}"),
+        }
+    }
+
+    // ILO-374: rd-json on non-existent file returns Err.
+    #[test]
+    fn interpret_rd_json_not_found() {
+        let result = run_str(
+            "f p:t>R _ t;rd-json p",
+            Some("f"),
+            vec![Value::Text(Arc::new(
+                "/nonexistent/ilo_rd_json_test.json".to_string(),
+            ))],
+        );
+        assert!(
+            matches!(result, Value::Err(_)),
+            "expected Err for missing file, got {:?}",
+            result
+        );
+    }
+
     // L758: rdb wrong first arg
     #[test]
     fn interpret_rdb_wrong_first_arg() {
@@ -13888,6 +14835,9 @@ mod tests {
             Decl::Use {
                 path: "x.ilo".to_string(),
                 only: None,
+                alias: None,
+                predicate: None,
+                alt_path: None,
                 span: Span { start: 0, end: 0 },
             },
         );
@@ -15460,5 +16410,37 @@ f>t;s=point;?s{circle(r):"c";_:"other"}"#;
 area s:shape>n;?s{circle(r):*3 r;square(side):*side side;point:0}
 f>n;+area(circle 2) area(square 3)"#;
         assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(6.0 + 9.0));
+    }
+
+    // ---- todo / panic typed expressions (ILO-410) ----
+
+    #[test]
+    fn todo_expr_produces_runtime_error() {
+        let prog = parse_program(r#"f>n;todo "not yet""#);
+        let result = run(&prog, None, vec![]);
+        match result {
+            Err(e) => {
+                assert_eq!(e.code, "ILO-R020", "expected ILO-R020, got {}", e.code);
+                assert!(e.message.contains("not yet"), "message was: {}", e.message);
+            }
+            Ok(v) => panic!("expected runtime error from todo, got value: {:?}", v),
+        }
+    }
+
+    #[test]
+    fn panic_expr_produces_runtime_error() {
+        let prog = parse_program(r#"f>n;panic "unreachable""#);
+        let result = run(&prog, None, vec![]);
+        match result {
+            Err(e) => {
+                assert_eq!(e.code, "ILO-R021", "expected ILO-R021, got {}", e.code);
+                assert!(
+                    e.message.contains("unreachable"),
+                    "message was: {}",
+                    e.message
+                );
+            }
+            Ok(v) => panic!("expected runtime error from panic, got value: {:?}", v),
+        }
     }
 }

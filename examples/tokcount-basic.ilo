@@ -1,0 +1,28 @@
+-- tokcount-basic.ilo: regression test for the tokcount builtin (ILO-47).
+--
+-- `tokcount s > n` returns an approximate cl100k_base token count for
+-- string s using a bytes/3.4 approximation (within ~5% for English prose).
+-- The exact value is capped with flr for display; the raw float matches the
+-- formula directly.
+--
+-- A follow-up (ILO-47) will replace this stub with the full tiktoken-rs BPE
+-- tokeniser once the crate's WASM and licence story is confirmed.
+
+-- Empty string: 0 tokens (ceil(0 / 3.4) = 0).
+empty>n;tokcount ""
+
+-- "hello world" = 11 bytes → ceil(11/3.4) = ceil(3.23) = 4
+hello>n;tokcount "hello world"
+
+-- Single ASCII char: 1 byte → ceil(1/3.4) = ceil(0.29) = 1
+single>n;tokcount "x"
+
+-- Type error: non-text input raises ILO-R009.
+bad-type>R n t;r=rd "nonexistent-file-xyz.txt";?r{~_:tokcount 42;^e:^e}
+
+-- run: empty
+-- out: 0
+-- run: hello
+-- out: 4
+-- run: single
+-- out: 1
