@@ -671,12 +671,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // OP_CALL_DYN + a dedicated finalizer opcode (OP_GRP_BY_KEY /
         // OP_UNIQ_BY_KEY / OP_SRT_BY_KEY) or, where no finalizer is needed,
         // a tail OP_WRAPOK (mapr). See the matching arms in the compiler.
-        // ct fn xs / ct fn ctx xs — count by predicate. Same bridge
-        // contract as flt 2/3; tree interpreter handles the user-fn
-        // callback via ACTIVE_AST_PROGRAM. Named `ct` to avoid
-        // `cnt`-as-continue keyword reservation.
-        (Builtin::Ct, 2) => true,
-        (Builtin::Ct, 3) => true,
+        // ct fn xs / ct fn ctx xs lifted to native VM dispatch in PR C
+        // of ILO-45. Inline counter loop, no finalizer opcode needed —
+        // the bool typecheck mirrors flt's and OP_ADDK_N handles the
+        // per-true increment on the numeric-accumulator fast path.
         // rsrt fn xs (2-arg, ascending key) lifted to native dispatch via
         // OP_RSRT_BY_KEY in PR B of ILO-45.
         // mapr fn xs was on the bridge through Phase 2 PR3; PR 3b lifts it
@@ -5251,6 +5249,115 @@ impl RegCompiler {
 
                             self.next_reg = acc_reg + 1;
                             return acc_reg;
+                        }
+                        // ct fn xs / ct fn ctx xs → count by predicate. Same
+                        // bool-typecheck shape as flt, but the accumulator is
+                        // a number (incremented on true) instead of a list.
+                        // Lifted off the tree-bridge in PR C of ILO-45.
+                        //
+                        // No finalizer opcode needed — the loop produces the
+                        // result directly. Result is a Number; auto-unwrap is
+                        // rejected by verify upstream (ct doesn't return Result).
+                        (Builtin::Ct, 2) | (Builtin::Ct, 3) => {
+                            let has_ctx = args.len() == 3;
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let ctx_reg = if has_ctx {
+                                Some(self.compile_expr(&args[1]))
+                            } else {
+                                None
+                            };
+                            let xs_reg =
+                                self.compile_expr(if has_ctx { &args[2] } else { &args[1] });
+
+                            // Counter starts at 0. Number-only register so the
+                            // OP_ADDK_N hot path applies on every iteration.
+                            let counter_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, counter_reg, zero_ki);
+                            self.reg_is_num[counter_reg as usize] = true;
+                            let one_ki = self.current.add_const(Value::Number(1.0));
+
+                            let idx_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // OP_CALL_DYN ABI: res + N contiguous args.
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg0_reg = self.alloc_reg();
+                            assert!(
+                                arg0_reg == res_reg + 1,
+                                "ct HOF: arg0 reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg0_reg, nil_ki);
+                            let arg1_reg = if has_ctx {
+                                let r = self.alloc_reg();
+                                assert!(
+                                    r == arg0_reg + 1,
+                                    "ct HOF: arg1 reg must follow arg0 reg contiguously"
+                                );
+                                self.emit_abx(OP_LOADK, r, nil_ki);
+                                Some(r)
+                            } else {
+                                None
+                            };
+
+                            // Scratch for bool typecheck.
+                            let isb_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, isb_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg0_reg, item_reg, 0);
+                            let argc = if let (Some(cr), Some(a1)) = (ctx_reg, arg1_reg) {
+                                self.emit_abc(OP_MOVE, a1, cr, 0);
+                                2
+                            } else {
+                                1
+                            };
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, argc);
+
+                            // Predicate must return bool. Same error shape as flt.
+                            self.emit_abc(OP_ISBOOL, isb_reg, res_reg, 0);
+                            let typeok_jump = self.emit_jmpt(isb_reg);
+                            let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+                                "ct: predicate must return bool".to_string(),
+                            )));
+                            self.emit_abx(OP_LOADK, arg0_reg, err_text_ki);
+                            self.emit_abc(OP_WRAPERR, arg0_reg, arg0_reg, 0);
+                            self.emit_abc(OP_PANIC_UNWRAP, 0, arg0_reg, 0);
+                            self.current.patch_jump(typeok_jump);
+
+                            // On true: counter += 1. On false: skip.
+                            let skip_inc_jump = self.emit_jmpf(res_reg);
+                            if one_ki <= 255 {
+                                self.emit_abc(OP_ADDK_N, counter_reg, counter_reg, one_ki as u8);
+                            } else {
+                                // K-table overflow fallback: load 1 then OP_ADD.
+                                let one_reg = self.alloc_reg();
+                                self.emit_abx(OP_LOADK, one_reg, one_ki);
+                                self.emit_abc(OP_ADD, counter_reg, counter_reg, one_reg);
+                            }
+                            self.current.patch_jump(skip_inc_jump);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            // Counter is a Number; keep its numeric flag so
+                            // downstream arithmetic stays on the fast path.
+                            self.next_reg = counter_reg + 1;
+                            return counter_reg;
                         }
                         // flatmap fn xs → native HOF loop. The fn returns a list
                         // per element; we splice each result list into the accumulator
