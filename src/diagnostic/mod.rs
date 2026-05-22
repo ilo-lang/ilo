@@ -251,10 +251,7 @@ fn derive_fmt_prefix(d: &Diagnostic, source: &str) -> Option<FixPlan> {
 fn derive_underscore_hyphen(d: &Diagnostic, source: &str) -> Option<FixPlan> {
     let suggestion = d.suggestion.as_deref()?;
     // Extract the backtick-quoted corrected form.
-    let after = suggestion
-        .rsplit('`')
-        .nth(1)?
-        .to_string();
+    let after = suggestion.rsplit('`').nth(1)?.to_string();
     if after.is_empty() {
         return None;
     }
@@ -845,7 +842,13 @@ mod tests {
         let fmt_end = source.find(";x").unwrap(); // up to next statement
         let d = Diagnostic::warning("bare 'fmt' result is discarded")
             .with_code("ILO-T032")
-            .with_span(Span { start: fmt_start, end: fmt_end }, "")
+            .with_span(
+                Span {
+                    start: fmt_start,
+                    end: fmt_end,
+                },
+                "",
+            )
             .with_suggestion("did you mean `prnt fmt ...` to print?")
             .with_source(source.to_string())
             .derive_fix_plan();
@@ -861,7 +864,9 @@ mod tests {
         let d = Diagnostic::error("unexpected token 'my_var'")
             .with_code("ILO-L002")
             .with_span(Span { start: 0, end: 6 }, "here")
-            .with_suggestion("underscores are not allowed in identifiers; use hyphens (e.g. `my-var`)")
+            .with_suggestion(
+                "underscores are not allowed in identifiers; use hyphens (e.g. `my-var`)",
+            )
             .with_source(source.to_string())
             .derive_fix_plan();
         let plan = d.fix_plan.expect("fix_plan should be derived for L002");
@@ -951,10 +956,15 @@ mod tests {
         let d = Diagnostic::error("return type mismatch: expected b, got n")
             .with_code("ILO-T008")
             .with_span(Span { start: 8, end: 9 }, "")
-            .with_suggestion("change the return expression to b, or update the return type annotation")
+            .with_suggestion(
+                "change the return expression to b, or update the return type annotation",
+            )
             .with_source(source.to_string())
             .derive_fix_plan();
-        assert!(d.fix_plan.is_none(), "no fix_plan for non-cast generic type");
+        assert!(
+            d.fix_plan.is_none(),
+            "no fix_plan for non-cast generic type"
+        );
     }
 
     // ---- ILO-P011 fix_plan derivation ----
@@ -996,7 +1006,13 @@ mod tests {
         let expr_end = source.len();
         let d = Diagnostic::error("`??` is nil-coalesce for `O T`, not `R T E`")
             .with_code("ILO-T041")
-            .with_span(Span { start: expr_start, end: expr_end }, "")
+            .with_span(
+                Span {
+                    start: expr_start,
+                    end: expr_end,
+                },
+                "",
+            )
             .with_suggestion("use `default-on-err r d` or `?r{~v:v ^_:default}` for full control")
             .with_source(source.to_string())
             .derive_fix_plan();
@@ -1031,5 +1047,4 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(v["fix_plan"]["path"], "/tmp/test.ilo");
     }
-
 }
