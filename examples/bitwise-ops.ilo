@@ -1,0 +1,43 @@
+-- bitwise-ops.ilo — exercises all 7 bitwise builtins (ILO-58 MVP).
+-- All ops work on f64 values interpreted as u32 (mod 2^32).
+
+-- band x y — bitwise AND
+and-demo>n;band 12 10
+
+-- bor x y — bitwise OR
+or-demo>n;bor 12 10
+
+-- bxor x y — bitwise XOR
+xor-demo>n;bxor 12 10
+
+-- bnot x — bitwise NOT (32-bit)
+not-demo>n;bnot 0
+
+-- bshl x n — shift left
+shl-demo>n;bshl 1 4
+
+-- bshr x n — logical shift right
+shr-demo>n;bshr 256 3
+
+-- brot x n — rotate left 32-bit
+rot-demo>n;brot 1 1
+
+-- Crypto-style 32-bit mixing step (0xDEADBEEF = 3735928559)
+mix-demo>n;x=3735928559;bxor (brot x 13) (bshr x 7)
+
+-- run: and-demo
+-- out: 8
+-- run: or-demo
+-- out: 14
+-- run: xor-demo
+-- out: 6
+-- run: not-demo
+-- out: 4294967295
+-- run: shl-demo
+-- out: 16
+-- run: shr-demo
+-- out: 32
+-- run: rot-demo
+-- out: 2
+-- run: mix-demo
+-- out: 3059785896

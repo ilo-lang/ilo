@@ -428,6 +428,45 @@ pub enum Builtin {
     // eligible: pure t → t, no FnRef args, no I/O. Appended last to
     // preserve every existing on-wire tag.
     HexRev,
+
+    // Bitwise ops (f64-only, mod 2^32 semantics). All tree-bridge eligible:
+    // pure numeric-in / numeric-out, no FnRef args, no I/O, no Result wrapper.
+    // Inputs are truncated to u32 via `as u64 & 0xFFFF_FFFF`; output is
+    // returned as f64. Closes the crypto-track gap without a new integer type.
+    // Added in 0.12.x (ILO-58 MVP).
+    //
+    // band x y  — bitwise AND  (x & y)
+    // bor  x y  — bitwise OR   (x | y)
+    // bxor x y  — bitwise XOR  (x ^ y)
+    // bnot x    — bitwise NOT  (^x, 32-bit)
+    // bshl x n  — logical shift left  (x << n, mod 32)
+    // bshr x n  — logical shift right (x >> n, mod 32)
+    // brot x n  — rotate left 32-bit  (x.rotate_left(n))
+    Band,
+    Bor,
+    Bxor,
+    Bnot,
+    Bshl,
+    Bshr,
+    Brot,
+    // 64-bit bitwise variants (ILO-395). Same shape as 32-bit but mask to u64.
+    // f64 can exactly represent integers up to 2^53; values >= 2^53 may lose
+    // precision on the f64↔u64 round-trip. Keep inputs within safe range.
+    //
+    // band64 x y  — bitwise AND  (x & y, u64)
+    // bor64  x y  — bitwise OR   (x | y, u64)
+    // bxor64 x y  — bitwise XOR  (x ^ y, u64)
+    // bnot64 x    — bitwise NOT  (^x, 64-bit)
+    // bshl64 x n  — logical shift left  (x << n, mod 64)
+    // bshr64 x n  — logical shift right (x >> n, mod 64)
+    // brot64 x n  — rotate left 64-bit  (x.rotate_left(n))
+    Band64,
+    Bor64,
+    Bxor64,
+    Bnot64,
+    Bshl64,
+    Bshr64,
+    Brot64,
 }
 
 impl Builtin {
@@ -636,6 +675,20 @@ impl Builtin {
             "ravg" => Some(Builtin::Ravg),
             "rmin" => Some(Builtin::Rmin),
             "idxof" => Some(Builtin::Idxof),
+            "band" => Some(Builtin::Band),
+            "bor" => Some(Builtin::Bor),
+            "bxor" => Some(Builtin::Bxor),
+            "bnot" => Some(Builtin::Bnot),
+            "bshl" => Some(Builtin::Bshl),
+            "bshr" => Some(Builtin::Bshr),
+            "brot" => Some(Builtin::Brot),
+            "band64" => Some(Builtin::Band64),
+            "bor64" => Some(Builtin::Bor64),
+            "bxor64" => Some(Builtin::Bxor64),
+            "bnot64" => Some(Builtin::Bnot64),
+            "bshl64" => Some(Builtin::Bshl64),
+            "bshr64" => Some(Builtin::Bshr64),
+            "brot64" => Some(Builtin::Brot64),
             _ => None,
         }
     }
@@ -841,6 +894,20 @@ impl Builtin {
             Builtin::Ravg => "ravg",
             Builtin::Rmin => "rmin",
             Builtin::Idxof => "idxof",
+            Builtin::Band => "band",
+            Builtin::Bor => "bor",
+            Builtin::Bxor => "bxor",
+            Builtin::Bnot => "bnot",
+            Builtin::Bshl => "bshl",
+            Builtin::Bshr => "bshr",
+            Builtin::Brot => "brot",
+            Builtin::Band64 => "band64",
+            Builtin::Bor64 => "bor64",
+            Builtin::Bxor64 => "bxor64",
+            Builtin::Bnot64 => "bnot64",
+            Builtin::Bshl64 => "bshl64",
+            Builtin::Bshr64 => "bshr64",
+            Builtin::Brot64 => "brot64",
         }
     }
 
@@ -1210,6 +1277,28 @@ impl Builtin {
         // tokeniser once the crate's WASM and licence story is confirmed.
         // Appended last to preserve every existing on-wire tag.
         Builtin::Tokcount,
+        // Bitwise ops (ILO-58 MVP). All tree-bridge eligible: pure numeric-in /
+        // numeric-out, no FnRef args, no I/O, no Result wrapper. Inputs
+        // truncated to u32 mod 2^32; output returned as f64. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Band,
+        Builtin::Bor,
+        Builtin::Bxor,
+        Builtin::Bnot,
+        Builtin::Bshl,
+        Builtin::Bshr,
+        Builtin::Brot,
+        // 64-bit bitwise ops (ILO-395). All tree-bridge eligible: pure numeric-in /
+        // numeric-out, no FnRef args, no I/O, no Result wrapper. Inputs
+        // truncated to u64 mod 2^64; output returned as f64. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Band64,
+        Builtin::Bor64,
+        Builtin::Bxor64,
+        Builtin::Bnot64,
+        Builtin::Bshl64,
+        Builtin::Bshr64,
+        Builtin::Brot64,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1604,6 +1693,20 @@ mod tests {
             "rmin",
             "bisect",
             "tokcount",
+            "band",
+            "bor",
+            "bxor",
+            "bnot",
+            "bshl",
+            "bshr",
+            "brot",
+            "band64",
+            "bor64",
+            "bxor64",
+            "bnot64",
+            "bshl64",
+            "bshr64",
+            "brot64",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

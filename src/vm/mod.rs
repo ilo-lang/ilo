@@ -885,11 +885,27 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Linspace, 3) => true,
         (Builtin::Ones, 1) => true,
         (Builtin::Rep, 2) => true,
-        // `for-line stdin > LazyStdinLines` (ILO-70). 1-arg, no FnRef.
-        // The return type (LazyStdinLines) is opaque to the register engines;
-        // the bridge lets VM and Cranelift produce the handle without a new
-        // opcode. ForEach in the tree interpreter drains it one line at a time.
-        (Builtin::ForLine, 1) => true,
+        // Bitwise ops (ILO-58 MVP). Pure numeric-in / numeric-out, no FnRef
+        // args, no I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in
+        // lockstep with the tree interpreter at zero opcode cost. bnot is
+        // 1-arg; all others are 2-arg.
+        (Builtin::Band, 2) => true,
+        (Builtin::Bor, 2) => true,
+        (Builtin::Bxor, 2) => true,
+        (Builtin::Bnot, 1) => true,
+        (Builtin::Bshl, 2) => true,
+        (Builtin::Bshr, 2) => true,
+        (Builtin::Brot, 2) => true,
+        // 64-bit bitwise ops (ILO-395). Pure numeric-in / numeric-out, no FnRef
+        // args, no I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in
+        // lockstep with the tree interpreter at zero opcode cost.
+        (Builtin::Band64, 2) => true,
+        (Builtin::Bor64, 2) => true,
+        (Builtin::Bxor64, 2) => true,
+        (Builtin::Bnot64, 1) => true,
+        (Builtin::Bshl64, 2) => true,
+        (Builtin::Bshr64, 2) => true,
+        (Builtin::Brot64, 2) => true,
         _ => false,
     }
 }
