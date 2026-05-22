@@ -898,6 +898,16 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("bshl", &["n", "n"], "n"),
     ("bshr", &["n", "n"], "n"),
     ("brot", &["n", "n"], "n"),
+    // 64-bit bitwise ops (ILO-395). Same shape but mask to u64.
+    // f64 can exactly represent integers up to 2^53; values >= 2^53 may lose
+    // precision on the f64↔u64 round-trip.
+    ("band64", &["n", "n"], "n"),
+    ("bor64", &["n", "n"], "n"),
+    ("bxor64", &["n", "n"], "n"),
+    ("bnot64", &["n"], "n"),
+    ("bshl64", &["n", "n"], "n"),
+    ("bshr64", &["n", "n"], "n"),
+    ("brot64", &["n", "n"], "n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {

@@ -896,6 +896,16 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Bshl, 2) => true,
         (Builtin::Bshr, 2) => true,
         (Builtin::Brot, 2) => true,
+        // 64-bit bitwise ops (ILO-395). Pure numeric-in / numeric-out, no FnRef
+        // args, no I/O, no Result wrapper. Tree-bridge keeps VM + Cranelift in
+        // lockstep with the tree interpreter at zero opcode cost.
+        (Builtin::Band64, 2) => true,
+        (Builtin::Bor64, 2) => true,
+        (Builtin::Bxor64, 2) => true,
+        (Builtin::Bnot64, 1) => true,
+        (Builtin::Bshl64, 2) => true,
+        (Builtin::Bshr64, 2) => true,
+        (Builtin::Brot64, 2) => true,
         _ => false,
     }
 }
