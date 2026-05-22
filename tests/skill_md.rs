@@ -249,11 +249,13 @@ fn body_is_thin_bootstrap() {
             "SKILL.md bootstrap missing required marker: {required}"
         );
     }
-    // Bootstrap cap: the file must stay short. The old monolith was ~50 KB;
-    // a healthy bootstrap is well under 5 KB. Trip if it bloats past 8 KB.
+    // Bootstrap cap: the file must stay well below the pre-split monolith
+    // size (~50 KB). The bootstrap has grown as modular skills landed and
+    // their headline lines were added here; trip if it bloats past 16 KB,
+    // which still leaves a 3x guard against silent regrowth into a monolith.
     assert!(
-        body.len() < 8_000,
-        "SKILL.md body is {} bytes; bootstrap shape should stay well under 8 KB",
+        body.len() < 16_000,
+        "SKILL.md body is {} bytes; bootstrap shape should stay well under 16 KB",
         body.len()
     );
 }
