@@ -10,9 +10,17 @@ empty>L (L _);mpairs mmap
 -- Numeric keys sort numerically (not lexicographically): 2 < 5 < 10.
 nums>L (L _);m=mset (mset (mset mmap 10 "a") 2 "b") 5 "c";mpairs m
 
+-- Iterate both key and value in one pass using mpairs.
+-- Common pattern replacing: map (k:t>L _;[k (mget m k)]) (mkeys m)
+iter>_
+  m=mset (mset (mset mmap "x" 10) "y" 20) "z" 30
+  fld (acc:L _; pair:L _;cat acc [[pair.0, pair.1]]) [] (mpairs m)
+
 -- run: pairs
 -- out: [[a, 1], [b, 2], [c, 3]]
 -- run: empty
 -- out: []
 -- run: nums
 -- out: [[2, b], [5, c], [10, a]]
+-- run: iter
+-- out: [[x, 10], [y, 20], [z, 30]]
