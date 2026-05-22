@@ -369,6 +369,9 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                 indent(out, level + 1);
                 out.push_str(&format!("const {} = {};\n", js_name(binding), subj_str));
             }
+            Pattern::Or(_alts) => {
+                // Or-patterns not yet supported in JS codegen; treat as wildcard
+            }
         }
         emit_body(out, &arm.body, level + 1, true);
         indent(out, level);
@@ -493,6 +496,8 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             };
             format!("((..._a) => {}(..._a{}))", js_name(fn_name), cap_str)
         }
+        Expr::Todo(inner) => emit_expr(out, level, inner),
+        Expr::Panic(inner) => emit_expr(out, level, inner),
     }
 }
 
@@ -776,6 +781,10 @@ fn emit_match_expr(
                 emit_body(&mut body, &arm.body, level + 2, true);
                 indent(&mut body, level + 1);
                 body.push_str("}\n");
+            }
+            Pattern::Or(_alts) => {
+                // Or-patterns not yet supported in JS codegen; treat as wildcard
+                emit_body(&mut body, &arm.body, level + 2, true);
             }
         }
     }
