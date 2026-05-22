@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T007",
+  "long": "## ILO-T007: type mismatch at call site\n\nAn argument passed to a function has the wrong type.\n\n**Example:**\n\n    double x:n>n;*x 2\n    f s:t>n;double s   -- 's' is 't', but 'double' expects 'n'\n\n**Fix:** pass a value of the correct type, or use a conversion builtin\nsuch as `num` to convert text to a number.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "type mismatch at call site"
+}
