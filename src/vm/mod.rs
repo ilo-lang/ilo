@@ -19815,6 +19815,16 @@ pub extern "C" fn ilo_aot_arena_reset() {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_publish_program(ptr: u64, len: u64) -> u64 {
+    // SAFETY: The Cranelift AOT codegen emits the blob into a `.rodata` data
+    // section via `create_data_section`; the linker maps that section
+    // read-only for the entire process lifetime.  The call site (the
+    // cranelift-emitted `main` shim) passes the section's base address and
+    // byte length as literal constants baked into the binary — neither can
+    // be attacker-controlled without first compromising the binary on disk.
+    // Potential violation: if `ptr`/`len` were passed from an untrusted
+    // source (e.g. a future IPC or plugin mechanism) the guarantee would
+    // break; at that point this function must validate the pointer against a
+    // known-good range before constructing the slice.
     let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
     let program = match aot_blob::deserialize_program(bytes) {
         Ok(p) => p,
@@ -19862,6 +19872,14 @@ pub extern "C" fn jit_get_registry_ptr() -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is a compile-time `.rodata` address of a null-terminated
+    // C string emitted by the Cranelift AOT codegen (`data_section_counter`
+    // path in `compile_cranelift.rs`).  The codegen always appends a NUL
+    // byte and the data section lives for the process lifetime, so
+    // `CStr::from_ptr` will find the terminator within the mapped region.
+    // Potential violation: if a future codegen change forgets to NUL-
+    // terminate, or if `ptr` is zero/garbage, this is UB.  The
+    // `data_section_counter` path must maintain the NUL invariant.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("").to_string();
     NanVal::heap_string(s).0
@@ -19871,6 +19889,11 @@ pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
+    // SAFETY: `ptr` is `argv[i]` forwarded by the cranelift-emitted `main`
+    // shim as a u64-cast C string pointer.  The OS guarantees each `argv`
+    // entry is a valid NUL-terminated string for the duration of `main`.
+    // Potential violation: if the AOT shim ever passes an arbitrary u64 that
+    // is not an `argv` pointer (e.g. a computed value), this becomes UB.
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
     let s = cstr.to_str().unwrap_or("");
     match s {
