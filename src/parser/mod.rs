@@ -1826,6 +1826,28 @@ impl Parser {
                 args,
                 unwrap: UnwrapMode::None,
             })
+        } else if let Some(Expr::Ref(name)) = &subject
+            && self.fn_param_names.contains_key(name)
+            && self.looks_like_labelled_call_match_subject()
+        {
+            // Labelled-arg match subject: `?fn label:val {arms}` or
+            // `?fn pos_arg label:val {arms}`. Consume any leading positional
+            // operands, then hand off to `resolve_labelled_args`.
+            let func = name.clone();
+            let call_span = self.peek_span();
+            let mut pos_args: Vec<Expr> = Vec::new();
+            while self.peek_labelled_arg_label().is_none()
+                && self.peek() != Some(&Token::LBrace)
+                && self.can_start_operand()
+            {
+                pos_args.push(self.parse_prefix_binop_operand()?);
+            }
+            let args = self.resolve_labelled_args(&func, pos_args, call_span)?;
+            Some(Expr::Call {
+                function: func,
+                args,
+                unwrap: UnwrapMode::None,
+            })
         } else {
             subject
         };
@@ -1979,6 +2001,96 @@ impl Parser {
             }
         }
         self.token_at(pos) == Some(&Token::LBrace)
+    }
+
+    /// Shape check for labelled-arg match subject: does the cursor have at
+    /// least one `ident:value` token pair followed eventually by `{`?
+    /// Scans forward skipping plain atoms and `ident:value` pairs; returns
+    /// `true` if a labelled arg appears before the `{`.
+    /// Pure lookahead — does not consume any tokens.
+    fn looks_like_labelled_call_match_subject(&self) -> bool {
+        let mut pos = self.pos;
+        let mut saw_label = false;
+        loop {
+            match self.token_at(pos) {
+                Some(Token::LBrace) => return saw_label,
+                None => return false,
+                // Check for `ident:non-type-value` — labelled arg
+                Some(Token::Ident(_)) => {
+                    if self.token_at(pos + 1) == Some(&Token::Colon) {
+                        // Use the same type-context disambiguator as peek_labelled_arg_label:
+                        // `ident:ident>` or `ident:ident:` means type context, not a label.
+                        let after_colon = self.token_at(pos + 2);
+                        let is_type_context = match after_colon {
+                            Some(Token::Ident(_)) => matches!(
+                                self.token_at(pos + 3),
+                                Some(Token::Greater) | Some(Token::Colon)
+                            ),
+                            _ => false,
+                        };
+                        if !is_type_context {
+                            saw_label = true;
+                            pos += 2; // skip label ident and `:`
+                            // skip the value atom (simple token or balanced group)
+                            match self.token_at(pos) {
+                                Some(
+                                    Token::Number(_)
+                                    | Token::Text(_)
+                                    | Token::True
+                                    | Token::False
+                                    | Token::Nil
+                                    | Token::Underscore
+                                    | Token::Ident(_),
+                                ) => {
+                                    pos += 1;
+                                }
+                                Some(Token::LParen) => {
+                                    let mut depth: usize = 1;
+                                    pos += 1;
+                                    while depth > 0 {
+                                        match self.token_at(pos) {
+                                            Some(Token::LParen) => depth += 1,
+                                            Some(Token::RParen) => depth -= 1,
+                                            None => return false,
+                                            _ => {}
+                                        }
+                                        pos += 1;
+                                    }
+                                }
+                                Some(Token::LBracket) => {
+                                    let mut depth: usize = 1;
+                                    pos += 1;
+                                    while depth > 0 {
+                                        match self.token_at(pos) {
+                                            Some(Token::LBracket) => depth += 1,
+                                            Some(Token::RBracket) => depth -= 1,
+                                            None => return false,
+                                            _ => {}
+                                        }
+                                        pos += 1;
+                                    }
+                                }
+                                _ => return false,
+                            }
+                            continue;
+                        }
+                    }
+                    // Plain ident arg (no colon or type-context colon)
+                    pos += 1;
+                }
+                Some(
+                    Token::Number(_)
+                    | Token::Text(_)
+                    | Token::True
+                    | Token::False
+                    | Token::Nil
+                    | Token::Underscore,
+                ) => {
+                    pos += 1;
+                }
+                _ => return false,
+            }
+        }
     }
 
     /// Shape check for the bare-bool ternary sugar `?subj{a}{b}`.
@@ -2873,6 +2985,28 @@ impl Parser {
             for _ in 0..arity {
                 args.push(self.parse_prefix_binop_operand()?);
             }
+            Some(Box::new(Expr::Call {
+                function: func,
+                args,
+                unwrap: UnwrapMode::None,
+            }))
+        } else if let Some(boxed) = &subject
+            && let Expr::Ref(name) = boxed.as_ref()
+            && self.fn_param_names.contains_key(name)
+            && self.looks_like_labelled_call_match_subject()
+        {
+            // Labelled-arg match subject in expr position: `r=?fn lbl:val {arms}`.
+            // Mirror of the stmt-position branch above.
+            let func = name.clone();
+            let call_span = self.peek_span();
+            let mut pos_args: Vec<Expr> = Vec::new();
+            while self.peek_labelled_arg_label().is_none()
+                && self.peek() != Some(&Token::LBrace)
+                && self.can_start_operand()
+            {
+                pos_args.push(self.parse_prefix_binop_operand()?);
+            }
+            let args = self.resolve_labelled_args(&func, pos_args, call_span)?;
             Some(Box::new(Expr::Call {
                 function: func,
                 args,
@@ -11040,6 +11174,103 @@ mod tests {
                 "{source} hint should suggest rename; got: {hint}"
             );
         }
+    }
+
+    // --- ILO-355: labelled args in match-subject position ---
+
+    #[test]
+    fn match_subject_all_labelled() {
+        // `?dtfmt fmt:f epoch:ep {arms}` — all args labelled, reversed order
+        let prog = parse_str(r#"f ep:n fmt:t>t;?dtfmt fmt:fmt epoch:ep{"":""}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { subject, arms } = &body[0].node else {
+            panic!("expected match stmt, got {:?}", body[0])
+        };
+        let Some(Expr::Call { function, args, .. }) = subject else {
+            panic!("expected call subject, got {:?}", subject)
+        };
+        assert_eq!(function, "dtfmt");
+        // resolved to positional order: epoch first, fmt second
+        assert_eq!(args.len(), 2);
+        assert!(
+            matches!(&args[0], Expr::Ref(n) if n == "ep"),
+            "expected epoch arg first, got {:?}",
+            args[0]
+        );
+        assert!(
+            matches!(&args[1], Expr::Ref(n) if n == "fmt"),
+            "expected fmt arg second, got {:?}",
+            args[1]
+        );
+        assert_eq!(arms.len(), 1);
+    }
+
+    #[test]
+    fn match_subject_labelled_stmt_position() {
+        // Basic: `?greet name:n {arms}` — single labelled arg in stmt position
+        let prog = parse_str(r#"greet nm:t>t;nm f nm:t>t;?greet nm:nm{"hi":"hi"}"#);
+        let Decl::Function { body, .. } = &prog.declarations[1] else {
+            panic!("expected second function")
+        };
+        let Stmt::Match { subject, arms } = &body[0].node else {
+            panic!("expected match stmt, got {:?}", body[0])
+        };
+        let Some(Expr::Call { function, args, .. }) = subject else {
+            panic!("expected call subject, got {:?}", subject)
+        };
+        assert_eq!(function, "greet");
+        assert_eq!(args.len(), 1);
+        assert!(
+            matches!(&args[0], Expr::Ref(n) if n == "nm"),
+            "expected nm arg, got {:?}",
+            args[0]
+        );
+        assert_eq!(arms.len(), 1);
+    }
+
+    #[test]
+    fn match_subject_labelled_expr_position() {
+        // In let position: `r=?fn lbl:val {arms}`
+        let prog = parse_str(r#"greet nm:t>t;nm f nm:t>t;r=?greet nm:nm{"hi":"hi"};r"#);
+        let Decl::Function { body, .. } = &prog.declarations[1] else {
+            panic!("expected second function")
+        };
+        assert!(
+            matches!(
+                &body[0].node,
+                Stmt::Let {
+                    value: Expr::Match {
+                        subject: Some(boxed),
+                        ..
+                    },
+                    ..
+                } if matches!(boxed.as_ref(), Expr::Call { function, .. } if function == "greet")
+            ),
+            "expected let with match(call) expr, got {:?}",
+            body[0]
+        );
+    }
+
+    #[test]
+    fn match_subject_mixed_positional_and_labelled() {
+        // `?add b:y a:x {arms}` — two labelled args reversed order
+        let prog = parse_str(r#"add a:n b:n>n;+a b f x:n y:n>n;?add b:y a:x{0:0}"#);
+        let Decl::Function { body, .. } = &prog.declarations[1] else {
+            panic!("expected second function")
+        };
+        let Stmt::Match { subject, .. } = &body[0].node else {
+            panic!("expected match stmt")
+        };
+        let Some(Expr::Call { function, args, .. }) = subject else {
+            panic!("expected call subject")
+        };
+        assert_eq!(function, "add");
+        assert_eq!(args.len(), 2);
+        // reversed labels resolved to positional: a=x, b=y
+        assert!(matches!(&args[0], Expr::Ref(n) if n == "x"));
+        assert!(matches!(&args[1], Expr::Ref(n) if n == "y"));
     }
 
     #[test]
