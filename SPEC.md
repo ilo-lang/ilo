@@ -1190,7 +1190,38 @@ brot 1 1      -- 2
 brot 1 31     -- 2147483648 (bit 31 set)
 ```
 
-Note: these ops use 32-bit semantics for portability across platforms. Values above 2^32 are truncated. For full 64-bit bitwise math, file a follow-up for native `u64`/`i64` types.
+Note: these ops use 32-bit semantics for portability across platforms. Values above 2^32 are truncated. For full 64-bit bitwise math see `band64` and friends below.
+
+---
+
+### Bitwise ops (64-bit)
+
+`band64`, `bor64`, `bxor64`, `bnot64`, `bshl64`, `bshr64`, `brot64` are the 64-bit bitwise builtin cluster (ILO-395). Same shape as the 32-bit cluster but mask inputs to `u64` instead of `u32`.
+
+**Precision note:** `f64` can exactly represent integers up to 2^53. Operations on values >= 2^53 may lose precision on the `f64`↔`u64` round-trip. Powers of 2 up to 2^63 are always exact. Keep inputs within safe range when precision matters.
+
+| builtin | signature | description |
+|---------|-----------|-------------|
+| `band64 x y` | `n n > n` | bitwise AND (64-bit) |
+| `bor64 x y` | `n n > n` | bitwise OR (64-bit) |
+| `bxor64 x y` | `n n > n` | bitwise XOR (64-bit) |
+| `bnot64 x` | `n > n` | bitwise NOT (64-bit: all 64 bits flipped) |
+| `bshl64 x n` | `n n > n` | logical shift left (shift amount mod 64) |
+| `bshr64 x n` | `n n > n` | logical shift right (shift amount mod 64) |
+| `brot64 x n` | `n n > n` | rotate left 64-bit (rotate count mod 64) |
+
+All inputs are converted to `u64` via `(x as i64) as u64`. Shift and rotate counts are taken mod 64. All seven are tree-bridge eligible — VM and Cranelift inherit through the bridge without new opcodes.
+
+```ilo
+band64 12 10       -- 8
+bor64  12 10       -- 14
+bxor64 12 10       -- 6
+band64 (bnot64 0) 255   -- 255 (low 8 bits of all-ones)
+bshl64 1 33        -- 8589934592 (2^33, within 2^53 safe range)
+bshr64 8589934592 33    -- 1
+brot64 1 1         -- 2
+bshr64 (brot64 1 63) 63  -- 1  (rotate left 63 then right 63 round-trips)
+```
 
 ---
 

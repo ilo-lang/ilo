@@ -2491,6 +2491,74 @@ fn run_bitwise(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> {
     Ok(Value::Number(result as f64))
 }
 
+/// 64-bit bitwise ops (ILO-395). Same shape as `run_bitwise` but masks to u64.
+///
+/// f64 can exactly represent integers up to 2^53; values >= 2^53 may lose
+/// precision on the f64↔u64 round-trip. Inputs should stay within safe range.
+///
+/// `#[inline(never)]` keeps the call_function dispatch frame compact,
+/// matching the established per-builtin helper pattern.
+#[inline(never)]
+fn run_bitwise_64(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> {
+    use crate::builtins::Builtin;
+
+    /// Extract a u64 from a Value::Number (mod 2^64 via cast).
+    ///
+    /// Negative f64 values are treated as signed and wrapped (matching the
+    /// 32-bit `to_u32` behaviour). For f64 >= 0, we cast directly to u64 to
+    /// avoid the i64 saturation that would occur for values in [2^63, 2^64).
+    fn to_u64(v: &Value, pos: &str, name: &str) -> Result<u64> {
+        match v {
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: {pos} must be a finite number, got {n}"),
+                    ));
+                }
+                let result = if *n < 0.0 {
+                    // Negative: treat as signed, wrap into u64 via i64.
+                    (*n as i64) as u64
+                } else {
+                    // Non-negative: cast directly to avoid i64 saturation for
+                    // values in [2^63, 2^64).
+                    *n as u64
+                };
+                Ok(result)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: {pos} must be a number, got {other:?}"),
+            )),
+        }
+    }
+
+    let name = b.name();
+    let result: u64 = match b {
+        Builtin::Band64 => to_u64(&args[0], "first arg", name)? & to_u64(&args[1], "second arg", name)?,
+        Builtin::Bor64  => to_u64(&args[0], "first arg", name)? | to_u64(&args[1], "second arg", name)?,
+        Builtin::Bxor64 => to_u64(&args[0], "first arg", name)? ^ to_u64(&args[1], "second arg", name)?,
+        Builtin::Bnot64 => !to_u64(&args[0], "arg", name)?,
+        Builtin::Bshl64 => {
+            let x = to_u64(&args[0], "first arg", name)?;
+            let n = to_u64(&args[1], "second arg", name)? % 64;
+            x << n
+        }
+        Builtin::Bshr64 => {
+            let x = to_u64(&args[0], "first arg", name)?;
+            let n = to_u64(&args[1], "second arg", name)? % 64;
+            x >> n
+        }
+        Builtin::Brot64 => {
+            let x = to_u64(&args[0], "first arg", name)?;
+            let n = (to_u64(&args[1], "second arg", name)? % 64) as u32;
+            x.rotate_left(n)
+        }
+        _ => unreachable!(),
+    };
+    Ok(Value::Number(result as f64))
+}
+
 /// `#[inline(never)]` matches the established per-builtin helper pattern
 /// (see `day_of_week_impl` above and the `vm_*` family) so the
 /// call_function dispatch frame stays compact.
@@ -3051,6 +3119,26 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let expected_argc = if b == Builtin::Bnot { 1 } else { 2 };
         if args.len() == expected_argc {
             return run_bitwise(b, &args);
+        }
+    }
+    // 64-bit bitwise ops (ILO-395). Operate on f64 → u64 (mod 2^64) → f64.
+    // Values >= 2^53 may lose precision on the f64↔u64 round-trip.
+    if matches!(
+        builtin,
+        Some(
+            Builtin::Band64
+                | Builtin::Bor64
+                | Builtin::Bxor64
+                | Builtin::Bnot64
+                | Builtin::Bshl64
+                | Builtin::Bshr64
+                | Builtin::Brot64
+        )
+    ) {
+        let b = builtin.unwrap();
+        let expected_argc = if b == Builtin::Bnot64 { 1 } else { 2 };
+        if args.len() == expected_argc {
+            return run_bitwise_64(b, &args);
         }
     }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
