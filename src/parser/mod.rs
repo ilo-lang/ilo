@@ -697,6 +697,39 @@ impl Parser {
                     err.hint = Some(hint_msg);
                     return Err(err);
                 }
+                // Detect an orphaned identifier at a statement boundary — the
+                // identifier is followed immediately by `;`, `}`, or EOF with no
+                // `>` or params, so it cannot possibly be a function declaration.
+                // This pattern occurs when a prefix-binop chain is mis-grouped:
+                // e.g. `*/dt 1 6 ref` parses as `*(/ dt 1) 6`, leaving `ref`
+                // orphaned at top-level where the parser tries and fails to read
+                // it as a new function.  The resulting ILO-P003 "expected '>', got
+                // ';'" anchors on the `;` which is far from the real problem.
+                // Surface a pointed hint here instead, anchored on the orphaned
+                // identifier itself (the closest correct position we have without
+                // threading the prefix-op span through the whole parse path).
+                // Only fire when there is at least one previously-consumed token
+                // (`self.pos > 0`).  A lone identifier at position 0 followed by
+                // EOF is a genuinely incomplete function declaration (no header at
+                // all) and must fall through to `parse_fn_decl` which emits the
+                // more informative ILO-P020 "incomplete function header".
+                if self.pos > 0
+                    && matches!(
+                        self.token_at(self.pos + 1),
+                        None | Some(Token::Semi) | Some(Token::Newline) | Some(Token::RBrace)
+                    )
+                {
+                    return Err(self.error_hint(
+                        "ILO-P003",
+                        format!(
+                            "`{ident_str}` appears at a statement boundary without a \
+function header — it looks like a prefix-binop chain consumed one too few operands"
+                        ),
+                        "this looks like a prefix-binop chain whose right operand is at \
+statement boundary; bind the chain to a local first. For example, split \
+`*/a b c d` into `t=/a b c;*t d`.".to_string(),
+                    ));
+                }
                 self.parse_fn_decl()
             }
             Some(tok) => {
