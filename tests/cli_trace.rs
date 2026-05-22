@@ -107,8 +107,15 @@ fn trace_missing_file_exits_nonzero() {
 
 #[test]
 fn trace_depth_expr_emits_expr_kind_events() {
-    let (ok, stdout, _stderr) =
-        run_args(&["trace", "--depth", "expr", "examples/trace-demo.ilo", "add", "3", "4"]);
+    let (ok, stdout, _stderr) = run_args(&[
+        "trace",
+        "--depth",
+        "expr",
+        "examples/trace-demo.ilo",
+        "add",
+        "3",
+        "4",
+    ]);
     assert!(ok, "expected exit 0");
 
     let lines: Vec<&str> = stdout.lines().collect();
@@ -123,15 +130,18 @@ fn trace_depth_expr_emits_expr_kind_events() {
 
     // All lines must be valid JSON with schemaVersion=1.
     for line in &lines {
-        let v: serde_json::Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("invalid JSON: {e}"));
+        let v: serde_json::Value =
+            serde_json::from_str(line).unwrap_or_else(|e| panic!("invalid JSON: {e}"));
         assert_eq!(v["schemaVersion"], 1);
         assert!(v.get("kind").is_some(), "missing kind in {line}");
         let kind = v["kind"].as_str().unwrap();
         match kind {
             "stmt" => {
                 assert!(v.get("stmt").is_some(), "stmt event missing stmt key");
-                assert!(v.get("bindings").is_some(), "stmt event missing bindings key");
+                assert!(
+                    v.get("bindings").is_some(),
+                    "stmt event missing bindings key"
+                );
             }
             "expr" => {
                 assert!(v.get("expr").is_some(), "expr event missing expr key");
@@ -147,12 +157,22 @@ fn trace_depth_expr_emits_expr_kind_events() {
 
 #[test]
 fn trace_watch_filters_to_relevant_bindings() {
-    let (ok, stdout, _stderr) =
-        run_args(&["trace", "--watch", "a", "examples/trace-demo.ilo", "add", "3", "4"]);
+    let (ok, stdout, _stderr) = run_args(&[
+        "trace",
+        "--watch",
+        "a",
+        "examples/trace-demo.ilo",
+        "add",
+        "3",
+        "4",
+    ]);
     assert!(ok, "expected exit 0");
 
     let lines: Vec<&str> = stdout.lines().collect();
-    assert!(!lines.is_empty(), "expected at least one line after --watch a");
+    assert!(
+        !lines.is_empty(),
+        "expected at least one line after --watch a"
+    );
 
     // Every emitted stmt event must have 'a' in its bindings.
     for line in &lines {

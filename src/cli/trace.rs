@@ -157,8 +157,11 @@ fn emit_expr_event(ev: ExprTraceEvent, watch: &[String]) {
     }
 
     let result_json = ev.result.to_json().unwrap_or(serde_json::Value::Null);
-    let refs_json: Vec<serde_json::Value> =
-        ev.refs.iter().map(|r| serde_json::Value::String(r.clone())).collect();
+    let refs_json: Vec<serde_json::Value> = ev
+        .refs
+        .iter()
+        .map(|r| serde_json::Value::String(r.clone()))
+        .collect();
 
     let event = serde_json::json!({
         "schemaVersion": 1,
