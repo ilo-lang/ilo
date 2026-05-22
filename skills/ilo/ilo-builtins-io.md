@@ -9,7 +9,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## File I/O
 
-`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wra path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir` (alias `ls`), `walk dir`, `glob dir pat`. Result-wrapped. `walk`/`glob` skip unreadable subdirs; root Errs. Path: `dirname p`, `basename p`, `pathjoin parts`, `fsize path`, `mtime path`, `isfile path`, `isdir path`.
+`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wra path s` (append), `wro path s` (truncate-overwrite), `wrl path xs`, `prnt v`. Dir: `lsd dir` (alias `ls`), `walk dir`, `glob dir pat`. Result-wrapped. `walk`/`glob` skip unreadable subdirs; root Errs. Path: `dirname p`, `basename p`, `pathjoin parts`, `fsize path`, `mtime path`, `isfile path`, `isdir path`. Use `wro` to snapshot state on each tick (avoids delete-then-write dance); use `wra` to accumulate/append.
 
 ## Stdin
 
