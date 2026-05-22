@@ -1,0 +1,48 @@
+-- Bounded generics demo (ILO-61)
+--
+-- Generic type-parameter syntax: `name<a:bound>` before the param list.
+-- Bounds: any (default), comparable, numeric, text.
+-- The verifier enforces cross-call-site consistency and bound satisfaction.
+
+-- gmn<a:comparable> - returns the lesser of two comparable values.
+-- Works for n and t; rejects records, lists, etc.
+gmn<a:comparable> x:a y:a>a
+  r=x
+  >(x) y{r=y}
+  r
+
+-- gmx<a:comparable> - returns the greater of two comparable values.
+gmx<a:comparable> x:a y:a>a
+  r=x
+  <(x) y{r=y}
+  r
+
+-- gadd<a:numeric> - generic addition (only n satisfies numeric).
+gadd<a:numeric> x:a y:a>a;+x y
+
+-- grep<a:text> - replicate text s n times (only t satisfies text).
+grep<a:text> s:a n:n>t
+  r=""
+  @i 0..n{r=+r s}
+  r
+
+-- gid<a> - unbounded identity, accepts any type.
+gid<a> x:a>a;x
+
+-- === Entry point ===
+main>n
+  -- comparable: works with numbers
+  a=gmn 3 7
+  -- comparable: works with text (lexicographic comparison)
+  b=gmn "apple" "banana"
+  -- gmx with numbers
+  c=gmx 3 7
+  -- numeric
+  d=gadd 10 20
+  -- text
+  f=grep "ab" 3
+  -- any bound - gid can be called with n at one site and t at another
+  g=gid 42
+  h=gid "hello"
+  prnt fmt "gmn(3,7)={} gmn(apple,banana)={} gmx(3,7)={} gadd(10,20)={} grep(ab,3)={} gid(42)={} gid(hello)={}" a b c d f g h
+  0

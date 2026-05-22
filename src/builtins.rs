@@ -118,6 +118,7 @@ pub enum Builtin {
 
     // I/O
     Rd,
+    RdJson,
     Rdl,
     Rdb,
     // `rdin > R t t` — read all of stdin to a text string.
@@ -126,8 +127,25 @@ pub enum Builtin {
     // `Err("rdin: stdin not available on wasm")`.
     Rdin,
     Rdinl,
+    // `for-line stdin > LazyStdinLines` — lazy line iterator over stdin.
+    // Unlike `rdinl` (which buffers all of stdin before returning), `for-line`
+    // produces a lazy handle that the `@binding` foreach consumes one line at
+    // a time. This enables processing unbounded streams (e.g. `tail -f` output,
+    // streaming log producers) without ever buffering the full input.
+    //
+    // Canonical usage:
+    //   `@line (for-line stdin) { prnt line }`
+    //
+    // The single argument must be the text "stdin"; other values are a
+    // runtime error (ILO-R009). On WASM the builtin returns Err immediately.
+    // Partial trailing lines at EOF are emitted unchanged (no newline added).
+    // Tree-interpreter only in this release; VM/Cranelift inherit via the
+    // tree-bridge (OP_CALL_BUILTIN_TREE) because the return type
+    // (`LazyStdinLines`) is opaque to the register-based engines.
+    ForLine,
     Wr,
     Wra,
+    Wro,
     Wrl,
     Prnt,
     Env,
@@ -323,12 +341,29 @@ pub enum Builtin {
     // `hex s > t` — lowercase hex encode of UTF-8 bytes of `s`.
     // `ct-eq a:t b:t > b` — constant-time text equality. Use when comparing
     //   secrets (HMAC digests, tokens) to avoid timing leaks.
+    // `sha256-hex hex:t > t` — SHA-256 of hex-decoded bytes, returns lowercase
+    //   hex digest. Errors (ILO-R009) on odd-length or non-hex input.
+    // `sha256d hex:t > t` — double-SHA256 (Bitcoin protocol: sha256(sha256(x)))
+    //   of hex-decoded bytes, returns lowercase hex digest. Errors (ILO-R009) on
+    //   odd-length or non-hex input. Equivalent to `sha256-hex (sha256-hex h)`
+    //   but named for the Bitcoin Merkle tree use-case.
     Sha256,
     HmacSha256,
     B64,
     B64Dec,
     HexEnc,
     CtEq,
+    Sha256Hex,
+    Sha256d,
+
+    // `tokcount s > n` — approximate cl100k_base token count of string `s`.
+    // Uses a bytes/3.4 approximation (mean bytes-per-token for English prose
+    // under cl100k_base). Fast, allocation-minimal, and correct within ~5%
+    // for natural-language skill files. A follow-up (ILO-47) will replace
+    // this with the full tiktoken-rs BPE tokeniser once the crate's WASM
+    // and licence story is confirmed. Pure text-in / number-out; tree-bridge
+    // eligible. Added in 0.12.2 (experimental).
+    Tokcount,
 
     // `where cond xs ys > L a` — parallel-list conditional select.
     // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
@@ -368,6 +403,23 @@ pub enum Builtin {
     Rsum,
     Ravg,
     Rmin,
+
+    // Text search (0.13.0). Tree-bridge eligible: pure text-in / Option-out,
+    // no FnRef args, no I/O, no Result wrapper.
+    // `idxof s sub > O n` — byte index of the first occurrence of `sub` in
+    // `s`. Returns nil when `sub` is not found. Index is in Unicode code-point
+    // units (same as `at`), not raw bytes, so multi-byte characters count as 1.
+    Idxof,
+
+    // `hex-rev s > t` — reverse the byte order of a hex-encoded string.
+    // Input must be a hex string of even length (2 chars per byte); odd
+    // length errors ILO-T013 with a padding hint. Case is preserved:
+    // `abCD` reversed is `CDab`. Useful for little-endian ↔ big-endian
+    // conversions (e.g. Bitcoin txid display vs wire encoding). Total
+    // for even-length hex; errors for odd-length input. Tree-bridge
+    // eligible: pure t → t, no FnRef args, no I/O. Appended last to
+    // preserve every existing on-wire tag.
+    HexRev,
 }
 
 impl Builtin {
@@ -464,12 +516,15 @@ impl Builtin {
             "sleep" => Some(Builtin::Sleep),
             "tz-offset" => Some(Builtin::TzOffset),
             "rd" => Some(Builtin::Rd),
+            "rd-json" => Some(Builtin::RdJson),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
             "rdin" => Some(Builtin::Rdin),
             "rdinl" => Some(Builtin::Rdinl),
+            "for-line" => Some(Builtin::ForLine),
             "wr" => Some(Builtin::Wr),
             "wra" => Some(Builtin::Wra),
+            "wro" => Some(Builtin::Wro),
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
@@ -558,6 +613,10 @@ impl Builtin {
             "b64-dec" => Some(Builtin::B64Dec),
             "hex" => Some(Builtin::HexEnc),
             "ct-eq" => Some(Builtin::CtEq),
+            "sha256-hex" => Some(Builtin::Sha256Hex),
+            "sha256d" => Some(Builtin::Sha256d),
+            "hex-rev" => Some(Builtin::HexRev),
+            "tokcount" => Some(Builtin::Tokcount),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -566,6 +625,7 @@ impl Builtin {
             "rsum" => Some(Builtin::Rsum),
             "ravg" => Some(Builtin::Ravg),
             "rmin" => Some(Builtin::Rmin),
+            "idxof" => Some(Builtin::Idxof),
             _ => None,
         }
     }
@@ -663,12 +723,15 @@ impl Builtin {
             Builtin::Sleep => "sleep",
             Builtin::TzOffset => "tz-offset",
             Builtin::Rd => "rd",
+            Builtin::RdJson => "rd-json",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
             Builtin::Rdin => "rdin",
             Builtin::Rdinl => "rdinl",
+            Builtin::ForLine => "for-line",
             Builtin::Wr => "wr",
             Builtin::Wra => "wra",
+            Builtin::Wro => "wro",
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
@@ -753,6 +816,10 @@ impl Builtin {
             Builtin::B64Dec => "b64-dec",
             Builtin::HexEnc => "hex",
             Builtin::CtEq => "ct-eq",
+            Builtin::Sha256Hex => "sha256-hex",
+            Builtin::Sha256d => "sha256d",
+            Builtin::HexRev => "hex-rev",
+            Builtin::Tokcount => "tokcount",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -761,6 +828,7 @@ impl Builtin {
             Builtin::Rsum => "rsum",
             Builtin::Ravg => "ravg",
             Builtin::Rmin => "rmin",
+            Builtin::Idxof => "idxof",
         }
     }
 
@@ -854,10 +922,12 @@ impl Builtin {
         Builtin::Dtparse,
         Builtin::DtparseRel,
         Builtin::Rd,
+        Builtin::RdJson,
         Builtin::Rdl,
         Builtin::Rdb,
         Builtin::Wr,
         Builtin::Wra,
+        Builtin::Wro,
         Builtin::Wrl,
         Builtin::Prnt,
         Builtin::Env,
@@ -1086,6 +1156,8 @@ impl Builtin {
         Builtin::B64Dec,
         Builtin::HexEnc,
         Builtin::CtEq,
+        Builtin::Sha256Hex,
+        Builtin::Sha256d,
         // getx / pstx — HTTP variants that surface response status, headers,
         // and body as a Map[Text, _] wrapped in Ok. Additive — the existing
         // `get` / `pst` body-only signatures stay intact for token-cheap GETs
@@ -1103,12 +1175,60 @@ impl Builtin {
         Builtin::Rsum,
         Builtin::Ravg,
         Builtin::Rmin,
+        // `hex-rev s > t` — byte-pair reversal of a hex-encoded string.
+        // Even-length hex input only; odd length errors ILO-T013.
+        // Tree-bridge eligible: pure t → t, no FnRef, no I/O. Appended
+        // last to preserve every existing on-wire tag.
+        Builtin::HexRev,
         // `bisect xs target > n` — O(log N) insertion point in a sorted
         // numeric list (Python `bisect_left` semantics). Tree-bridge
         // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
+        // `for-line stdin > LazyStdinLines` — lazy stdin line iterator (ILO-70).
+        // Returns a LazyStdinLines handle that ForEach drains one line at a time,
+        // enabling processing of unbounded piped input without buffering.
+        Builtin::ForLine,
+        // `idxof s sub > O n` — text-search builtin (0.13.0).
+        Builtin::Idxof,
+        // tokcount (ILO-47): approximate cl100k_base token count (bytes/3.4 stub).
+        // Follow-up (ILO-413) will replace this stub with the full tiktoken-rs BPE
+        // tokeniser once the crate's WASM and licence story is confirmed.
+        // Appended last to preserve every existing on-wire tag.
+        Builtin::Tokcount,
     ];
+
+    /// Stability tier for this builtin, sourced from `STABILITY.md`.
+    ///
+    /// - `"experimental"` — unreleased (above `0.12.1` in `CHANGELOG.md`).
+    ///   May be removed or changed without notice.
+    /// - `"provisional"` — shipped in a released version (0.12.1 or earlier).
+    ///   Signature may change pre-1.0; canonical short name is stable-ish.
+    ///
+    /// Used by `ilo spec --json ai` to emit per-item stability annotations.
+    pub fn stability(self) -> &'static str {
+        match self {
+            // Unreleased additions (above 0.12.1 in CHANGELOG.md → experimental).
+            Builtin::Matvec
+            | Builtin::Lstsq
+            | Builtin::JparList
+            | Builtin::GetTo
+            | Builtin::PstTo
+            | Builtin::TzOffset
+            | Builtin::Run2
+            | Builtin::RgxallMulti
+            | Builtin::Fmod
+            | Builtin::DtparseRel
+            | Builtin::DurParse
+            | Builtin::DurFmt
+            | Builtin::Idxof
+            | Builtin::HexRev
+            | Builtin::Tokcount => "experimental",
+
+            // Everything else shipped in 0.12.1 or earlier → provisional.
+            _ => "provisional",
+        }
+    }
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
     pub fn tag(self) -> u8 {
@@ -1363,10 +1483,12 @@ mod tests {
             "now",
             "now-ms",
             "rd",
+            "rd-json",
             "rdl",
             "rdb",
             "wr",
             "wra",
+            "wro",
             "wrl",
             "prnt",
             "env",
@@ -1467,6 +1589,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "tokcount",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1645,10 +1768,12 @@ mod tests {
             "dtparse",
             "dtparse-rel",
             "rd",
+            "rd-json",
             "rdl",
             "rdb",
             "wr",
             "wra",
+            "wro",
             "wrl",
             "prnt",
             "env",
@@ -1733,6 +1858,10 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "for-line",
+            "idxof",
+            "hex-rev",
+            "tokcount",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

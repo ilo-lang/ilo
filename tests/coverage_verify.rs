@@ -48,8 +48,15 @@ fn len_wrong_type() {
 }
 
 #[test]
+fn str_text_passthrough() {
+    // str is now polymorphic: text input is identity, no error
+    assert_ok("main>t;str \"hi\"", "main");
+}
+
+#[test]
 fn str_wrong_type() {
-    assert_err("main>t;str \"hi\"", "ILO-T013", "main");
+    // bool is not accepted by str
+    assert_err("main x:b>t;str x", "ILO-T013", "main");
 }
 
 #[test]
@@ -855,6 +862,20 @@ fn with_unknown_field() {
 fn with_field_type_mismatch() {
     let src = "type pt{x:n;y:n}main>pt;p=pt x:1 y:2;p with x:\"a\"";
     assert_err(src, "ILO-T022", "main");
+}
+
+#[test]
+fn with_anon_record_new_field_rejected() {
+    // ILO-368: `with` on an anonymous record must not add new fields
+    let src = "main>_;r={x:1 y:2};r with z:3";
+    assert_err(src, "ILO-T045", "main");
+}
+
+#[test]
+fn with_anon_record_existing_field_ok() {
+    // ILO-368: `with` on an anonymous record updating an existing field is fine
+    let src = "main>_;r={x:1 y:2};r with x:9";
+    assert_ok(src, "main");
 }
 
 #[test]

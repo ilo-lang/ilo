@@ -1,0 +1,28 @@
+-- defer-basic: guaranteed cleanup on function exit.
+--
+-- `defer expr` registers an expression to run when the enclosing function
+-- exits, regardless of which path is taken (normal return, early `^`
+-- propagation, or fall-through).  Multiple defers fire in LIFO order.
+--
+-- This example shows three defers stacked in one function body.  Even
+-- though the function returns early when `x` is negative, all three
+-- deferred prints fire in reverse registration order before the caller
+-- sees the result.
+
+count x:n>n
+  defer prnt "defer 1"
+  defer prnt "defer 2"
+  defer prnt "defer 3"
+  x
+
+m>n
+  count 42
+
+-- The defers fire in LIFO order (3, 2, 1) and the return value flows
+-- through: count 42 returns 42.
+--
+-- Observed output when run with `ilo examples/defer-basic.ilo m`:
+--   defer 3
+--   defer 2
+--   defer 1
+--   42

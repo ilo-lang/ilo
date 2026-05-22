@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T008",
+  "long": "## ILO-T008: return type mismatch\n\nThe type of the return expression does not match the declared return type.\n\n**Example:**\n\n    f x:n>t;x   -- 'x' is 'n', but 'f' declares return type 't'\n\n**Fix:** change the return expression or correct the return type annotation.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "return type mismatch"
+}

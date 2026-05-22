@@ -1,0 +1,62 @@
+-- Closure-heavy regression example for ILO-49.
+--
+-- Originally, closure-heavy programs could trigger the AArch64 near-call
+-- relocation assertion in cranelift-jit 0.116 (`compiled_blob.rs:90`),
+-- causing the JIT to panic and fall back to the bytecode VM. The
+-- fallback was silent from a correctness standpoint (results were
+-- correct) but constituted a silent performance regression.
+--
+-- As of the Phase 2 closure-capture lift (PR #384 + PR #265), the JIT
+-- correctly compiles and executes all closure shapes below without
+-- triggering the panic fallback. This file pins that contract so a
+-- future Cranelift bump or closure-plumbing change cannot regress
+-- undetected.
+--
+-- The `examples_engines` harness runs the entry points below on VM + JIT
+-- (see `-- engine-skip` annotations for any exceptions).
+-- The regression contract is also pinned by
+-- tests/regression_closure_heavy_jit.rs.
+
+-- ── helpers ────────────────────────────────────────────────────────────
+
+-- Numeric distance from a target. Used as a sort key.
+dist x:n target:n>n;abs -x target
+
+-- Weighted sum reducer: acc + element * weight.
+wsum acc:n x:n weight:n>n;+acc *x weight
+
+-- ── pipeline: filter → sort → map with three inline closures ──────────
+-- Exercises: capture in filter bounds, capture in sort key, capture in
+-- map scale — all on the same input list and all under --jit.
+
+pipeline xs:L n lo:n hi:n scale:n>L n;
+  bounded=flt (x:n>b;&(>=x lo) <=x hi) xs;
+  sorted=srt (x:n>n;abs -x 50) bounded;
+  map (x:n>n;*x scale) sorted
+
+-- run: pipeline [10,20,30,40,50,60,70,80,90,100] 20 80 2
+-- out: [100, 80, 120, 60, 140, 40, 160]
+
+-- ── chained map with two distinct captures ────────────────────────────
+
+double-shift xs:L n bump:n scale:n>L n;
+  map (x:n>n;*x scale) (map (x:n>n;+x bump) xs)
+
+-- run: double-shift [1,2,3] 10 3
+-- out: [33, 36, 39]
+
+-- ── fold with capture in reducer ──────────────────────────────────────
+
+weighted-sum xs:L n weight:n>n;
+  fld (a:n x:n>n;+a *x weight) xs 0
+
+-- run: weighted-sum [1,2,3,4] 5
+-- out: 50
+
+-- ── sort by distance from a captured target ────────────────────────────
+
+sort-by-dist xs:L n target:n>L n;
+  srt (x:n>n;abs -x target) xs
+
+-- run: sort-by-dist [1,5,10,20] 8
+-- out: [10, 5, 1, 20]

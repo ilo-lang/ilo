@@ -1,0 +1,19 @@
+-- Conditional imports example (ILO-399).
+-- Syntax: use ?<pred> "true-path" : "false-path"
+--
+-- Pick different modules at compile time based on the build target.
+-- Predicates: wasm (wasm32 target), native (host binary), test (ilo test run).
+--
+-- Example (not runnable inline — requires companion files):
+--   use ?wasm "platform/wasm-io.ilo" : "platform/native-io.ilo"
+--   use ?test "stubs/db-stub.ilo"    : "db/real-db.ilo"
+--
+-- The resolver evaluates the predicate against the current build target
+-- and imports exactly one of the two modules; the other is never read.
+-- Both branches follow the same import rules as unconditional `use`:
+-- flat import (all public declarations), selective import ([name1 name2]),
+-- or named-module alias (use alias: form) are NOT combined with ?<pred> —
+-- conditional imports always import all declarations from the chosen file.
+
+-- Standalone demonstration: a function that shows the active platform.
+platform>t;"native"

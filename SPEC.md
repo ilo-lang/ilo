@@ -36,10 +36,27 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - Last expression is the return value (no `return` keyword)
 - Zero-arg call: `make-id()`
 - Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
+- Labelled args (ILO-71): `dtfmt epoch:e fmt:"%Y"` — optional `label:value` form for any callable with declared parameter names. Labels resolve to positional by name; order is free. Mixed positional + labelled is allowed (positional fill from left; labels fill remaining slots by name). Unknown or duplicate labels surface `ILO-P019` at parse time. Works in both postfix and paren form: `f(b:2, a:1)` ≡ `f a:1 b:2`.
+
+**Two body forms — both fully supported:**
+
+```
+-- Inline: semicolons separate statements; last expression returns.
+add-and-double x:n y:n>n;s=+x y;*s 2
+
+-- Brace-block: explicit braces wrap the whole body (same semantics).
+add-and-double x:n y:n>n { s = +x y; *s 2 }
+```
+
+Multi-step transforms bind intermediate results as locals:
 
 ```
 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 ```
+
+Early return: braceless guard (`>=x 0 val` exits the function immediately when true); `ret val` exits from any depth including inside a loop or braced conditional.
+
+Result unwrap mid-body: `v=call!` extracts the Ok value and propagates Err out of the function before continuing.
 
 ---
 
@@ -141,14 +158,50 @@ scores>M t n
 
 ### Type variables
 
-A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable, treated as `unknown` during verification. Used for higher-order function signatures:
+A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable. Used for higher-order function signatures:
 
 ```
 identity x:a>a;x
 apply f:F a a x:a>a;f x
 ```
 
-Type variables provide weak generics - the verifier accepts any type for `a` without consistency checking across call sites.
+**Without a bound declaration** type variables are treated as `unknown` during verification — the verifier accepts any type for `a` without consistency checking across call sites (legacy behaviour; backward compatible).
+
+### Bounded generics
+
+Explicit generic type parameters allow the verifier to enforce two properties at call sites:
+
+1. All arguments bound to the same type variable have the same concrete type.
+2. The concrete type satisfies the declared bound.
+
+**Syntax:** `name<a:bound b:bound ...>` before the parameter list. Bounds are optional per variable; omitting `:bound` defaults to `any`.
+
+```
+gmn<a:comparable> x:a y:a>a   -- min of two comparable values
+gadd<a:numeric> x:a y:a>a     -- addition, numeric values only
+grep<a:text> s:a n:n>t         -- repeat text
+gid<a> x:a>a                  -- identity, any type
+```
+
+**Bound set** (small and fixed):
+
+| Bound        | Permitted concrete types              |
+|--------------|---------------------------------------|
+| `any`        | any type (default when bound omitted) |
+| `comparable` | `n`, `t`, `b`                         |
+| `numeric`    | `n`                                   |
+| `text`       | `t`                                   |
+
+**Call-site checking:**
+
+```
+gmn 3 7          -- ok: both n
+gmn "a" "b"      -- ok: both t
+gmn 1 "two"      -- ILO-T044: 'a' bound to n then t (inconsistent)
+gadd "x" "y"     -- ILO-T044: 't' does not satisfy numeric bound
+```
+
+Unbounded legacy type-variable usage (`identity x:a>a;x`) continues to work without changes.
 
 ### Inline lambdas
 
@@ -162,15 +215,48 @@ sumsq xs:L n>n;fld (a:n x:n>n;+a *x x) xs 0
 
 Syntax: `(<param>:<type> ...><return-type>;<body>)`. Same shape as a top-level function declaration, wrapped in parens, no name.
 
+**Brace-lambda shorthand** (`{params> stmts}`): bare param names (types inferred as `any`) and no explicit return type. Useful for compact multi-statement bodies in `map`/`flt`/`fld`:
+
+```
+sumsq xs:L n>n;fld {a x>; tmp=*x x; +a tmp} xs 0
+dbl xs:L n>L n;map {x> *x 2} xs
+pos xs:L n>L n;flt {x> >x 0} xs
+```
+
+The `;` after `>` is optional. The body supports the same `;`-chained statement forms as the paren lambda and top-level function bodies (let-bindings, guards, match, loops, `ret`/`brk`/`cnt`). Closure capture also works — any name that isn't a param or body-local is snapshot from the enclosing scope.
+
 **Phase 1 (no captures)** lifts the literal to a synthetic top-level decl and works across every engine (tree, VM, Cranelift JIT, AOT). The body's free variables must all be params, locals defined inside the lambda body, or known top-level fns.
 
 **Phase 2 (closure capture)** lets the body reference variables from the enclosing scope:
 
 ```
-f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr`
+f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr` (paren form)
+f xs:L n thr:n>L n;flt {x> >x thr} xs       -- captures `thr` (brace form)
 ```
 
 Phase 2 captures run natively on every engine: the tree interpreter, the register VM, the Cranelift JIT, and the Cranelift AOT backend. Each free variable is snapshot by value at the call site (`Expr::MakeClosure`) and appended to the call frame's arg slice on dispatch. The AOT backend additionally embeds the postcard-serialised `CompiledProgram` into the binary's `.rodata` and publishes TLS pointers on startup, so dispatch helpers can re-enter the VM on user-fn callbacks. The ctx-arg form (`srt fn ctx xs`) remains the cross-engine alternative when you want explicit state without forming a closure.
+
+---
+
+### Trailing-semicolon semantics
+
+`;` is the **statement separator** in ilo. A trailing `;` — one that appears after the last statement with nothing following it before the next structural boundary — is **always silently consumed** (ignored). It is never required, never an error, and never changes the meaning of the body. This applies uniformly across all three body contexts:
+
+| Context | Header/body separator | Trailing `;` handling |
+|---------|----------------------|----------------------|
+| Top-level function declaration | `name params>return;body` — the `;` after the return type separates the header from the body; it is **optional** when a newline is present | A trailing `;` after the last statement is consumed and ignored |
+| Inline lambda | `(params>return;body)` — the `;` after the return type separates the header from the body; it is **optional** | A trailing `;` before the closing `)` is consumed and ignored |
+| Match / guard arm body | `arm:body;` — `;` terminates an arm and starts the next; a trailing `;` before `}` is consumed and ignored | Consumed silently; arm body is parsed as-is |
+
+The parser calls `parse_body_with` (for function bodies) and `parse_lambda_body` (for inline-lambda bodies). After consuming each `;` separator between statements, if the next token is at a body-end boundary (`EOF`, `}`, `)`, or the start of a new sibling function declaration) the loop breaks without error. No statement is emitted for the trailing `;`.
+
+**Practical rules:**
+
+- `f>n;42` and `f>n;42;` are identical — both parse to a single-statement body returning `42`.
+- `(x:n>n;+x 1)` and `(x:n>n;+x 1;)` are identical inline lambdas.
+- `?x{a:1;b:2;}` and `?x{a:1;b:2}` parse identically — the trailing `;` before `}` is silently dropped.
+- A `;` at the very start of a body (before any statement) is **not** a trailing semicolon — it is a missing-statement parse error (`ILO-P001`/`ILO-P003`). Only a `;` after a valid statement is silently consumed.
+- The header/body separator `;` in `name params>return;body` is similarly optional when the token stream contains a newline at that boundary (the lexer converts indented newlines to `;`). The parser checks `peek() == Semi` and advances past it if present.
 
 ---
 
@@ -247,7 +333,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
         flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
         mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
-        run sin slc spl srt str sum tan tau trm unq upr wra wrl zip
+        run sin slc spl srt str sum tan tau trm unq upr wra wrl wro zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
@@ -646,11 +732,15 @@ Called like functions, compiled to dedicated opcodes.
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `sha256-hex h` | SHA-256 of hex-decoded bytes of `h`, lowercase hex (64 chars). Errors (ILO-R009) on odd-length or non-hex input. Use for raw-binary hashing (wire formats, key material, Bitcoin scripts). | `t` |
+| `sha256d h` | double-SHA256 of hex-decoded bytes (`sha256(sha256(h))`), lowercase hex. Bitcoin Merkle protocol shape. Errors (ILO-R009) on odd-length or non-hex input. | `t` |
 | `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
 | `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
+| `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
+| `tokcount s` | approximate cl100k_base token count of string `s` (bytes/3.4 stub; within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. ILO-47 tracks replacing the stub with a real BPE tokeniser. *Experimental.* | `n` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
@@ -660,6 +750,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rdl path` | read file as list of lines | `R (L t) t` |
 | `rdin` | read all of stdin as text; Err on I/O failure or WASM | `R t t` |
 | `rdinl` | read stdin as list of lines (newlines stripped); Err on I/O failure or WASM | `R (L t) t` |
+| `for-line stdin` | lazy line iterator over stdin — unlike `rdinl`, lines are pulled one at a time so unbounded streams (e.g. `tail -f`) can be processed without buffering. The argument must be the text `"stdin"`. Iterable with `@binding (for-line "stdin"){body}`. On WASM returns Err. I/O errors during iteration surface as ILO-R012. Partial trailing line at EOF is emitted unchanged. Tree + VM only in this release (ILO-70; Cranelift JIT follow-up) | `LazyStdinLines` |
 | `lsd dir` | list directory entries (filenames only, not full paths; sorted lexicographically; includes both files and subdirs; empty dirs return `[]`, not Err). Renamed from `ls` in 0.12.1 so the natural `ls=rdl! p` binding for "lines" stays free. | `R (L t) t` |
 | `walk dir` | recursive depth-first traversal; paths returned relative to `dir`, sorted; includes both file and directory entries; symlinks not followed. Unreadable subdirectories (e.g. permission denied) are silently skipped so one locked sibling does not poison the whole walk; an unreadable root still returns `Err` | `R (L t) t` |
 | `glob dir pat` | shell-style filter under `dir`: `*`/`?`/`[abc]` within a path segment, `**` across segments; relative-path output, sorted; no matches returns `[]` (not Err). Shares `walk`'s traversal so unreadable subdirectories are skipped silently | `R (L t) t` |
@@ -675,7 +766,8 @@ Called like functions, compiled to dedicated opcodes.
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
 | `wr path data "json"` | write any value as pretty JSON | `R t t` |
-| `wra path s` | append text to file (create if missing) | `R t t` |
+| `wra path s` | append text to file (create if missing); see also `wro` for overwrite | `R t t` |
+| `wro path s` | truncate file at path and write s (create if missing); see also `wra` for append | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
@@ -815,7 +907,7 @@ Called like functions, compiled to dedicated opcodes.
 
 > **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine - nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
 
-> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position - any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine - the value flows out as the return.
+> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position - any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine - the value flows out as the return. If discarding the result is genuinely intentional (e.g. calling for a side effect you know returns a new map), use `_=mset m k v` — the explicit discard sigil suppresses T033.
 
 > **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout - noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
 
@@ -1182,15 +1274,27 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 
 ### Crypto primitives
 
-`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+`sha256`, `sha256-hex`, `sha256d`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `hex-rev`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, Bitcoin Merkle tree computation, endian conversions, and any time a secret is compared to a known value. All are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
 
 `sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`sha256-hex h > t` decodes `h` as a hex string and returns the SHA-256 digest of the raw bytes as lowercase hex (64 chars). Use when you need to hash binary data that is represented in hex — wire format keys, Bitcoin script pushdata, arbitrary byte sequences. Errors (ILO-R009) on odd-length or non-hex input. For ASCII input, `sha256-hex (hex s)` agrees with `sha256 s`.
+
+`sha256d h > t` applies double-SHA256 (`sha256(sha256(h))`) over the hex-decoded bytes of `h`, returning lowercase hex. This is the Bitcoin Merkle tree protocol shape: pairs of 32-byte txids are concatenated and double-hashed to produce each parent node. Errors (ILO-R009) on odd-length or non-hex input. `sha256d h` is exactly `sha256-hex (sha256-hex h)` but provided as a named builtin because the double-hash pattern is idiomatic in crypto protocols and the composition is easy to transpose incorrectly.
 
 `hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
 
 `b64 s > t` encodes the UTF-8 bytes of `s` as standard base64 with `=` padding (RFC 4648 §4). Distinct from `b64u`: standard alphabet (`+`/`/`) and padded vs URL-safe (`-`/`_`) and stripped. `b64-dec s > R t t` is the inverse and returns `Err` on input outside the standard alphabet or on decoded bytes that aren't valid UTF-8.
 
 `hex s > t` encodes the UTF-8 bytes of `s` as a lowercase hex string. Every byte becomes exactly two chars, so `len (hex s)` is `2 * len s` for ASCII input.
+
+`hex-rev s > t` reverses the byte order of a hex-encoded string by swapping adjacent byte-pairs. Input must have even length (2 chars = 1 byte); odd-length input errors `ILO-T013` with a padding hint. Case is preserved: `"abCD"` reversed is `"CDab"`. Primary use case: Bitcoin txids are stored in wire little-endian order but displayed big-endian — `hex-rev txid` converts between the two. Double reversal is identity: `hex-rev (hex-rev s) == s`.
+
+```ilo
+hex-rev "12345678"      -- "78563412"  (4-byte little→big endian)
+hex-rev "deadbeef"      -- "efbeadde"
+hex-rev ""              -- ""           (empty is fine)
+```
 
 `ct-eq a:t b:t > b` is constant-time text equality. A naive `=` short-circuits on the first differing byte, leaking the prefix length through timing; `ct-eq` always scans the full byte range when lengths match, so a timing attacker can't binary-search the secret one byte at a time. Use it whenever you're comparing HMAC digests, session tokens, or API keys. Different-length inputs short-circuit to `false` — length isn't secret in any realistic protocol (HMAC digests are fixed-size).
 
@@ -1208,9 +1312,15 @@ b64-dec! "TWE="                          -- "Ma"
 
 -- Hex encode
 hex "abc"                                -- "616263"
+
+-- Raw-bytes SHA-256 (same result as sha256 for ASCII input)
+sha256-hex "616263"                      -- ba7816...15ad (= sha256 "abc")
+
+-- Bitcoin Merkle root of two txids (internal byte order, concatenated)
+sha256d (+ tx1 tx2)                      -- double-SHA256 of the 64-byte pair
 ```
 
-`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; `sha256-hex` and `sha256d` raise ILO-R009 on invalid hex; the remaining encoders and `ct-eq` are total.
 
 ---
 
@@ -1268,6 +1378,7 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | Form | Meaning |
 |------|---------|
 | `x=expr` | bind |
+| `_=expr` | explicit discard — evaluate `expr` for side effects, result dropped. Suppresses ILO-T033 so `_=mset m k v` or `_=+=xs v` is not flagged as an accidental discard. |
 | `cond{body}` | conditional execution: run body if cond true (no early return) |
 | `cond expr` | braceless guard: early return expr if cond true |
 | `cond{then}{else}` | ternary: evaluate then or else (no early return) |
@@ -1721,28 +1832,46 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 Split programs across files with `use`:
 
 ```
-use "path/to/file.ilo"         -- import all declarations
-use "path/to/file.ilo" [name1 name2]  -- import only named declarations
+use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
+use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
 ```
 
-All imported declarations merge into a flat shared namespace - no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+**Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
+
+**Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
+
+**Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
 
 ```
--- math.ilo
+-- math-lib.ilo
+_internal-helper n:n>n; +n 0   -- private — excluded from alias imports
 dbl n:n>n; *n 2
 half n:n>n; /n 2
 
 -- main.ilo
-use "math.ilo"
-run n:n>n; dbl! half n
+use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
+use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
+run n:n>n; m-dbl! half n
 ```
+
+### Module privacy
+
+Declarations whose name starts with `_` (underscore, immediately adjacent, e.g. `_helper`) are module-private:
+
+- **Excluded** from named-module imports (`use alias:"path"`) — not prefixed and not available to the importer.
+- **Blocked** in selective imports (`use "path" [_name]`) — requesting a private name is ILO-P019.
+- **Visible** in flat imports (`use "path"`) — they merge into the shared namespace as a convention; the importer can call them, but they are not considered part of the public API.
+
+Declaring a private function: `_helper-name params:type > return-type; body`
 
 ### Rules
 
 - Path is relative to the importing file's directory
 - Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
 - Circular imports are an error (`ILO-P018`)
-- Scoped import with unknown name: `ILO-P019`
+- Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
 ### Error codes
@@ -1752,6 +1881,58 @@ run n:n>n; dbl! half n
 | `ILO-P017` | File not found or `use` in inline mode |
 | `ILO-P018` | Circular import detected |
 | `ILO-P019` | Name in `[...]` list not declared in the imported file |
+
+---
+
+## Package Registry
+
+ilo has a lightweight GitHub-based package registry.  There is no central server — GitHub is the substrate.
+
+### Installing packages
+
+```
+ilo add <owner>/<repo>            -- fetch latest default branch
+ilo add <owner>/<repo>@<ref>      -- fetch a specific branch, tag, or SHA prefix
+ilo update                        -- re-fetch all installed packages
+ilo update <owner>/<repo>         -- re-fetch one package
+```
+
+`ilo add` performs a shallow `git clone` into `~/.ilo/pkgs/<owner>/<repo>/` and writes a line to `ilo.lock` in the current directory.
+
+### Using installed packages
+
+After `ilo add myorg/helpers`, import the package's `index.ilo` with:
+
+```
+use "myorg/helpers"               -- imports ~/.ilo/pkgs/myorg/helpers/index.ilo
+use "myorg/helpers" [foo bar]     -- selective import
+use "myorg/helpers/utils.ilo"     -- import a specific file from the package
+```
+
+A `use` path whose first component contains no `.` is treated as a package reference, not a local file path.  To import a local file in a sibling directory, use an explicit leading `./`:
+
+```
+use "./sibling.ilo"               -- always local
+use "myorg/helpers"               -- always a package
+```
+
+### Lockfile (`ilo.lock`)
+
+`ilo add` writes/updates `ilo.lock` in the current working directory.  Commit this file to source control.
+
+```
+# ilo.lock — generated by `ilo add`; commit to source control
+myorg/helpers	<sha40>	https://github.com/myorg/helpers
+```
+
+Format: tab-separated columns `slug`, `sha`, `url`.  Lines starting with `#` are comments.
+
+### Non-goals (v1)
+
+- Centralised registry hosting (GitHub is the substrate)
+- Semantic versioning enforcement
+- Private registry / auth
+- Transitive dependency resolution
 
 ---
 
@@ -2088,7 +2269,13 @@ ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; prote
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
 ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
+ilo run --allow-net[=HOSTS] <file>   -- restrict outbound net to comma-separated hosts (* = all, empty = none)
+ilo run --allow-read[=PATHS] <file>  -- restrict file reads to comma-separated path prefixes
+ilo run --allow-write[=PATHS] <file> -- restrict file writes to comma-separated path prefixes
+ilo run --allow-run[=CMDS] <file>    -- restrict subprocess spawning to comma-separated command names
 ```
+
+**Capability flags (`ILO-CAP-001`).** `ilo run --allow-net=HOSTS --allow-read=PATHS --allow-write=PATHS --allow-run=CMDS` gates IO builtins at the process level. Any `--allow-*` flag present switches the runtime from **permissive** (default — no restrictions, full backwards compatibility) to **restricted** (only listed targets are permitted). Denial returns a normal `R` Err value with code `ILO-CAP-001`; programs can pattern-match it. Capability matrix: `get`/`post`/`put`/`patch`/`del`/`fetch` → `--allow-net`; `rd`/`rd-lines`/`ls`/`lsr` → `--allow-read`; `wr`/`wr-lines`/`wr-app` → `--allow-write`; `run`/`run2` → `--allow-run`. Value syntax: omit = unrestricted; `*` = all permitted; empty (`--allow-net=`) = all blocked; comma list = only those targets. Matching: net = hostname extracted from URL, exact or `*.domain` wildcard; read/write = path-prefix with separator boundary; run = basename or full-path match. See `SANDBOX.md` for the operator guide and `examples/capability-sandbox.ilo` for a runnable demo.
 
 **Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards were installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
@@ -2106,7 +2293,7 @@ ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 M
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures with Phase 2 capture, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. Phase 2 captures run natively on every public backend - VM, JIT, and AOT (`ilo compile`); AOT embeds the postcard `CompiledProgram` blob into the binary's `.rodata` so dispatch helpers can re-enter the VM on user-fn callbacks the same way the in-process runners do. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
-**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `fsize`, `mtime`, `isfile`, `isdir`, `run`, `env-all`, `jkeys`, `tz-offset`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
+**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `for-line`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `fsize`, `mtime`, `isfile`, `isdir`, `run`, `env-all`, `jkeys`, `tz-offset`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
 
 **Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 
@@ -2177,3 +2364,8 @@ fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 ```
 fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 ```
+
+
+## Stability
+
+See STABILITY.md at repo root for the per-surface stability matrix. Three tiers: stable (schemaVersion:1 envelope, ILO-error-codes, serv-protocol-phases, file-version-pragma, manifesto-principles, reserved-name-policy), provisional (builtin-signatures, cli-flag-names, error-message-prose, examples-corpus, ilo-test-surface), experimental (0.13-in-flight-features, aot-artifact-format, cranelift-jit-internals, extensions-dir, cargo-feature-flags). Stable surfaces are safe to pin across releases. Provisional surfaces carry a deprecation-window guarantee. Experimental surfaces may disappear without notice. `ilo spec --json ai` surfaces this matrix in the `stability` field of the JSON envelope, and per-item stability annotations on every builtin in the `builtins` array.

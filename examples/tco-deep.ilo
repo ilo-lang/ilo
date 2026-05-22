@@ -1,0 +1,17 @@
+-- Guaranteed-depth tail-call elimination: 1 000 000 recursive steps without
+-- host-stack growth on every engine (tree, VM, JIT, AOT).
+--
+-- Tree:      trampolines tail calls in the interpreter.
+-- VM:        OP_TAILCALL reuses the current CallFrame.
+-- JIT/AOT:   `return_call` (CallConv::Tail) eliminates the stack frame.
+--
+-- A default ulimit stack (8 MiB) holds roughly 8–80 k ordinary frames
+-- depending on frame size. Without TCO, `count-down 1000000` would overflow.
+-- With TCO the depth is O(1) in host-stack space.
+
+count-down n:n>n;=n 0 0;count-down -n 1
+
+main >n;count-down 1000000
+
+-- run: main
+-- out: 0

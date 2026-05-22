@@ -11,7 +11,7 @@ negval pair:L t>n;
   - 0 (parsen (at pair 1))
 
 main p:t>R t t;
-  rows=rd! p;
+  rows=rd! p "csv";
   body=drop 1 rows;
   n=len body;
   prnt cat ["rows: " str n] "";
@@ -69,7 +69,7 @@ main p:t>R t t;
 -- the last line via a wrapper entry that swallows the prints.
 
 quiet p:t>R t t;
-  rows=rd! p;
+  rows=rd! p "csv";
   body=drop 1 rows;
   rs=map (row:_>n;q=parsen (at row 4);pr=parsen (at row 5);*q pr) body;
   ~fmt "rows={} total={} mean={}" (len body) (str (sum rs)) (fmt2 (avg rs) 4)

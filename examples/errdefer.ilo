@@ -1,0 +1,31 @@
+-- errdefer: cleanup that only runs on the error path.
+--
+-- `errdefer expr` registers cleanup that fires only when the enclosing
+-- function exits via an error: a `ret ^err` early return, a `!`-propagated
+-- error from a callee, or a runtime panic.
+--
+-- `defer expr` fires on ALL exits (normal and error).
+--
+-- This example shows a function that either succeeds or fails depending on
+-- its argument.  The `defer` fires both times; `errdefer` fires only when
+-- the function returns an Err.
+
+attempt x:n>R n t
+  defer prnt "cleanup always"
+  errdefer prnt "cleanup on error only"
+  =x 0{ret ^"zero is not allowed"}
+  ~x
+
+m>_
+  prnt "--- success case ---"
+  attempt 1
+  prnt "--- error case ---"
+  attempt 0
+  nil
+
+-- Observed output when run with `ilo examples/errdefer.ilo m`:
+--   --- success case ---
+--   cleanup always
+--   --- error case ---
+--   cleanup on error only
+--   cleanup always

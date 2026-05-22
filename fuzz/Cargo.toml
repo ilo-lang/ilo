@@ -1,0 +1,24 @@
+[package]
+name = "ilo-fuzz"
+version = "0.0.1"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.ilo]
+path = ".."
+features = ["cranelift"]
+
+# Prevent this from interfering with workspace Cargo.toml
+[workspace]
+
+[[bin]]
+name = "rodata_deserialise"
+path = "fuzz_targets/rodata_deserialise.rs"
+test = false
+doc = false

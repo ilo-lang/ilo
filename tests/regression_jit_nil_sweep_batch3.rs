@@ -239,6 +239,17 @@ fn str_number_cross_engine() {
     check_all("f>t;str 42", "42");
 }
 
+#[test]
+fn str_text_passthrough_cross_engine() {
+    // str of already-text is identity — returns the same string unchanged
+    check_all("f>t;str \"hello\"", "hello");
+}
+
+#[test]
+fn str_text_passthrough_empty_cross_engine() {
+    check_all("f>t;str \"\"", "");
+}
+
 // ── No stale-error leak across successive Cranelift calls ─────────────────
 //
 // PR #254's JitRuntimeErrorGuard clears the TLS error cell on entry/exit.

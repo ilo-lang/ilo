@@ -1,0 +1,7 @@
+{
+  "code": "ILO-P005",
+  "long": "## ILO-P005: expected identifier\n\nAn identifier (function name, variable name, parameter name) was\nexpected but a different token was found.\n",
+  "phase": "parse",
+  "schemaVersion": 1,
+  "short": "expected identifier, got token"
+}
