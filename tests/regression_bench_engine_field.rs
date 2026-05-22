@@ -68,7 +68,7 @@ fn bench_json_emits_engine_field_per_engine() {
 }
 
 #[test]
-fn bench_json_covers_tree_vm_jit() {
+fn bench_json_covers_vm_jit() {
     let stdout = bench_json("add a:n b:n>n;+a b", "add", &["1", "2"]);
 
     // Pull the engine name from each line. Test relies only on these being
@@ -87,12 +87,9 @@ fn bench_json_covers_tree_vm_jit() {
         })
         .collect();
 
-    // tree, vm, jit are mandatory under the default feature set. llvm only
+    // vm and jit are mandatory under the default feature set. llvm only
     // shows up under `--features llvm` and isn't asserted here.
-    assert!(
-        engines.iter().any(|e| e == "tree"),
-        "expected an `engine: tree` record in bench JSON output. saw: {engines:?}"
-    );
+    // (tree was dropped in PR E of ILO-45.)
     assert!(
         engines.iter().any(|e| e == "vm"),
         "expected an `engine: vm` record in bench JSON output. saw: {engines:?}"
@@ -164,10 +161,7 @@ fn bench_text_mode_unchanged() {
     assert!(out.status.success(), "ilo --bench --text failed");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    assert!(
-        stdout.contains("Rust interpreter"),
-        "text mode missing Rust interpreter heading: {stdout}"
-    );
+    // Tree-walker "Rust interpreter" heading removed in PR E of ILO-45.
     assert!(
         stdout.contains("Register VM"),
         "text mode missing Register VM heading: {stdout}"

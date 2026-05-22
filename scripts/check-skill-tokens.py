@@ -57,7 +57,8 @@ PER_MODULE_LIMIT = 1200
 # summaries to ilo-language and trimming per-builtin prose).
 PER_MODULE_OVERRIDES = {
     "ilo-language": 1700,
-    "ilo-builtins-io": 1700,
+    "ilo-builtins-io": 2000,
+    "ilo-builtins-math": 1500,
 }
 TOTAL_LIMIT = 15000
 

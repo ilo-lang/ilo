@@ -59,11 +59,7 @@ fn bench_silent_suppresses_program_stdout_under_json() {
     );
 
     // ...and we still got bench numbers — at least one envelope per
-    // expected engine.
-    assert!(
-        stdout.contains("\"engine\":\"tree\""),
-        "missing tree engine in --silent bench output: {stdout}"
-    );
+    // expected engine. (Tree engine dropped in PR E of ILO-45.)
     assert!(
         stdout.contains("\"engine\":\"vm\""),
         "missing vm engine in --silent bench output: {stdout}"
