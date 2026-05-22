@@ -2303,6 +2303,13 @@ impl RegCompiler {
         }
         match stmt {
             Stmt::Let { name, value } => {
+                // `_=expr` — explicit discard bind. Compile value for side
+                // effects (IOs, tree-bridge calls) but do not allocate a
+                // register or add a local. `_` remains the wildcard/nil ref.
+                if name == "_" {
+                    self.compile_expr(value);
+                    return None;
+                }
                 if let Some(existing_reg) = self.resolve_local(name) {
                     // Peephole: `x = +x k` where k is a numeric literal and x is known numeric
                     // → emit ADDK_N/SUBK_N/MULK_N/DIVK_N directly into existing_reg (no temp + MOVE)

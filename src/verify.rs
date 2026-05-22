@@ -4496,7 +4496,12 @@ impl VerifyContext {
         match stmt {
             Stmt::Let { name, value } => {
                 let ty = self.infer_expr(func, scope, value, span);
-                scope_insert(scope, name.clone(), ty);
+                // `_=expr` explicit discard: evaluate type for diagnostics on
+                // the RHS (e.g. catches T005 undefined calls inside), but do
+                // not insert `_` into scope — it's a sigil, not a binding.
+                if name != "_" {
+                    scope_insert(scope, name.clone(), ty);
+                }
                 Ty::Nil
             }
             Stmt::Destructure { bindings, value } => {
@@ -8445,6 +8450,47 @@ mod tests {
             .filter(|w| w.code == "ILO-T033")
             .collect();
         assert_eq!(t033.len(), 3);
+    }
+
+    // ---- _=expr explicit discard bind (ILO-36) ----
+
+    #[test]
+    fn discard_bind_no_t033() {
+        // `_=mset m k v` — explicit discard, T033 must NOT fire.
+        let result = parse_and_verify_full(r#"f>n;m=mmap;_=mset m "k" 1;3"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(
+            t033.len(),
+            0,
+            "_=mset should not warn T033, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn discard_bind_no_scope_pollution() {
+        // `_=expr` must not introduce `_` as a bound variable.
+        // The function returns `_` (the nil/wildcard ref), not the mset result.
+        // Verifier should not surface T005 ("undefined '_'") nor bind it.
+        let result = parse_and_verify_full(r#"f>n;_=prnt "hi";3"#);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn discard_bind_rhs_errors_still_surface() {
+        // Errors inside the RHS of `_=` are still checked.
+        // `_=no_such 1` should emit T005 for the undefined call.
+        let errs = parse_and_verify(r#"f>n;_=no-such 1;3"#).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T005"),
+            "expected T005 for undefined call in _=expr, got {:?}",
+            errs
+        );
     }
 
     // ---- rnd builtin ----
