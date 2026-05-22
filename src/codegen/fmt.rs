@@ -316,13 +316,20 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
             binding,
             start,
             end,
+            step,
             body,
         } => {
+            let step_part = if let Some(st) = step {
+                format!(" by {}", fmt_expr(st, FmtMode::Dense))
+            } else {
+                String::new()
+            };
             format!(
-                "@{} {}..{}{{{}}}",
+                "@{} {}..{}{}{{{}}}",
                 binding,
                 fmt_expr(start, FmtMode::Dense),
                 fmt_expr(end, FmtMode::Dense),
+                step_part,
                 fmt_body_dense(body)
             )
         }
@@ -438,6 +445,7 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
             binding,
             start,
             end,
+            step,
             body,
         } => {
             out.push_str(&ind);
@@ -448,6 +456,10 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
             out.push_str(&fmt_expr(start, FmtMode::Expanded));
             out.push_str("..");
             out.push_str(&fmt_expr(end, FmtMode::Expanded));
+            if let Some(st) = step {
+                out.push_str(" by ");
+                out.push_str(&fmt_expr(st, FmtMode::Expanded));
+            }
             out.push_str(" {\n");
             fmt_body_expanded(out, body, indent_level + 1);
             out.push_str(&ind);
@@ -577,6 +589,13 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
         Expr::List(items) => {
             let items_str: Vec<String> = items.iter().map(|i| fmt_expr(i, mode)).collect();
             format!("[{}]", items_str.join(", "))
+        }
+        Expr::AnonRecord { fields } => {
+            let fields_str: Vec<String> = fields
+                .iter()
+                .map(|(n, v)| format!("{}:{}", n, fmt_expr(v, mode)))
+                .collect();
+            format!("{{{}}}", fields_str.join(" "))
         }
         Expr::Record { type_name, fields } => {
             if fields.is_empty() {
@@ -1275,6 +1294,7 @@ mod tests {
         let use_decl = Decl::Use {
             path: "x.ilo".into(),
             only: None,
+            alias: None,
             span: Span::UNKNOWN,
         };
         let s = format_decl(&use_decl, FmtMode::Dense);

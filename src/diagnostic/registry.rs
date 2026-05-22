@@ -76,10 +76,42 @@
 // - **S (Skill / spec)** — skill-bundle loader errors, manifest issues,
 //   spec-link breaks. Forward-looking; no codes allocated yet.
 
+/// The compiler phase that emits a diagnostic.
+///
+/// This is the provenance field: it tells tooling (and humans) which stage of
+/// compilation raised the error without having to parse the error code letter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Lexer / tokenisation (ILO-L###)
+    Lex,
+    /// Parser / syntax analysis (ILO-P###)
+    Parse,
+    /// Type-checker / verifier (ILO-T###, ILO-V###)
+    Verify,
+    /// Runtime interpreter, VM, or JIT (ILO-R###)
+    Runtime,
+    /// Engine-specific compilation limitation (ILO-E###)
+    Engine,
+}
+
+impl Phase {
+    /// Canonical lowercase string, matches the `phase` key used in JSON output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Phase::Lex => "lex",
+            Phase::Parse => "parse",
+            Phase::Verify => "verify",
+            Phase::Runtime => "runtime",
+            Phase::Engine => "engine",
+        }
+    }
+}
+
 /// An entry in the error code registry.
-#[allow(dead_code)] // `short` is used by tooling; `long` is used by --explain
+#[allow(dead_code)] // fields are used by tooling / --explain / golden tests
 pub struct ErrorEntry {
     pub code: &'static str,
+    pub phase: Phase,        // which compiler phase emits this code
     pub short: &'static str, // brief description for tooling / --list-errors
     pub long: &'static str,  // full explanation for --explain
 }
@@ -137,6 +169,7 @@ pub static REGISTRY: &[ErrorEntry] = &[
     // ── Lexer ────────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-L001",
+        phase: Phase::Lex,
         short: "unexpected character",
         long: r#"## ILO-L001: unexpected character
 
@@ -152,6 +185,7 @@ with a valid operator or identifier.
     },
     ErrorEntry {
         code: "ILO-L002",
+        phase: Phase::Lex,
         short: "underscore in identifier — use hyphens",
         long: r#"## ILO-L002: underscore in identifier
 
@@ -168,6 +202,7 @@ ilo uses hyphens as word separators in identifiers, not underscores.
     },
     ErrorEntry {
         code: "ILO-L003",
+        phase: Phase::Lex,
         short: "uppercase identifier — use lowercase",
         long: r#"## ILO-L003: uppercase identifier
 
@@ -186,6 +221,7 @@ are reserved for the built-in `List` and `Result` type constructors.
     // ── Parser ───────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-P001",
+        phase: Phase::Parse,
         short: "unexpected token at top level",
         long: r#"## ILO-P001: unexpected token at top level
 
@@ -203,6 +239,7 @@ start with a function name followed by parameters, or with `type`/`tool`.
     },
     ErrorEntry {
         code: "ILO-P002",
+        phase: Phase::Parse,
         short: "unexpected end of file at top level",
         long: r#"## ILO-P002: unexpected end of file
 
@@ -216,6 +253,7 @@ An incomplete function definition is a common cause.
     },
     ErrorEntry {
         code: "ILO-P003",
+        phase: Phase::Parse,
         short: "unexpected token",
         long: r#"## ILO-P003: unexpected token
 
@@ -237,6 +275,7 @@ The fix is to use `>` between the parameter list and the return type:
     },
     ErrorEntry {
         code: "ILO-P004",
+        phase: Phase::Parse,
         short: "unexpected end of file",
         long: r#"## ILO-P004: unexpected end of file
 
@@ -245,6 +284,7 @@ The file ended before a required token was found.
     },
     ErrorEntry {
         code: "ILO-P005",
+        phase: Phase::Parse,
         short: "expected identifier, got token",
         long: r#"## ILO-P005: expected identifier
 
@@ -254,6 +294,7 @@ expected but a different token was found.
     },
     ErrorEntry {
         code: "ILO-P006",
+        phase: Phase::Parse,
         short: "expected identifier, got end of file",
         long: r#"## ILO-P006: expected identifier, got end of file
 
@@ -262,6 +303,7 @@ The file ended before a required identifier was found.
     },
     ErrorEntry {
         code: "ILO-P007",
+        phase: Phase::Parse,
         short: "expected type annotation, got token",
         long: r#"## ILO-P007: expected type annotation
 
@@ -275,6 +317,7 @@ was expected but a different token was found.
     },
     ErrorEntry {
         code: "ILO-P008",
+        phase: Phase::Parse,
         short: "expected type annotation, got end of file",
         long: r#"## ILO-P008: expected type annotation, got end of file
 
@@ -283,6 +326,7 @@ The file ended before a required type annotation was found.
     },
     ErrorEntry {
         code: "ILO-P009",
+        phase: Phase::Parse,
         short: "expected expression, got token",
         long: r#"## ILO-P009: expected expression
 
@@ -297,6 +341,7 @@ token was found.
     },
     ErrorEntry {
         code: "ILO-P010",
+        phase: Phase::Parse,
         short: "expected expression, got end of file",
         long: r#"## ILO-P010: expected expression, got end of file
 
@@ -305,6 +350,7 @@ The file ended before a required expression was found.
     },
     ErrorEntry {
         code: "ILO-P011",
+        phase: Phase::Parse,
         short: "expected pattern, got token",
         long: r#"## ILO-P011: expected pattern
 
@@ -315,6 +361,7 @@ Patterns include literals, `_` wildcard, type constructors (`Ok x`,
     },
     ErrorEntry {
         code: "ILO-P012",
+        phase: Phase::Parse,
         short: "expected pattern, got end of file",
         long: r#"## ILO-P012: expected pattern, got end of file
 
@@ -323,6 +370,7 @@ The file ended inside a match expression before a pattern was found.
     },
     ErrorEntry {
         code: "ILO-P013",
+        phase: Phase::Parse,
         short: "expected number literal, got token",
         long: r#"## ILO-P013: expected number literal
 
@@ -332,6 +380,7 @@ a different token was found.
     },
     ErrorEntry {
         code: "ILO-P014",
+        phase: Phase::Parse,
         short: "expected number literal, got end of file",
         long: r#"## ILO-P014: expected number literal, got end of file
 
@@ -340,6 +389,7 @@ The file ended before a required number literal was found.
     },
     ErrorEntry {
         code: "ILO-P015",
+        phase: Phase::Parse,
         short: "expected tool description string",
         long: r#"## ILO-P015: expected tool description string
 
@@ -353,6 +403,7 @@ A `tool` declaration requires a string literal as its description.
     },
     ErrorEntry {
         code: "ILO-P016",
+        phase: Phase::Parse,
         short: "unexpected token after braceless guard body",
         long: r#"## ILO-P016: unexpected token after braceless guard body
 
@@ -380,6 +431,7 @@ do not need braces:
     },
     ErrorEntry {
         code: "ILO-P017",
+        phase: Phase::Parse,
         short: "use-import failed",
         long: r#"## ILO-P017: use-import failed
 
@@ -400,6 +452,7 @@ for `use`-import resolution.
     },
     ErrorEntry {
         code: "ILO-P018",
+        phase: Phase::Parse,
         short: "variadic builtin not in trailing position",
         long: r#"## ILO-P018: variadic builtin not in trailing position
 
@@ -429,6 +482,7 @@ treats it as a single operand.
     },
     ErrorEntry {
         code: "ILO-P019",
+        phase: Phase::Parse,
         short: "use-import name not found",
         long: r#"## ILO-P019: use-import name not found
 
@@ -442,6 +496,7 @@ import list.
     },
     ErrorEntry {
         code: "ILO-P020",
+        phase: Phase::Parse,
         short: "incomplete function header",
         long: r#"## ILO-P020: incomplete function header
 
@@ -482,6 +537,7 @@ header is incomplete, not on the next function in the file.
     },
     ErrorEntry {
         code: "ILO-P101",
+        phase: Phase::Parse,
         short: "list-literal element is a builtin call without parens",
         long: r#"## ILO-P101: list-literal element is a builtin call without parens
 
@@ -520,6 +576,7 @@ inline form gets unreadable.
     },
     ErrorEntry {
         code: "ILO-P102",
+        phase: Phase::Parse,
         short: "top-level binding outside a function declaration",
         long: r#"## ILO-P102: top-level binding outside a function declaration
 
@@ -565,6 +622,7 @@ shape fix.
     },
     ErrorEntry {
         code: "ILO-P021",
+        phase: Phase::Parse,
         short: "ambiguous double-minus prefix-binop chain",
         long: r#"## ILO-P021: ambiguous double-minus prefix-binop chain
 
@@ -609,6 +667,7 @@ unambiguous and remain accepted.
     },
     ErrorEntry {
         code: "ILO-P103",
+        phase: Phase::Parse,
         short: "AST nesting depth exceeded",
         long: r#"## ILO-P103: AST nesting depth exceeded
 
@@ -634,6 +693,7 @@ deliberately if the depth is real.
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-T001",
+        phase: Phase::Verify,
         short: "duplicate type definition",
         long: r#"## ILO-T001: duplicate type definition
 
@@ -644,6 +704,7 @@ A `type` declaration uses a name that was already defined.
     },
     ErrorEntry {
         code: "ILO-T002",
+        phase: Phase::Verify,
         short: "duplicate function/tool definition",
         long: r#"## ILO-T002: duplicate function or tool definition
 
@@ -654,6 +715,7 @@ A function or tool uses a name that was already defined in this file.
     },
     ErrorEntry {
         code: "ILO-T003",
+        phase: Phase::Verify,
         short: "undefined type",
         long: r#"## ILO-T003: undefined type
 
@@ -668,6 +730,7 @@ A type name used in a signature or record literal is not defined.
     },
     ErrorEntry {
         code: "ILO-T004",
+        phase: Phase::Verify,
         short: "undefined variable",
         long: r#"## ILO-T004: undefined variable
 
@@ -703,6 +766,7 @@ the fix is to bind it from the outer list and index with `at`:
     },
     ErrorEntry {
         code: "ILO-T005",
+        phase: Phase::Verify,
         short: "undefined function",
         long: r#"## ILO-T005: undefined function
 
@@ -739,6 +803,7 @@ always a call.
     },
     ErrorEntry {
         code: "ILO-T006",
+        phase: Phase::Verify,
         short: "arity mismatch",
         long: r#"## ILO-T006: arity mismatch
 
@@ -754,6 +819,7 @@ A function was called with the wrong number of arguments.
     },
     ErrorEntry {
         code: "ILO-T007",
+        phase: Phase::Verify,
         short: "type mismatch at call site",
         long: r#"## ILO-T007: type mismatch at call site
 
@@ -770,6 +836,7 @@ such as `num` to convert text to a number.
     },
     ErrorEntry {
         code: "ILO-T008",
+        phase: Phase::Verify,
         short: "return type mismatch",
         long: r#"## ILO-T008: return type mismatch
 
@@ -784,6 +851,7 @@ The type of the return expression does not match the declared return type.
     },
     ErrorEntry {
         code: "ILO-T009",
+        phase: Phase::Verify,
         short: "arithmetic operator type error",
         long: r#"## ILO-T009: arithmetic operator type error
 
@@ -796,6 +864,7 @@ of mismatched or wrong types.
     },
     ErrorEntry {
         code: "ILO-T010",
+        phase: Phase::Verify,
         short: "comparison operator type error",
         long: r#"## ILO-T010: comparison operator type error
 
@@ -807,6 +876,7 @@ Comparisons require both operands to be the same type (`n` or `t`).
     },
     ErrorEntry {
         code: "ILO-T011",
+        phase: Phase::Verify,
         short: "append (+=) type error",
         long: r#"## ILO-T011: append (+=) type error
 
@@ -820,6 +890,7 @@ appended must match the list's element type.
     },
     ErrorEntry {
         code: "ILO-T012",
+        phase: Phase::Verify,
         short: "negate type error",
         long: r#"## ILO-T012: negate type error
 
@@ -832,6 +903,7 @@ Unary negation (`-x`) requires a numeric argument.
     },
     ErrorEntry {
         code: "ILO-T013",
+        phase: Phase::Verify,
         short: "builtin argument type error",
         long: r#"## ILO-T013: builtin argument type error
 
@@ -847,6 +919,7 @@ Common builtins and their required types:
     },
     ErrorEntry {
         code: "ILO-T014",
+        phase: Phase::Verify,
         short: "foreach collection type error",
         long: r#"## ILO-T014: foreach collection type error
 
@@ -859,6 +932,7 @@ The `foreach` builtin requires a list as its first argument.
     },
     ErrorEntry {
         code: "ILO-T015",
+        phase: Phase::Verify,
         short: "record missing field",
         long: r#"## ILO-T015: record missing field
 
@@ -874,6 +948,7 @@ A record literal is missing one or more fields required by the type.
     },
     ErrorEntry {
         code: "ILO-T016",
+        phase: Phase::Verify,
         short: "record unknown field",
         long: r#"## ILO-T016: record unknown field
 
@@ -885,6 +960,7 @@ does not exist on the type.
     },
     ErrorEntry {
         code: "ILO-T017",
+        phase: Phase::Verify,
         short: "record field type mismatch",
         long: r#"## ILO-T017: record field type mismatch
 
@@ -895,6 +971,7 @@ A field in a record literal was given a value of the wrong type.
     },
     ErrorEntry {
         code: "ILO-T018",
+        phase: Phase::Verify,
         short: "field access on non-record type",
         long: r#"## ILO-T018: field access on non-record type
 
@@ -908,6 +985,7 @@ returns an Option you can match on or default with `??`.
     },
     ErrorEntry {
         code: "ILO-T019",
+        phase: Phase::Verify,
         short: "field not found on type",
         long: r#"## ILO-T019: field not found on type
 
@@ -919,6 +997,7 @@ not exist on the record type.
     },
     ErrorEntry {
         code: "ILO-T020",
+        phase: Phase::Verify,
         short: "'with' on non-record type",
         long: r#"## ILO-T020: 'with' on non-record type
 
@@ -927,6 +1006,7 @@ The `with` expression for updating record fields requires a record value.
     },
     ErrorEntry {
         code: "ILO-T021",
+        phase: Phase::Verify,
         short: "'with' field not found",
         long: r#"## ILO-T021: 'with' field not found
 
@@ -935,6 +1015,7 @@ A field name used in a `with` expression does not exist on the record type.
     },
     ErrorEntry {
         code: "ILO-T022",
+        phase: Phase::Verify,
         short: "'with' field type mismatch",
         long: r#"## ILO-T022: 'with' field type mismatch
 
@@ -943,6 +1024,7 @@ A value provided in a `with` expression has the wrong type for the field.
     },
     ErrorEntry {
         code: "ILO-T023",
+        phase: Phase::Verify,
         short: "index access on non-list type",
         long: r#"## ILO-T023: index access on non-list type
 
@@ -951,6 +1033,7 @@ A list index access (`value.0`) was attempted on a non-list value.
     },
     ErrorEntry {
         code: "ILO-T024",
+        phase: Phase::Verify,
         short: "non-exhaustive match",
         long: r#"## ILO-T024: non-exhaustive match
 
@@ -965,6 +1048,7 @@ arms for each missing case.
     },
     ErrorEntry {
         code: "ILO-T025",
+        phase: Phase::Verify,
         short: "'!' used on non-Result call",
         long: r#"## ILO-T025: '!' used on non-Result call
 
@@ -982,6 +1066,7 @@ different type.
     },
     ErrorEntry {
         code: "ILO-T026",
+        phase: Phase::Verify,
         short: "'!' used in non-Result function",
         long: r#"## ILO-T026: '!' used in non-Result function
 
@@ -999,6 +1084,7 @@ function, so the enclosing function must return a Result type
     },
     ErrorEntry {
         code: "ILO-T027",
+        phase: Phase::Verify,
         short: "braceless guard body looks like a function name",
         long: r#"## ILO-T027: braceless guard body looks like a function name
 
@@ -1021,6 +1107,7 @@ Use braces when the guard body is a function call.
     },
     ErrorEntry {
         code: "ILO-T028",
+        phase: Phase::Verify,
         short: "brk/cnt used outside a loop",
         long: r#"## ILO-T028: brk/cnt used outside a loop
 
@@ -1038,6 +1125,7 @@ body (`@` foreach or `wh` while).
     },
     ErrorEntry {
         code: "ILO-T029",
+        phase: Phase::Verify,
         short: "unreachable code",
         long: r#"## ILO-T029: unreachable code
 
@@ -1053,6 +1141,7 @@ never be executed.
     },
     ErrorEntry {
         code: "ILO-T030",
+        phase: Phase::Verify,
         short: "circular type alias",
         long: r#"## ILO-T030: circular type alias
 
@@ -1071,6 +1160,7 @@ remove one side of the cycle.
     },
     ErrorEntry {
         code: "ILO-T031",
+        phase: Phase::Verify,
         short: "type alias shadows builtin",
         long: r#"## ILO-T031: type alias shadows a builtin type
 
@@ -1083,6 +1173,7 @@ be redefined.
     },
     ErrorEntry {
         code: "ILO-T032",
+        phase: Phase::Verify,
         short: "bare 'fmt' result is discarded",
         long: r#"## ILO-T032: bare 'fmt' result is discarded
 
@@ -1114,6 +1205,7 @@ This warning only fires when `fmt` is followed by another statement.
     },
     ErrorEntry {
         code: "ILO-T033",
+        phase: Phase::Verify,
         short: "bare mutation-shaped builtin result is discarded",
         long: r#"## ILO-T033: bare mutation-shaped builtin result is discarded
 
@@ -1160,6 +1252,7 @@ value flows out as the function/branch result.
     },
     ErrorEntry {
         code: "ILO-T043",
+        phase: Phase::Verify,
         short: "recursive call discarded at non-tail position",
         long: r#"## ILO-T043: recursive call discarded at non-tail position
 
@@ -1223,6 +1316,7 @@ may be legitimately side-effecting (logging, file I/O).
     },
     ErrorEntry {
         code: "ILO-T034",
+        phase: Phase::Verify,
         short: "'!' / '!!' used on a non-callable value",
         long: r#"## ILO-T034: '!' / '!!' used on a non-callable value
 
@@ -1258,6 +1352,7 @@ and is unaffected.
     },
     ErrorEntry {
         code: "ILO-T035",
+        phase: Phase::Verify,
         short: "Result arm (`~v:` / `^e:`) on Option subject",
         long: r#"## ILO-T035: Result arm (`~v:` / `^e:`) on Option subject
 
@@ -1291,6 +1386,7 @@ unaffected.
     },
     ErrorEntry {
         code: "ILO-T036",
+        phase: Phase::Verify,
         short: "call requires too many register slots (VM cap)",
         long: r#"## ILO-T036: call requires too many register slots
 
@@ -1309,6 +1405,7 @@ VM cap).
     // ── Engine-specific ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-E801",
+        phase: Phase::Engine,
         short: "AOT compile needs an entry function",
         long: r#"## ILO-E801: AOT compile needs an entry function
 
@@ -1352,6 +1449,7 @@ the failure mode is the same across every engine.
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",
+        phase: Phase::Verify,
         short: "guard without else inside loop (retired)",
         long: r#"## ILO-W001: guard without else inside loop (retired)
 
@@ -1363,6 +1461,7 @@ braced guards for explicit early return from loops.
     },
     ErrorEntry {
         code: "ILO-W002",
+        phase: Phase::Verify,
         short: "iterating jpar! result, use jpar-list! instead",
         long: r#"## ILO-W002: iterating jpar! result
 
@@ -1393,6 +1492,7 @@ response to be an array.
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-R001",
+        phase: Phase::Runtime,
         short: "undefined variable at runtime",
         long: r#"## ILO-R001: undefined variable at runtime
 
@@ -1404,6 +1504,7 @@ or a dynamic path was taken.
     },
     ErrorEntry {
         code: "ILO-R002",
+        phase: Phase::Runtime,
         short: "undefined function at runtime",
         long: r#"## ILO-R002: undefined function at runtime
 
@@ -1413,6 +1514,7 @@ caught by the verifier (ILO-T005).
     },
     ErrorEntry {
         code: "ILO-R003",
+        phase: Phase::Runtime,
         short: "division by zero",
         long: r#"## ILO-R003: division by zero
 
@@ -1423,6 +1525,7 @@ A division operation (`/`) was performed with a zero divisor.
     },
     ErrorEntry {
         code: "ILO-R004",
+        phase: Phase::Runtime,
         short: "runtime type error",
         long: r#"## ILO-R004: runtime type error
 
@@ -1432,6 +1535,7 @@ This may indicate a verifier gap for a dynamic code path.
     },
     ErrorEntry {
         code: "ILO-R005",
+        phase: Phase::Runtime,
         short: "field not found at runtime",
         long: r#"## ILO-R005: field not found at runtime
 
@@ -1441,6 +1545,7 @@ requested field. Normally caught statically (ILO-T019).
     },
     ErrorEntry {
         code: "ILO-R006",
+        phase: Phase::Runtime,
         short: "list index out of bounds",
         long: r#"## ILO-R006: list index out of bounds
 
@@ -1452,6 +1557,7 @@ ilo lists are zero-indexed.
     },
     ErrorEntry {
         code: "ILO-R007",
+        phase: Phase::Runtime,
         short: "foreach requires a list",
         long: r#"## ILO-R007: foreach requires a list
 
@@ -1461,6 +1567,7 @@ Normally caught statically (ILO-T014).
     },
     ErrorEntry {
         code: "ILO-R008",
+        phase: Phase::Runtime,
         short: "'with' requires a record",
         long: r#"## ILO-R008: 'with' requires a record
 
@@ -1470,6 +1577,7 @@ Normally caught statically (ILO-T020).
     },
     ErrorEntry {
         code: "ILO-R009",
+        phase: Phase::Runtime,
         short: "builtin argument error at runtime",
         long: r#"## ILO-R009: builtin argument error at runtime
 
@@ -1479,6 +1587,7 @@ Normally caught statically (ILO-T013).
     },
     ErrorEntry {
         code: "ILO-R010",
+        phase: Phase::Runtime,
         short: "compile error: undefined variable",
         long: r#"## ILO-R010: compile error: undefined variable
 
@@ -1488,6 +1597,7 @@ Normally caught statically (ILO-T004) before compilation.
     },
     ErrorEntry {
         code: "ILO-R011",
+        phase: Phase::Runtime,
         short: "compile error: undefined function",
         long: r#"## ILO-R011: compile error: undefined function
 
@@ -1497,6 +1607,7 @@ Normally caught statically (ILO-T005) before compilation.
     },
     ErrorEntry {
         code: "ILO-R012",
+        phase: Phase::Runtime,
         short: "no functions defined",
         long: r#"## ILO-R012: no functions defined
 
@@ -1506,6 +1617,7 @@ must be defined to run a program.
     },
     ErrorEntry {
         code: "ILO-R013",
+        phase: Phase::Runtime,
         short: "internal VM error",
         long: r#"## ILO-R013: internal VM error
 
@@ -1518,6 +1630,7 @@ If you see this, please file a bug report.
     },
     ErrorEntry {
         code: "ILO-R014",
+        phase: Phase::Runtime,
         short: "auto-unwrap propagated Err / nil",
         long: r#"## ILO-R014: auto-unwrap propagated Err / nil
 
@@ -1534,6 +1647,7 @@ identifies the propagation point for diagnostic purposes.
     },
     ErrorEntry {
         code: "ILO-R015",
+        phase: Phase::Runtime,
         short: "AOT runtime fault",
         long: r#"## ILO-R015: AOT runtime fault
 
@@ -1558,6 +1672,7 @@ with the source program and the JSON diagnostic.
     },
     ErrorEntry {
         code: "ILO-R016",
+        phase: Phase::Runtime,
         short: "wall-clock runtime budget exceeded",
         long: r#"## ILO-R016: wall-clock runtime budget exceeded
 
@@ -1584,6 +1699,7 @@ ilo --max-runtime 0   main.ilo    -- disable the cap
     },
     ErrorEntry {
         code: "ILO-R017",
+        phase: Phase::Runtime,
         short: "stdout output budget exceeded",
         long: r#"## ILO-R017: stdout output budget exceeded
 
@@ -1611,6 +1727,7 @@ ilo --max-output-bytes 0 main.ilo              -- disable the cap
     },
     ErrorEntry {
         code: "ILO-R026",
+        phase: Phase::Runtime,
         short: "panic-unwrap on Err / nil",
         long: r#"## ILO-R026: panic-unwrap on Err / nil
 
@@ -1633,6 +1750,7 @@ main>n;num!! "abc"          -- aborts with panic-unwrap: abc
     },
     ErrorEntry {
         code: "ILO-R099",
+        phase: Phase::Runtime,
         short: "internal runtime error",
         long: r#"## ILO-R099: internal runtime error
 
@@ -1646,6 +1764,7 @@ in a builtin — please file an issue with the source that triggers it.
     // ── Engine-specific limitations ────────────────────────────────────────
     ErrorEntry {
         code: "ILO-E802",
+        phase: Phase::Engine,
         short: "inline lambda exceeds 255-capture VM cap",
         long: r#"## ILO-E802: inline lambda exceeds 255-capture VM cap
 
