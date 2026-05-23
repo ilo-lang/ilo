@@ -4064,6 +4064,68 @@ statement boundary; bind the chain to a local first. For example, split \
         ))
     }
 
+    /// Detect the infix-style chained-`+` shape `+a+b+c...` (ILO-466).
+    fn infix_plus_chain_diagnostic(&self) -> Option<ParseError> {
+        if !matches!(self.peek(), Some(Token::Plus)) {
+            return None;
+        }
+        let is_atom_tok = |t: Option<&Token>| {
+            matches!(
+                t,
+                Some(Token::Ident(_))
+                    | Some(Token::Number(_))
+                    | Some(Token::Text(_))
+                    | Some(Token::True)
+                    | Some(Token::False)
+                    | Some(Token::Nil)
+            )
+        };
+        let span_at = |idx: usize| self.tokens.get(idx).map(|(_, s)| *s);
+        // Need shape: pos=Plus, pos+1=atom, pos+2=Plus(adj to atom), pos+3=atom,
+        // pos+4=Plus(adj to atom), pos+5=atom  (minimum two adjacent `+` joins).
+        if !is_atom_tok(self.token_at(self.pos + 1)) {
+            return None;
+        }
+        if !matches!(self.token_at(self.pos + 2), Some(Token::Plus)) {
+            return None;
+        }
+        // Adjacency: the second `+` must abut the first atom (no whitespace).
+        let a1 = span_at(self.pos + 1)?;
+        let p2 = span_at(self.pos + 2)?;
+        if !(a1.end > 0 && p2.start == a1.end) {
+            return None;
+        }
+        if !is_atom_tok(self.token_at(self.pos + 3)) {
+            return None;
+        }
+        if !matches!(self.token_at(self.pos + 4), Some(Token::Plus)) {
+            return None;
+        }
+        let a2 = span_at(self.pos + 3)?;
+        let p3 = span_at(self.pos + 4)?;
+        if !(a2.end > 0 && p3.start == a2.end) {
+            return None;
+        }
+        if !is_atom_tok(self.token_at(self.pos + 5)) {
+            return None;
+        }
+        Some(ParseError {
+            code: "ILO-P010",
+            position: self.pos,
+            span: self.peek_span(),
+            message: "infix-style chained `+` is not valid ilo: `+a+b+c` reads as prefix `+a` followed by stray `+b+c`".to_string(),
+            hint: Some(
+                "ilo is prefix-only for prefix `+` (manifesto P1): `+a b` adds two operands. \
+A leading `+` flips the chain into prefix mode, so the second `+` orphans. Fixes: \
+drop the leading `+` (`a+b+c` parses as infix); \
+or use `fmt`: `fmt \"{}{}{}\" a b c` (or `fmt \"{} {} {}\" a b c` for spaces); \
+or nested prefix `+`: `+a +b +c d` (right-associative); \
+or bind intermediates: `s1=+a b;s2=+s1 c;+s2 d`."
+                    .to_string(),
+            ),
+        })
+    }
+
     fn parse_prefix_binop(&mut self) -> Result<Expr> {
         // Reject compound-comparison prefix from other languages: `=<a b`
         // (intended as ≤), `=>a b` (intended as ≥). ilo already has the
@@ -4085,6 +4147,9 @@ statement boundary; bind the chain to a local first. For example, split \
                     "use `{replacement}` (single token) instead, e.g. `{replacement}a b` for the comparison"
                 ),
             ));
+        }
+        if let Some(diag) = self.infix_plus_chain_diagnostic() {
+            return Err(diag);
         }
         // Detect a malformed prefix chain that would otherwise unwind into a
         // bare ILO-P010 "expected expression, got EOF" at col 1. A run of K
@@ -9021,6 +9086,48 @@ mod tests {
         let e = errors.iter().find(|e| e.code == "ILO-P003").unwrap();
         let hint = e.hint.as_ref().unwrap();
         assert!(hint.contains("'|'"));
+    }
+
+    // ILO-466: chained infix-style `+a+b+c` in a tail expression used to
+    // unwind into a bare ILO-P010 "expected expression, got EOF". We now
+    // catch the shape (adjacent `+` between atoms) and attach a targeted
+    // hint pointing at `fmt`, nested-prefix `+`, and the bind-intermediate
+    // rewrite.
+    #[test]
+    fn hint_p010_chained_infix_plus_text() {
+        let (_, errors) =
+            parse_str_errors("f a:t b:t c:t>t;+a+\" \"+b+\" \"+c");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P010")
+            .expect("expected ILO-P010 for chained infix `+`");
+        let hint = e.hint.as_ref().expect("hint required");
+        assert!(hint.contains("prefix-only"), "hint: {hint}");
+        assert!(hint.contains("fmt"), "hint: {hint}");
+        assert!(hint.contains("nested prefix"), "hint: {hint}");
+        assert!(hint.contains("bind intermediates"), "hint: {hint}");
+    }
+
+    #[test]
+    fn hint_p010_chained_infix_plus_numeric() {
+        // Shape fires regardless of operand type (manifesto rule, not text-only).
+        let (_, errors) = parse_str_errors("f a:n b:n c:n>n;+a+b+c");
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P010"
+                && e.hint.as_deref().is_some_and(|h| h.contains("prefix-only"))),
+            "expected ILO-P010 with infix-+ hint, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn no_hint_for_spaced_nested_prefix_plus() {
+        // `+a +b c` is valid (right-associative nested prefix). Must NOT
+        // trigger the chained-infix hint.
+        let (_, errors) = parse_str_errors("f a:n b:n c:n>n;+a +b c");
+        assert!(
+            errors.is_empty(),
+            "nested prefix `+a +b c` should parse cleanly, got: {errors:?}"
+        );
     }
 
     // Regression: qa-tester P1 rerun. A run of N prefix operators followed by
