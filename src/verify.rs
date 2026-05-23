@@ -5049,6 +5049,19 @@ impl VerifyContext {
             // ternary that always produces a value.
             if is_tail {
                 let maybe_warn: Option<(&str, &str)> = match &spanned.node {
+                    // ILO-T047 (braceless): `cond expr` at the last statement
+                    // of a body is always a nil-return trap. If `cond` is
+                    // false, execution falls through — but there is no next
+                    // statement, so the function returns nil silently. This is
+                    // the braceless-guard-tail nil bug (ILO-453).
+                    Stmt::Guard {
+                        braceless: true,
+                        else_body: None,
+                        ..
+                    } => Some((
+                        "braceless guard",
+                        "if the condition is false the function returns nil silently — add a fallback value after the guard (e.g. `cond expr; fallback`) or convert to a ternary `cond{ret expr}{fallback}`",
+                    )),
                     Stmt::Guard {
                         braceless: false,
                         else_body: None,
@@ -5106,9 +5119,7 @@ impl VerifyContext {
                     self.warn(
                         "ILO-T047",
                         func,
-                        format!(
-                            "brace-form {kind} at tail position has bare value expression in arm body — value is discarded if branch is not taken"
-                        ),
+                        format!("{kind} at tail position returns nil when condition is not taken"),
                         Some(hint.to_string()),
                         Some(spanned.span),
                     );
@@ -12314,6 +12325,47 @@ mod tests {
         assert!(
             t047.is_empty(),
             "non-tail guard should not warn ILO-T047: {:?}",
+            t047
+        );
+    }
+
+    // ---- ILO-T047: braceless guard at tail position (ILO-453) ----
+
+    #[test]
+    fn t047_braceless_guard_tail_warns() {
+        // `cond expr` as the LAST statement: if cond is false the function
+        // returns nil silently. ILO-453 scenario.
+        let result = parse_and_verify_full("f x:n>n;>=x 10 x");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert_eq!(
+            t047.len(),
+            1,
+            "expected ILO-T047 for braceless guard at tail, got {:?}",
+            result.warnings
+        );
+        assert!(
+            t047[0].message.contains("braceless guard"),
+            "message should mention 'braceless guard': {}",
+            t047[0].message
+        );
+    }
+
+    #[test]
+    fn t047_braceless_guard_not_at_tail_no_warn() {
+        // Braceless guard followed by a fallback value — not at tail, no warning.
+        let result = parse_and_verify_full("f x:n>n;>=x 10 x;0");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert!(
+            t047.is_empty(),
+            "braceless guard with fallback should not warn ILO-T047: {:?}",
             t047
         );
     }
