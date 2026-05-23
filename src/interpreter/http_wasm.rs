@@ -150,12 +150,7 @@ impl HttpBackend for NativeHttpBackend {
             req = req.with_header(k.as_str(), v.as_str());
         }
         let resp = req.send_lazy().map_err(|e| e.to_string())?;
-        // BufReader's `lines()` strips both `\n` and the trailing `\r` for
-        // `\r\n` chunked encoding, which is exactly what we want for SSE-
-        // style line consumption.
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(resp);
-        Ok(Box::new(reader.lines()))
+        Ok(Box::new(LazyLineSplitter::new(resp)))
     }
 
     fn post_stream(
@@ -170,9 +165,84 @@ impl HttpBackend for NativeHttpBackend {
             req = req.with_header(k.as_str(), v.as_str());
         }
         let resp = req.send_lazy().map_err(|e| e.to_string())?;
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(resp);
-        Ok(Box::new(reader.lines()))
+        Ok(Box::new(LazyLineSplitter::new(resp)))
+    }
+}
+
+/// Splits a `minreq::ResponseLazy` byte stream into lines, yielding each line
+/// the instant a `\n` is seen rather than waiting for a read buffer to fill.
+///
+/// `ResponseLazy` is an `Iterator<Item = io::Result<(u8, usize)>>` that decodes
+/// the (possibly chunked) body one byte at a time. Consuming it directly, and
+/// emitting a `String` the moment a newline arrives, gives event-bound latency
+/// for SSE-style upstreams that flush a short line then idle, instead of the
+/// buffer-bound latency a `BufReader::lines()` wrapper imposes (it blocks on a
+/// full ~8 KiB fill before surfacing any line). See ILO-489.
+///
+/// `\n` terminates a line; a trailing `\r` (CRLF / chunked encoding) is
+/// stripped to match the previous `BufReader::lines()` behaviour. At EOF any
+/// buffered partial line (no final newline) is yielded once, then iteration
+/// ends. Read errors surface as `Err(io::Error)`, consistent with the
+/// `ILO-R009 http-stream read error` path the interpreter already raises.
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+struct LazyLineSplitter {
+    bytes: minreq::ResponseLazy,
+    buf: Vec<u8>,
+    done: bool,
+}
+
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+impl LazyLineSplitter {
+    fn new(bytes: minreq::ResponseLazy) -> Self {
+        LazyLineSplitter {
+            bytes,
+            buf: Vec::new(),
+            done: false,
+        }
+    }
+
+    /// Turn the accumulated `buf` into a `String`, stripping a trailing `\r`,
+    /// and reset the buffer for the next line.
+    fn take_line(&mut self) -> std::result::Result<String, std::io::Error> {
+        if self.buf.last() == Some(&b'\r') {
+            self.buf.pop();
+        }
+        let line = String::from_utf8_lossy(&self.buf).into_owned();
+        self.buf.clear();
+        Ok(line)
+    }
+}
+
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+impl Iterator for LazyLineSplitter {
+    type Item = std::result::Result<String, std::io::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        loop {
+            match self.bytes.next() {
+                Some(Ok((b'\n', _))) => return Some(self.take_line()),
+                Some(Ok((byte, _))) => self.buf.push(byte),
+                Some(Err(e)) => {
+                    self.done = true;
+                    let io_err = match e {
+                        minreq::Error::IoError(e) => e,
+                        other => std::io::Error::other(other.to_string()),
+                    };
+                    return Some(Err(io_err));
+                }
+                None => {
+                    // EOF: emit any buffered trailing partial line once.
+                    self.done = true;
+                    if self.buf.is_empty() {
+                        return None;
+                    }
+                    return Some(self.take_line());
+                }
+            }
+        }
     }
 }
 
