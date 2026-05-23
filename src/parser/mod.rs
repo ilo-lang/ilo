@@ -2657,7 +2657,7 @@ statement boundary; bind the chain to a local first. For example, split \
                             "`?{subj_src}{{...}}` is match syntax — the body is parsed as pattern arms, not statements"
                         ),
                         format!(
-                            "for braced-conditional execution on a bool, use `={subj_src} true{{body}}` (or `!{subj_src}{{body}}` for the negated case)"
+                            "for a bool condition pick one canonical form: guard `={subj_src} true body` (early-return / short cases), braced-conditional `={subj_src} true{{body}}` (or negated `!{subj_src}{{body}}`), prefix ternary `?{subj_src} a b` or brace ternary `?{subj_src}{{a}}{{b}}` (value), or explicit match arms `?{subj_src}{{true:a; false:b}}`"
                         ),
                     ));
                 }

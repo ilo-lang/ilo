@@ -398,6 +398,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `dx=xj 0-xi` (call vs binop)     | `-xj xi` or pre-bind: `nxi=0-xi;+xj nxi` | `ILO-T005`  |
 | `tup.0` / `pair.0` (tuple access) | bind from `zip`-pair, then `at pair 0` (no tuple type) | `ILO-T004` |
 | `?? (num s) 0` (`??` on `R T E`)  | `default-on-err (num s) 0` or `?(num s){~v:v;^_:0}` | `ILO-T041` |
+| `?bool{body}` (bool-conditional) | guard `=bool true body`, braced `=bool true{body}`, ternary `?bool a b`, or match `?bool{true:a; false:b}` | `ILO-P011`  |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
@@ -1581,6 +1582,8 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | `_:body` | wildcard, binds matched subject to `_` |
 
 Arms separated by `;`. First match wins.
+
+**Gotcha (ILO-P011, ILO-461):** `?bool{body}` reads as match-on-bool, *not* a bool-conditional. The brace contents are parsed as pattern arms, so `?fits{io}` chokes on `io` because it isn't a `true:` / `false:` arm. There is no special bool-conditional reading of `?bool{...}` — one shape per construct (P2). For a bool condition pick the canonical form: guard `=bool true body` (early-return / short value), braced-conditional `=bool true{body}` (or negated `!bool{body}`), prefix ternary `?bool a b` / brace ternary `?bool{a}{b}` (value), or explicit match `?bool{true:a; false:b}`.
 
 **Exhaustiveness.** Matches on closed sum-shaped types must cover every variant or include `_:`. For a `R T E` subject, `~v: + ^e:` is exhaustive on its own - no `_:` wildcard required (verifier rule, mirrors `S`-typed matches). For a `b` (bool) subject, `true: + false:` is exhaustive. For numbers and text, `_:` is required.
 
