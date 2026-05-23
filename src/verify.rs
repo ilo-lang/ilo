@@ -5693,10 +5693,17 @@ impl VerifyContext {
                     // half resolves as a value: that's the high-signal case where
                     // the model is liable to misread the atomic ident as a binop.
                     // Fall back to the standard closest-match suggestion otherwise.
-                    let hint = kebab_subtract_hint(name, candidates.iter()).or_else(|| {
-                        closest_match(name, candidates.iter())
-                            .map(|s| format!("did you mean '{s}'?"))
-                    });
+                    let hint = if Builtin::is_builtin(name) {
+                        Some(format!(
+                            "'{name}' is a builtin and cannot be passed as a value; wrap it in an inline lambda: \
+                             '(x:t>t;{name} x)' (paren form) or '{{x> {name} x}}' (brace form)"
+                        ))
+                    } else {
+                        kebab_subtract_hint(name, candidates.iter()).or_else(|| {
+                            closest_match(name, candidates.iter())
+                                .map(|s| format!("did you mean '{s}'?"))
+                        })
+                    };
                     self.err(
                         "ILO-T004",
                         func,
@@ -7577,6 +7584,52 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.message.contains("undefined variable 'y'"))
+        );
+    }
+
+    #[test]
+    fn builtin_passed_to_hof_emits_wrap_lambda_hint() {
+        // ILO-457: `map sha256 xs` should be flagged with a hint telling the
+        // agent to wrap the builtin in an inline lambda. Builtins are not
+        // first-class values in ilo.
+        let result = parse_and_verify("hashes xs:L t>L t;map sha256 xs");
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-T004" && e.message.contains("'sha256'"))
+            .expect("expected ILO-T004 on 'sha256'");
+        let hint = e.hint.as_deref().unwrap_or("");
+        assert!(
+            hint.contains("builtin") && hint.contains("inline lambda"),
+            "hint should mention builtin + inline lambda, got: {hint}"
+        );
+        assert!(
+            hint.contains("(x:t>t;sha256 x)"),
+            "hint should include paren form, got: {hint}"
+        );
+        assert!(
+            hint.contains("{x> sha256 x}"),
+            "hint should include brace form, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn unknown_identifier_t004_has_no_wrap_lambda_hint() {
+        // Regression: the ILO-457 wrap-lambda hint must only fire for builtin
+        // names. Ordinary unknown identifiers keep their existing closest-match
+        // suggestion (or no hint).
+        let result = parse_and_verify("hashes xs:L t>L t;map mystery xs");
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-T004" && e.message.contains("'mystery'"))
+            .expect("expected ILO-T004 on 'mystery'");
+        let hint = e.hint.as_deref().unwrap_or("");
+        assert!(
+            !hint.contains("builtin"),
+            "unknown-ident T004 should not get the builtin hint, got: {hint}"
         );
     }
 

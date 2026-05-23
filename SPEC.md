@@ -267,6 +267,15 @@ f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr` (paren form)
 f xs:L n thr:n>L n;flt {x> >x thr} xs       -- captures `thr` (brace form)
 ```
 
+**Builtins are not first-class values.** Builtin names (`sha256`, `hmac-sha256`, `b64`, etc. — every name in the builtin table) are call-only: they can appear in call position but cannot be passed by name to a HOF. `map sha256 xs` fails ILO-T004 ("undefined variable 'sha256'") with a hint pointing to the canonical wrap-as-lambda rewrite. Wrap the builtin in an inline lambda instead:
+
+```
+hashes xs:L t>L t;map (x:t>t;sha256 x) xs   -- paren form
+hashes xs:L t>L t;map {x> sha256 x} xs       -- brace form
+```
+
+A handful of arithmetic/string builtins (`abs`, `min`, `max`, `mod`, `sum`, `prod`, `len`, `upr`, `lwr`, `trm`, `cap`, `padl`, `padr`, `ord`, `chr`, `chars`, `str`, `num`, `jdmp`, `fmod`, `flr`, `cel`, `rou`, `avg`, `median`, `stdev`, `variance`) are promoted to `Ty::Fn` at the verifier so they *can* be passed directly (see `builtins-as-hof.ilo`); everything else needs the lambda wrap.
+
 Phase 2 captures run natively on every engine: the tree interpreter, the register VM, the Cranelift JIT, and the Cranelift AOT backend. Each free variable is snapshot by value at the call site (`Expr::MakeClosure`) and appended to the call frame's arg slice on dispatch. The AOT backend additionally embeds the postcard-serialised `CompiledProgram` into the binary's `.rodata` and publishes TLS pointers on startup, so dispatch helpers can re-enter the VM on user-fn callbacks. The ctx-arg form (`srt fn ctx xs`) remains the cross-engine alternative when you want explicit state without forming a closure.
 
 **Braceless guards are rejected inside lambda bodies (`ILO-P023`).** A braceless guard at statement position (`>=x 0 val`, `=x 0 val`, etc.) early-returns from the *enclosing function*, not from the lambda — see "Early Return" below. Inside a lambda body that semantics is almost never what the author meant; the lambda body would silently skip past the guard and the outer caller would return out from under the higher-order call. The parser therefore rejects braceless guards inside lambda bodies and asks for one of two expression-shaped rewrites:
