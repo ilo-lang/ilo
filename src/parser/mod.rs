@@ -5324,7 +5324,8 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             }
             Some(Token::Text(s)) => {
                 self.advance();
-                Ok(desugar_string_interpolation(&s))
+                let span = self.prev_span();
+                desugar_string_interpolation(&s, span)
             }
             Some(Token::True) => {
                 self.advance();
@@ -6510,60 +6511,39 @@ fn builtin_param_names_table() -> HashMap<String, Vec<String>> {
 /// not match that shape (e.g. `{x + 1}`, `{Foo}`, empty `{}`) is left
 /// untouched so existing fmt positional semantics keep working and we don't
 /// claim more surface area than the spec promises.
-fn desugar_string_interpolation(s: &str) -> Expr {
-    // Fast path: no `{` at all means no work to do.
-    if !s.contains('{') {
-        return Expr::Literal(Literal::Text(s.to_string()));
+fn desugar_string_interpolation(s: &str, span: Span) -> Result<Expr> {
+    // Fast path: no `{` and no `}` at all means no work to do.
+    if !s.contains('{') && !s.contains('}') {
+        return Ok(Expr::Literal(Literal::Text(s.to_string())));
     }
 
-    // First pass: classify what the string contains. We desugar only if we
-    // find at least one `{ident}` slot AND no bare `{}` positional
-    // placeholder. Mixing styles in a single string is disallowed - bare
-    // `{}` is filled by trailing args of an enclosing `fmt` call (verbose
-    // form), `{ident}` is filled inline by the desugar (terse form). If
-    // both shapes appear we keep the string verbatim and let the agent's
-    // existing `fmt "..." args` call (or a verifier diagnostic) handle it;
-    // any other policy would silently rewrite agent-visible semantics.
+    // Single pass that:
+    //   - collapses `{{` -> literal `{` and `}}` -> literal `}` (Rust
+    //     `format!` / Python `str.format` convention),
+    //   - records `{ident}` slots so the result can be desugared to a
+    //     `fmt` call when at least one is present and no bare `{}`
+    //     positional placeholder forces the verbose form,
+    //   - errors on a lone `{` (no matching `}`) or lone `}` (no opener),
+    //     pointing the agent at `{{` / `}}` as the canonical escape.
+    //
+    // We always build a cleaned template (with `{{`/`}}` collapsed) so that
+    // a non-interpolated string like `"hello {{world}}"` evaluates to
+    // `"hello {world}"` rather than keeping the doubled braces verbatim.
     let bytes = s.as_bytes();
-    let mut has_ident_slot = false;
-    let mut has_bare_slot = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'{' {
-            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-                i += 2;
-                continue;
-            }
-            if let Some(close_rel) = s[i + 1..].find('}') {
-                let close = i + 1 + close_rel;
-                let inner = &s[i + 1..close];
-                if inner.is_empty() {
-                    has_bare_slot = true;
-                } else if is_ident_for_interp(inner) {
-                    has_ident_slot = true;
-                }
-                // Other shapes (printf spec, expression, etc.) are left for
-                // the verifier or runtime to handle as today.
-                i = close + 1;
-                continue;
-            }
-        }
-        i += 1;
-    }
-
-    if !has_ident_slot || has_bare_slot {
-        return Expr::Literal(Literal::Text(s.to_string()));
-    }
-
-    // Second pass: build the desugared template + args. Here we collapse
-    // `{{` -> `{` and `}}` -> `}` (rust-style brace escapes) because we
-    // are inside an interpolated string and the agent needs a way to write
-    // a literal brace. The escape is scoped to interpolated strings only;
-    // non-interpolated string literals keep `{{` / `}}` verbatim so we
-    // don't retroactively change semantics for existing programs.
     let mut template = String::with_capacity(s.len());
     let mut args: Vec<Expr> = Vec::new();
+    let mut has_ident_slot = false;
+    let mut has_bare_slot = false;
+    // Track every `{...}` slot's contents so we can re-emit them verbatim
+    // when the desugar does not fire (e.g. non-ident or mixed-with-bare).
+    let mut slots: Vec<(usize, String)> = Vec::new();
+    // A stray `}` at the top level is suspicious only if no `{...}` slot
+    // has opened earlier in the string; otherwise it is almost certainly
+    // the closer of a nested brace structure inside a template (e.g.
+    // `"{"a":{"b":1}}"` — the inner `{...}` is consumed as a slot and the
+    // trailing `}` is just literal text). Track this so the diagnostic
+    // only fires on truly stray closers like `"raw } only"`.
+    let mut saw_slot = false;
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
@@ -6573,24 +6553,41 @@ fn desugar_string_interpolation(s: &str) -> Expr {
                 i += 2;
                 continue;
             }
-            if let Some(close_rel) = s[i + 1..].find('}') {
-                let close = i + 1 + close_rel;
-                let inner = &s[i + 1..close];
-                if !inner.is_empty() && is_ident_for_interp(inner) {
-                    template.push_str("{}");
-                    args.push(Expr::Ref(inner.to_string()));
-                    i = close + 1;
-                    continue;
-                }
-                // Pass other `{...}` shapes through verbatim. (`{}` itself
-                // can't appear here because has_bare_slot would be true and
-                // we'd have bailed.)
-                template.push_str(&s[i..close + 1]);
-                i = close + 1;
-                continue;
+            // Find the first matching `}` after the opening `{`. We do
+            // NOT treat `}}` as an escape inside the search: brace escapes
+            // only apply at the top level of the string. Without this,
+            // a JSON template like `"{\"a\":{\"b\":1}}"` would consume
+            // its real closer as `}}` and report a spurious unmatched `{`.
+            let close = s[i + 1..].find('}').map(|rel| i + 1 + rel);
+            let Some(close) = close else {
+                return Err(ParseError {
+                    code: "ILO-P024",
+                    position: 0,
+                    span,
+                    message: format!(
+                        "unmatched `{{` in string literal at byte offset {i}; \
+                         use `{{{{` for a literal `{{`"
+                    ),
+                    hint: Some(
+                        "double the brace (`{{` → literal `{`) the same way `}}` produces `}`. \
+                         `{name}` interpolates a binding; everything else needs escaping."
+                            .to_string(),
+                    ),
+                });
+            };
+            let inner = &s[i + 1..close];
+            if inner.is_empty() {
+                has_bare_slot = true;
+            } else if is_ident_for_interp(inner) {
+                has_ident_slot = true;
             }
-            template.push('{');
-            i += 1;
+            saw_slot = true;
+            slots.push((template.len(), inner.to_string()));
+            // Emit a placeholder we can later rewrite. Use a sentinel byte
+            // sequence that cannot appear in source: NUL is fine, the lexer
+            // never produces a NUL in a Text token.
+            template.push('\0');
+            i = close + 1;
             continue;
         }
         if c == b'}' {
@@ -6599,23 +6596,79 @@ fn desugar_string_interpolation(s: &str) -> Expr {
                 i += 2;
                 continue;
             }
-            template.push('}');
-            i += 1;
-            continue;
+            if saw_slot {
+                // Trailing closer of a nested brace structure inside a
+                // template (e.g. JSON `{"a":{"b":1}}`). Pass through.
+                template.push('}');
+                i += 1;
+                continue;
+            }
+            return Err(ParseError {
+                code: "ILO-P024",
+                position: 0,
+                span,
+                message: format!(
+                    "unmatched `}}` in string literal at byte offset {i}; \
+                     use `}}}}` for a literal `}}`"
+                ),
+                hint: Some(
+                    "double the brace (`}}` → literal `}`) the same way `{{` produces `{`."
+                        .to_string(),
+                ),
+            });
         }
         let ch_len = utf8_char_len(c).min(bytes.len() - i);
         template.push_str(&s[i..i + ch_len]);
         i += ch_len;
     }
 
+    // Decide whether to fire the `{ident}` desugar. Same rule as before:
+    // at least one ident slot AND no bare `{}` placeholder (mixed forms
+    // would silently rewrite agent-visible semantics).
+    let fire = has_ident_slot && !has_bare_slot;
+
+    // Materialise the slots back into the template. When firing, ident
+    // slots become bare `{}` (fmt positional) and get an arg appended;
+    // non-ident slots pass through verbatim. When not firing, every slot
+    // passes through verbatim so the original semantics (positional `{}`
+    // filled by enclosing `fmt`, capital-letter pass-through, etc.) are
+    // preserved.
+    let mut final_template = String::with_capacity(template.len());
+    let template_bytes = template.as_bytes();
+    let mut slot_iter = slots.into_iter();
+    let mut k = 0;
+    while k < template_bytes.len() {
+        if template_bytes[k] == 0 {
+            let (_pos, inner) = slot_iter.next().expect("slot count mismatch");
+            if fire && !inner.is_empty() && is_ident_for_interp(&inner) {
+                final_template.push_str("{}");
+                args.push(Expr::Ref(inner));
+            } else {
+                final_template.push('{');
+                final_template.push_str(&inner);
+                final_template.push('}');
+            }
+            k += 1;
+        } else {
+            let lead = template_bytes[k];
+            let ch_len = utf8_char_len(lead).min(template_bytes.len() - k);
+            final_template.push_str(&template[k..k + ch_len]);
+            k += ch_len;
+        }
+    }
+
+    if !fire {
+        return Ok(Expr::Literal(Literal::Text(final_template)));
+    }
+
     let mut call_args = Vec::with_capacity(args.len() + 1);
-    call_args.push(Expr::Literal(Literal::Text(template)));
+    call_args.push(Expr::Literal(Literal::Text(final_template)));
     call_args.extend(args);
-    Expr::Call {
+    Ok(Expr::Call {
         function: "fmt".to_string(),
         args: call_args,
         unwrap: UnwrapMode::None,
-    }
+    })
 }
 
 /// Length of the UTF-8 sequence starting with the given lead byte.
