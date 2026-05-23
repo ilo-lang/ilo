@@ -2218,13 +2218,24 @@ statement boundary; bind the chain to a local first. For example, split \
                     break;
                 }
                 if top_level && self.is_fn_decl_start_strict(self.pos) {
-                    // Distinguish a *sibling* top-level fn decl (separated by a
-                    // real un-indented newline that the lexer recorded as a
-                    // `decl_boundary`) from a *nested* one written inline
-                    // inside the enclosing function's body. The sibling case
-                    // is fine — break out and let `parse_program` pick up the
-                    // next decl. The nested case is the ILO-460 trap.
-                    if self.decl_boundary.get(self.pos).copied().flatten().is_some() {
+                    // Distinguish a *sibling* top-level fn decl from a *nested*
+                    // one. Sibling signals:
+                    //   - an un-indented newline (decl_boundary marker), OR
+                    //   - the enclosing body has no binding statements yet
+                    //     (nothing for a nested fn to capture; this matches the
+                    //     ;-separated single-line patterns used by inline test
+                    //     fixtures and tiny scripts).
+                    // The ILO-460 trap shape always has a body local that the
+                    // intended-nested fn means to capture, so requiring a
+                    // binding tightens the diagnostic to the real bug.
+                    let has_boundary = self
+                        .decl_boundary
+                        .get(self.pos)
+                        .copied()
+                        .flatten()
+                        .is_some();
+                    let has_binding = stmts.iter().any(|s| matches!(s.node, Stmt::Let { .. }));
+                    if has_boundary || !has_binding {
                         break;
                     }
                     // Nested fn declaration inside a function body. Earlier
