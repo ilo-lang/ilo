@@ -9828,26 +9828,75 @@ fn value_to_json(val: &Value) -> serde_json::Value {
     }
 }
 
-fn serde_json_to_value(v: serde_json::Value) -> Value {
-    match v {
-        serde_json::Value::Object(map) => {
-            let fields: HashMap<String, Value> = map
-                .into_iter()
-                .map(|(k, v)| (k, serde_json_to_value(v)))
-                .collect();
-            Value::Record {
-                type_name: "json".to_string(),
-                fields,
+fn serde_json_to_value(root: serde_json::Value) -> Value {
+    // Iterative conversion using an explicit work-stack to avoid stack overflow
+    // on deeply nested JSON (ILO-452). Each entry is either a leaf that is
+    // ready to push onto `out`, or a continuation that pops `n` values from
+    // `out` and assembles them into a List / Record.
+    enum Task {
+        Convert(serde_json::Value),
+        BuildArray(usize),
+        BuildObject(Vec<String>), // keys in push order (reversed at build time)
+    }
+
+    let mut work: Vec<Task> = vec![Task::Convert(root)];
+    let mut out: Vec<Value> = Vec::new();
+
+    while let Some(task) = work.pop() {
+        match task {
+            Task::Convert(v) => match v {
+                serde_json::Value::String(s) => out.push(Value::Text(Arc::new(s))),
+                serde_json::Value::Number(n) => out.push(Value::Number(n.as_f64().unwrap_or(0.0))),
+                serde_json::Value::Bool(b) => out.push(Value::Bool(b)),
+                serde_json::Value::Null => out.push(Value::Nil),
+                serde_json::Value::Array(arr) => {
+                    let len = arr.len();
+                    // Push build continuation first (runs after all elements).
+                    work.push(Task::BuildArray(len));
+                    // Push elements in reverse so the first element is
+                    // converted first (LIFO).
+                    for elem in arr.into_iter().rev() {
+                        work.push(Task::Convert(elem));
+                    }
+                }
+                serde_json::Value::Object(map) => {
+                    let keys: Vec<String> = map.keys().cloned().collect();
+                    let len = keys.len();
+                    work.push(Task::BuildObject(keys.clone()));
+                    // Push values in reverse-key order so key[0]'s value is
+                    // converted first.
+                    let mut pairs: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+                    // Align with the key order we stored.
+                    pairs.sort_by(|a, b| {
+                        keys.iter()
+                            .position(|k| k == &a.0)
+                            .cmp(&keys.iter().position(|k| k == &b.0))
+                    });
+                    let _ = len; // used implicitly via keys.len() in BuildObject
+                    for (_, v) in pairs.into_iter().rev() {
+                        work.push(Task::Convert(v));
+                    }
+                }
+            },
+            Task::BuildArray(len) => {
+                let start = out.len() - len;
+                let items: Vec<Value> = out.drain(start..).collect();
+                out.push(Value::List(Arc::new(items)));
+            }
+            Task::BuildObject(keys) => {
+                let len = keys.len();
+                let start = out.len() - len;
+                let vals: Vec<Value> = out.drain(start..).collect();
+                let fields: HashMap<String, Value> = keys.into_iter().zip(vals).collect();
+                out.push(Value::Record {
+                    type_name: "json".to_string(),
+                    fields,
+                });
             }
         }
-        serde_json::Value::Array(arr) => {
-            Value::List(Arc::new(arr.into_iter().map(serde_json_to_value).collect()))
-        }
-        serde_json::Value::String(s) => Value::Text(Arc::new(s)),
-        serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
-        serde_json::Value::Bool(b) => Value::Bool(b),
-        serde_json::Value::Null => Value::Nil,
     }
+
+    out.pop().expect("serde_json_to_value: output stack empty")
 }
 
 /// If `expr` is a direct `Expr::Call name args` with no auto-unwrap, the args
@@ -17395,6 +17444,59 @@ mod tests {
         };
         let s = inner.to_string();
         assert!(s.contains("not found") || s.contains("5"), "got: {s}");
+    }
+
+    // ── ILO-452: jpth nested array (stack overflow regression) ───────────────
+
+    #[test]
+    fn interpret_jpth_nested_array_no_stack_overflow() {
+        // Reproducer from ILO-452: parsing {"errors":[{"path":["user","name"]}]}
+        // and navigating into errors.0.path used to stack-overflow because
+        // serde_json_to_value was recursive. Now iterative.
+        let json = r#"{"errors":[{"path":["user","name"]}]}"#;
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
+        // Navigate to errors.0.path → should return a List
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![
+                Value::Text(Arc::new(json.to_string())),
+                Value::Text(Arc::new("errors.0.path".to_string())),
+            ],
+        );
+        let Value::Ok(inner) = result else {
+            panic!("expected Ok, got {:?}", result)
+        };
+        let Value::List(items) = *inner else {
+            panic!("expected List, got {:?}", inner)
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], Value::Text(Arc::new("user".to_string())));
+        assert_eq!(items[1], Value::Text(Arc::new("name".to_string())));
+    }
+
+    #[test]
+    fn interpret_jpth_deeply_nested_no_stack_overflow() {
+        // Build a deeply nested JSON array (depth 50) to confirm the iterative
+        // converter doesn't overflow on pathological nesting.
+        // (serde_json::from_str has its own recursion cap around 128 levels, so
+        // we stay well below that to test the iterative Value converter.)
+        let mut s = "\"leaf\"".to_string();
+        for _ in 0..50 {
+            s = format!("[{}]", s);
+        }
+        // Navigate depth steps to reach the leaf.
+        let path = (0..50).map(|_| "0").collect::<Vec<_>>().join(".");
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new(s)), Value::Text(Arc::new(path))],
+        );
+        let Value::Ok(inner) = result else {
+            panic!("expected Ok, got {:?}", result)
+        };
+        assert_eq!(*inner, Value::Text(Arc::new("leaf".to_string())));
     }
 
     // ── grp key returns non-basic type (line 1020) ───────────────────────────
