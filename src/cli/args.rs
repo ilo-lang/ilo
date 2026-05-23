@@ -512,7 +512,7 @@ pub struct TraceArgs {
     #[arg(value_name = "FILE")]
     pub source: String,
     /// Entry function name (defaults to first function).
-    #[arg(long = "func", value_name = "NAME")]
+    #[arg(value_name = "FUNC")]
     pub func: Option<String>,
     /// Trace granularity: `statement` (default) or `expr` (per sub-expression).
     #[arg(long = "depth", value_enum, default_value = "statement")]

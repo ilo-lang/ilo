@@ -95,6 +95,15 @@ fn trace_run(t: TraceArgs) -> i32 {
         })
         .collect();
 
+    // --watch filter: only emit events whose bindings touch one of the named vars.
+    let watch = t.watch.clone();
+    let emit = move |ev: TraceEvent| {
+        if !watch.is_empty() && !ev.bindings.iter().any(|(n, _)| watch.iter().any(|w| w == n)) {
+            return;
+        }
+        emit_event(ev);
+    };
+
     // ── VM path (ILO-343) ─────────────────────────────────────────────────────
     // Try to compile to bytecode and run via the VM's OP_STMT trace path.
     // Falls back to the tree-walker if compilation fails.
@@ -105,7 +114,7 @@ fn trace_run(t: TraceArgs) -> i32 {
                 func_name,
                 call_args,
                 Some(source.clone()),
-                emit_event,
+                emit,
             );
             match result {
                 Ok(_) => 0,
@@ -118,8 +127,7 @@ fn trace_run(t: TraceArgs) -> i32 {
         Err(_compile_err) => {
             // ── Tree-walker fallback ─────────────────────────────────────────
             // Use the original ILO-72 tree-walker path.
-            let result =
-                crate::interpreter::run_with_trace(&program, func_name, call_args, emit_event);
+            let result = crate::interpreter::run_with_trace(&program, func_name, call_args, emit);
             match result {
                 Ok(_) => 0,
                 Err(e) => {
