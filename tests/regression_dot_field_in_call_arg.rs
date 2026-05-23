@@ -136,7 +136,6 @@ fn list_literal_of_field_accesses_runs() {
     }
 }
 
-
 // Existing `pair.0` / `tup.0` numeric-dot-index on a bound list is
 // untouched. (Sibling regression files already cover the no-binding
 // ILO-T004 hint side.)
