@@ -1500,6 +1500,8 @@ Elements are expressions in brackets, separated by spaces or commas. Variables a
 @x xs{+x 1}
 ```
 
+The binding's type is inferred from the list's element type; record-field access works on typed lists (`xs:L Rec`) without annotation, e.g. `@e errs{e.path}` over `errs:L Err` resolves `e.path` against the `Err` record. Lists typed `L _` (e.g. `jpar!` results) bind the element as `_` and `.field` access stays Unknown-typed, surfacing the usual diagnostic at the call site that consumes it.
+
 Index by integer literal or variable (dot notation):
 ```
 xs.0     # first element (literal index)
