@@ -973,6 +973,32 @@ fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
         return 1;
     }
 
+    // Resolve `use` imports relative to the handler file's directory, matching
+    // the `ilo run` / `ilo check` semantics so handlers can split logic across
+    // sibling modules (ILO-481).
+    let base_dir: Option<std::path::PathBuf> = std::path::Path::new(handler_file)
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let mut visited = std::collections::HashSet::new();
+    if let Ok(canonical_file) = std::path::Path::new(handler_file).canonicalize() {
+        visited.insert(canonical_file);
+    }
+    let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
+    program.declarations = resolve_imports(
+        program.declarations,
+        base_dir.as_deref(),
+        &mut visited,
+        &mut import_diagnostics,
+        BuildTarget::default(),
+    );
+    if !import_diagnostics.is_empty() {
+        for d in &import_diagnostics {
+            eprint!("{}", AnsiRenderer { use_color: true }.render(d));
+        }
+        return 1;
+    }
+
     let vr = verify::verify(&program);
     for w in &vr.warnings {
         eprint!(
