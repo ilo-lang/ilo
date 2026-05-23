@@ -1922,6 +1922,8 @@ at rows 0 .1             -- (at rows 0).1
 ```
 This is a pure syntax convenience — the runtime sees the same `Expr::Field` shape as the parenthesised form. Caveat: when the call's last arg is a bare ident, the `.N` glues to the ident (field access on the variable, the older shape) rather than the call result. Bind first or wrap in parens in that case: `r=at rows i;r.1` or `(at rows i).1`.
 
+Whitespace between `<atom>` and `.field` is tolerated; both `r.path` and `r .path` parse as field access on `r`, producing identical ASTs. (Contrast with `-`, where whitespace IS load-bearing because `-` is also a binary op and is itself a valid identifier character; `.` has no such ambiguity, so the dot binds unambiguously regardless of surrounding spaces.)
+
 Destructure:
 ```
 {x;y}=p
