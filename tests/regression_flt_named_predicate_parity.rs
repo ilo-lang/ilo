@@ -84,12 +84,7 @@ fn flt_named_predicate_string_list_persona_shape() {
     // Pre-fix the tree engine returned the bool from the last
     // call instead of the filtered list.
     let src = "non-empty s:t>b;>len s 0\nmain parts:L t>L t;flt non-empty parts";
-    parity(
-        src,
-        "main",
-        &["[\"a\",\"\",\"b\",\"\",\"c\"]"],
-        "[a, b, c]",
-    );
+    parity(src, "main", &["[\"a\",\"\",\"b\",\"\",\"c\"]"], "[a, b, c]");
 }
 
 #[test]
