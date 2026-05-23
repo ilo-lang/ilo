@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub mod source_map;
 pub use source_map::SourceMap;
@@ -623,6 +623,17 @@ pub struct Program {
     /// error so cross-reference hints can point back at the root cause.
     #[serde(skip)]
     pub parse_failed_fns: HashMap<String, ParseFailRef>,
+    /// Callee names whose call site sits as the RHS of a binding whose `=`
+    /// was actually the two-character `==` token glued to the binding-LHS
+    /// identifier (e.g. `wc==q ""`, which parses as `wc = (q "")` — see
+    /// ILO-469). When a later `ILO-T005` fires for one of these callees,
+    /// verify swaps in a targeted hint that recommends the spaced form
+    /// `name = =expr` instead of the bare call-vs-binop nudge. Detection is
+    /// pure adjacency: lexer joins `=`/`==` into a single `Token::Eq`, so we
+    /// inspect the token span length at parse time. Diagnostic-only — we do
+    /// not accept `==` as a fused bind-then-equality form (anti-P2).
+    #[serde(skip)]
+    pub glued_eq_binding_sites: HashSet<String>,
 }
 
 /// Identity of the parse error that disabled type-checking for a function.
@@ -1410,6 +1421,7 @@ mod tests {
             declarations: vec![],
             source: Some("f x:n>n;x".to_string()),
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let json = serde_json::to_string(&prog).unwrap();
         assert!(!json.contains("source"));
@@ -1444,6 +1456,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1485,6 +1498,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1518,6 +1532,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1552,6 +1567,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1581,6 +1597,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         assert!(matches!(&prog.declarations[0], Decl::Function { body, .. } if body.len() == 2));
@@ -1612,6 +1629,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1655,6 +1673,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1698,6 +1717,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1748,6 +1768,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1784,6 +1805,7 @@ mod tests {
             }],
             source: Some("f x:n>n;x".to_string()),
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let json = serde_json::to_string_pretty(&prog).unwrap();
         let deserialized: Program = serde_json::from_str(&json).unwrap();
@@ -1818,6 +1840,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         // resolve_aliases replaces known aliases; "len" → "length" (if aliased) or stays
         resolve_aliases(&mut prog);
@@ -1857,6 +1880,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
