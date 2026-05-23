@@ -77,6 +77,40 @@ fn bind_chain_brace_jit() {
     );
 }
 
+// ── 2b. Bind-chain (multi-line brace-block) — ILO-464 regression ───────────
+// Persona report (file-checksum-verify + binary-file-header-parser, 2026-05-23)
+// claimed this shape was rejected with ILO-P102. Outcome (A): it parses and
+// runs fine; this test pins that behaviour so the SPEC's promise of multi-line
+// brace bodies stays honoured.
+
+const BIND_CHAIN_BRACE_MULTILINE: &str =
+    "add-and-double x:n y:n>n {\n  s = +x y\n  *s 2\n}\n";
+
+#[test]
+fn bind_chain_brace_multiline_vm() {
+    assert_eq!(
+        run(
+            "--vm",
+            BIND_CHAIN_BRACE_MULTILINE,
+            &["add-and-double", "3", "4"]
+        ),
+        "14"
+    );
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn bind_chain_brace_multiline_jit() {
+    assert_eq!(
+        run(
+            "--jit",
+            BIND_CHAIN_BRACE_MULTILINE,
+            &["add-and-double", "3", "4"]
+        ),
+        "14"
+    );
+}
+
 // ── 3. Early return via braceless guard ────────────────────────────────────
 // `>=x 0 *x 10` — if x >= 0, return x*10 immediately; otherwise negate first.
 
