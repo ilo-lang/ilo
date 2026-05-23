@@ -133,6 +133,10 @@ struct VerifyContext {
     aliases: HashMap<String, Ty>,
     errors: Vec<VerifyError>,
     in_loop: bool,
+    /// Stack of loop-binding variable names for nested loops. The innermost
+    /// binding is at the top (last element). Used by ILO-T048 to detect
+    /// `x=+x 1`-style rebinds of the loop iterator variable inside `@x` loops.
+    loop_bindings: Vec<String>,
     /// Function names whose declaration failed to parse. Populated from
     /// `Program.parse_failed_fns` at the start of `verify`. Two effects:
     ///   1. We skip type-checking the body of any function in this set (its
@@ -4435,6 +4439,7 @@ impl VerifyContext {
             aliases: HashMap::new(),
             errors: Vec::new(),
             in_loop: false,
+            loop_bindings: Vec::new(),
             parse_failed_fns: HashMap::new(),
             glued_eq_binding_sites: std::collections::HashSet::new(),
             suppressed_undef_reported: std::collections::HashSet::new(),
@@ -5226,9 +5231,27 @@ impl VerifyContext {
         match stmt {
             Stmt::Let { name, value } => {
                 let ty = self.infer_expr(func, scope, value, span);
-                // `_=expr` explicit discard: evaluate type for diagnostics on
-                // the RHS (e.g. catches T005 undefined calls inside), but do
-                // not insert `_` into scope — it's a sigil, not a binding.
+                // ILO-T048: rebinding the innermost loop iterator inside its
+                // own `@x ...` body has no effect across iterations — the
+                // engine resets the iterator from its cursor each pass, so
+                // the rebind is silently discarded. Warn only at the
+                // innermost binding; outer-var rebinds inside an inner loop
+                // are unaffected.
+                if name != "_"
+                    && self.loop_bindings.last().map(String::as_str) == Some(name.as_str())
+                {
+                    self.warn(
+                        "ILO-T048",
+                        func,
+                        format!(
+                            "rebinding loop variable '{name}' inside `@{name}` loop has no effect across iterations"
+                        ),
+                        Some(format!(
+                            "loop iterators are reset by the engine each iteration. Use an accumulator pattern (`acc=0; @{name} ...{{acc=+acc {name}}}`) or `fold` if you want carryover across iterations."
+                        )),
+                        Some(span),
+                    );
+                }
                 if name != "_" {
                     scope_insert(scope, name.clone(), ty);
                 }
@@ -5471,7 +5494,9 @@ impl VerifyContext {
                 scope_insert(scope, binding.clone(), elem_ty);
                 let prev = self.in_loop;
                 self.in_loop = true;
+                self.loop_bindings.push(binding.clone());
                 let body_ty = self.verify_body(func, scope, body);
+                self.loop_bindings.pop();
                 self.in_loop = prev;
                 scope.pop();
                 body_ty
@@ -5531,7 +5556,9 @@ impl VerifyContext {
                 scope_insert(scope, binding.clone(), Ty::Number);
                 let prev = self.in_loop;
                 self.in_loop = true;
+                self.loop_bindings.push(binding.clone());
                 let body_ty = self.verify_body(func, scope, body);
+                self.loop_bindings.pop();
                 self.in_loop = prev;
                 scope.pop();
                 body_ty
@@ -12899,6 +12926,91 @@ mod tests {
             t047.is_empty(),
             "braceless guard with fallback should not warn ILO-T047: {:?}",
             t047
+        );
+    }
+
+    // ---- Loop variable rebind diagnostic (ILO-T048) ----
+
+    #[test]
+    fn loop_var_rebind_foreach_warns() {
+        let result = parse_and_verify_full("f xs:L n>n;@x xs{x=+x 1};0");
+        let t048: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T048")
+            .collect();
+        assert_eq!(
+            t048.len(),
+            1,
+            "expected one ILO-T048 warning, got {:?}",
+            result.warnings
+        );
+        assert!(t048[0].message.contains('x'));
+        assert!(t048[0].hint.as_ref().is_some_and(|h| h.contains("acc")));
+    }
+
+    #[test]
+    fn loop_var_rebind_forrange_warns() {
+        let result = parse_and_verify_full("f>n;@i 0..10{i=+i 1};0");
+        let t048: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T048")
+            .collect();
+        assert_eq!(
+            t048.len(),
+            1,
+            "expected one ILO-T048 for range loop, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn loop_var_rebind_other_binding_no_warn() {
+        let result = parse_and_verify_full("f xs:L n>n;acc=0;@x xs{acc=+acc x};acc");
+        let t048: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T048")
+            .collect();
+        assert_eq!(
+            t048.len(),
+            0,
+            "accumulator pattern must not warn, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn loop_var_rebind_nested_inner_warns() {
+        let result = parse_and_verify_full("f xs:L n ys:L n>n;@x xs{@y ys{y=+y 1}};0");
+        let t048: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T048")
+            .collect();
+        assert_eq!(
+            t048.len(),
+            1,
+            "expected one warning for inner loop var, got {:?}",
+            result.warnings
+        );
+        assert!(t048[0].message.contains('y'));
+    }
+
+    #[test]
+    fn loop_var_rebind_outer_in_nested_no_warn() {
+        let result = parse_and_verify_full("f xs:L n ys:L n>n;@x xs{@y ys{x=+x 1}};0");
+        let t048: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T048")
+            .collect();
+        assert_eq!(
+            t048.len(),
+            0,
+            "outer var rebind inside inner loop should not warn, got {:?}",
+            result.warnings
         );
     }
 }
