@@ -262,6 +262,13 @@ f xs:L n thr:n>L n;flt {x> >x thr} xs       -- captures `thr` (brace form)
 
 Phase 2 captures run natively on every engine: the tree interpreter, the register VM, the Cranelift JIT, and the Cranelift AOT backend. Each free variable is snapshot by value at the call site (`Expr::MakeClosure`) and appended to the call frame's arg slice on dispatch. The AOT backend additionally embeds the postcard-serialised `CompiledProgram` into the binary's `.rodata` and publishes TLS pointers on startup, so dispatch helpers can re-enter the VM on user-fn callbacks. The ctx-arg form (`srt fn ctx xs`) remains the cross-engine alternative when you want explicit state without forming a closure.
 
+**Braceless guards are rejected inside lambda bodies (`ILO-P023`).** A braceless guard at statement position (`>=x 0 val`, `=x 0 val`, etc.) early-returns from the *enclosing function*, not from the lambda — see "Early Return" below. Inside a lambda body that semantics is almost never what the author meant; the lambda body would silently skip past the guard and the outer caller would return out from under the higher-order call. The parser therefore rejects braceless guards inside lambda bodies and asks for one of two expression-shaped rewrites:
+
+- **Prefix ternary** when both arms are values: `map (x:n>n;?>=x 0 0 x) xs`
+- **Braced match** when arms need statements: `map (x:n>n;?>=x 0{0}{x}) xs`
+
+Braceless guards at top-level function bodies continue to work — this restriction is lambda-body only. A future runtime change (follow-up to ILO-473) may switch the early-return target inside lambdas; until then the diagnostic prevents the silent miscompile.
+
 ---
 
 ### Trailing-semicolon semantics
@@ -399,6 +406,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `tup.0` / `pair.0` (tuple access) | bind from `zip`-pair, then `at pair 0` (no tuple type) | `ILO-T004` |
 | `?? (num s) 0` (`??` on `R T E`)  | `default-on-err (num s) 0` or `?(num s){~v:v;^_:0}` | `ILO-T041` |
 | `?bool{body}` (bool-conditional) | guard `=bool true body`, braced `=bool true{body}`, ternary `?bool a b`, or match `?bool{true:a; false:b}` | `ILO-P011`  |
+| `(x:n>n;>=x 0 0;x)` (braceless guard inside lambda) | `(x:n>n;?>=x 0 0 x)` (prefix ternary) or `(x:n>n;?>=x 0{0}{x})` (braced match) | `ILO-P023` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 

@@ -237,7 +237,9 @@ fn grp_inline_lambda_non_capturing() {
 #[test]
 fn grp_inline_lambda_single_capture() {
     // Threshold is captured, label by side of the threshold.
-    let src = "f xs:L n t:n>M t L n;grp (x:n>t;>x t \"big\";\"small\") xs";
+    // Use prefix ternary inside the lambda — braceless guards inside a
+    // lambda body are ILO-P023 (their early-return target is the wrong fn).
+    let src = "f xs:L n t:n>M t L n;grp (x:n>t;?>x t \"big\" \"small\") xs";
     run_all(
         src,
         "f",
@@ -270,7 +272,8 @@ fn uniqby_inline_lambda_non_capturing() {
 #[test]
 fn uniqby_inline_lambda_single_capture() {
     // Captured threshold drives the bucket.
-    let src = "f xs:L n t:n>L n;uniqby (x:n>t;>x t \"big\";\"small\") xs";
+    // Prefix ternary — braceless guard inside lambda is ILO-P023.
+    let src = "f xs:L n t:n>L n;uniqby (x:n>t;?>x t \"big\" \"small\") xs";
     run_all(src, "f", &["[1,2,7,3,8,9]", "5"], "[1, 7]");
     // Tighter threshold flips first-seen on each side.
     run_all(src, "f", &["[1,2,7,3,8,9]", "2"], "[1, 7]");

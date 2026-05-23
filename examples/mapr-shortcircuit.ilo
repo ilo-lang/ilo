@@ -13,7 +13,7 @@ chk x:n>R n t;<x 0 ^"negative";~*x x
 sq-all xs:L n>R (L n) t;mapr chk xs
 
 -- Capturing lambda: bound each element by `lim`, fail if any exceeds.
-cap-all xs:L n lim:n>R (L n) t;mapr (x:n>R n t;>x lim ^"too big";~*x 2) xs
+cap-all xs:L n lim:n>R (L n) t;mapr (x:n>R n t;?>x lim ^"too big" ~*x 2) xs
 
 -- Empty input: vacuously Ok with empty list.
 sq-empty>R (L n) t;mapr chk []
