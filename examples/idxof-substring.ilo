@@ -1,0 +1,50 @@
+-- idxof-substring.ilo — `idxof s sub > O n` (ILO-39).
+--
+-- Returns the first code-point index of `sub` in `s`, or nil if not found.
+-- Index is in code-point units, NOT raw bytes (same convention as `at`).
+-- Empty `sub` returns 0 (Python / JS semantics).
+--
+-- Replaces the verbose `flt`+`len` workaround scrapingbee-chain and
+-- tui-client personas reached for when locating substrings.
+
+-- Find present: returns the index wrapped in Optional.
+find-comma>O n;idxof "key=value" "="
+
+-- Find absent: returns nil.
+find-missing>O n;idxof "key=value" "?"
+
+-- Empty needle: returns 0 (convention from Python str.find / JS indexOf).
+find-empty>O n;idxof "anything" ""
+
+-- Empty haystack: returns nil (no codepoints to scan, no match possible).
+find-empty-hay>O n;idxof "" "x"
+
+-- Unicode-correct: emoji is one codepoint, so the index after it is the
+-- codepoint count, not the byte count of the UTF-8 representation.
+find-after-emoji>O n;idxof "🦀 rust" "rust"
+
+-- The blessed split-on-first-occurrence idiom: idxof then slc.
+-- Returns the value half of a `key=value` string; panics via `!` on missing `=`.
+parse-value s:t>t
+  i=idxof! s "="
+  slc s (+ i 1) (len s)
+
+-- The same shape for the key half.
+parse-key s:t>t
+  i=idxof! s "="
+  slc s 0 i
+
+-- run: find-comma
+-- out: 3
+-- run: find-missing
+-- out: nil
+-- run: find-empty
+-- out: 0
+-- run: find-empty-hay
+-- out: nil
+-- run: find-after-emoji
+-- out: 2
+-- run: parse-value "host=example.com"
+-- out: example.com
+-- run: parse-key "host=example.com"
+-- out: host

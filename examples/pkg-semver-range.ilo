@@ -1,0 +1,38 @@
+-- pkg-semver-range.ilo — `ilo add` semver constraint reference.
+--
+-- Companion to pkg-registry.ilo (which shows the runtime `use "owner/repo"`
+-- shape). This file documents the install-time CLI: which version
+-- constraints `ilo add` accepts, what they mean, and what ends up in
+-- ilo.lock.
+--
+-- The constraints follow Cargo / npm semver semantics:
+--
+--   ilo add owner/repo              -- latest stable
+--   ilo add owner/repo@1.2.3        -- exact pin
+--   ilo add owner/repo@^1.2.3       -- >= 1.2.3, < 2.0.0 (caret: API-compat)
+--   ilo add owner/repo@~1.2.3       -- >= 1.2.3, < 1.3.0 (tilde: patch-only)
+--   ilo add owner/repo@>=1.2,<2     -- explicit comma-separated range
+--   ilo add owner/repo@1.x          -- wildcard at any position
+--   ilo add owner/repo@26.5         -- CalVer-style pin (treated as 26.5.x)
+--   ilo add owner/repo --branch foo -- track a branch tip (no semver)
+--   ilo add owner/repo --rev <sha>  -- exact commit (no semver)
+--
+-- The constraint string is stored verbatim in `ilo.toml` under
+-- [dependencies], and the resolved exact version goes into `ilo.lock`.
+-- `ilo add` (no constraint) writes `^MAJOR.MINOR.PATCH` of the latest
+-- stable; pass `--exact` to write `=MAJOR.MINOR.PATCH` instead.
+--
+-- For private-org installs, set IL_PKG_TOKEN to a fine-grained GitHub PAT
+-- with `contents: read` on the source repo. The resolver picks it up
+-- automatically; the constraint syntax is unchanged.
+--
+-- This file does not exercise the resolver (that would need a live
+-- network call against the example registry). For the runtime side once
+-- a package is installed, see pkg-registry.ilo. Both files together cover
+-- the install-then-import flow end-to-end.
+
+-- Marker fn so this file builds clean under examples_engines.
+ok>n;42
+
+-- run: ok
+-- out: 42

@@ -1,0 +1,33 @@
+-- discard-bind.ilo — `_=expr` (ILO-36) silences ILO-T033 when the result of
+-- a side-effecting call is intentionally dropped.
+--
+-- ilo has functional semantics: `mset m k v` does NOT mutate `m`, it returns
+-- a new map. So `_=mset m k v` is rarely useful (the side-effect-free shape
+-- means the call is genuinely a no-op without the rebind).
+--
+-- The real use case is (b) from the CHANGELOG: calling a side-effecting
+-- function at non-tail position where the return value is irrelevant.
+-- `run2` is the canonical example — the spawn IS the side effect, the
+-- RunResult is incidental when you only care that it ran.
+
+-- Sequential spawns where we don't care about the output, only that they ran.
+-- Without `_=`, each `run2` call would trip ILO-T033 "unused expression result".
+ping-then-touch out:t>R t t
+  _=run2 "echo" ["pinged"]
+  _=run2 "true" []
+  r=run2!! "echo" [out]
+  ~r.stdout
+
+-- Counter: same shape, three discards then a meaningful tail.
+-- Demonstrates `_=` mixing freely with regular bindings.
+warm-then-echo>t
+  _=run2 "true" []
+  _=run2 "true" []
+  r=run2!! "echo" ["warm"]
+  r.stdout
+
+-- engine-skip: jit
+-- run: ping-then-touch "ok"
+-- out: ok
+-- run: warm-then-echo
+-- out: warm
