@@ -798,6 +798,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("tau", &[], "n"),
     ("e", &[], "n"),
     ("sleep", &["n"], "_"),
+    // spawn fn args... > _ (ILO-477). Variadic — first arg is the callable,
+    // remaining args are forwarded to it. Arity is checked specially in
+    // builtin_check_args (any >= 1).
+    ("spawn", &["fn"], "_"),
     ("tz-offset", &["t", "n"], "R n t"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
@@ -4319,6 +4323,32 @@ fn builtin_check_args(
             }
             (Ty::Nil, errors)
         }
+        "spawn" => {
+            // spawn fn args... > _ (ILO-477). Variadic.
+            //
+            // The first arg must be a function value (FnRef / Closure /
+            // builtin name). We do not type-check the forwarded args against
+            // the fn's param list here because the lambda-arg inference path
+            // for HOFs already exercises the cross-checking when the call-site
+            // is parsed (see `par-map` precedent). Spawn returns Nil to the
+            // parent — the thread runs asynchronously and its return value is
+            // discarded.
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'spawn' first arg must be a function (F ...), got {fn_ty}"),
+                    hint: Some(
+                        "pass a function name or lambda: spawn worker arg1 arg2".to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Nil, errors)
+        }
         "argmax" | "argmin" | "argsort" => {
             // arg* xs:L n — element type must be number. Empty list is a
             // runtime error for argmax/argmin (matches `max`/`min`); for
@@ -5691,6 +5721,10 @@ impl VerifyContext {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "fmt" {
                         !args.is_empty() // variadic: template + 0 or more args
+                    } else if callee == "spawn" {
+                        // spawn fn args... — variadic; needs at least the
+                        // callable (ILO-477).
+                        !args.is_empty()
                     } else {
                         args.len() == expected_arity
                     };
@@ -5721,6 +5755,8 @@ impl VerifyContext {
                             "1 or 2".to_string()
                         } else if callee == "run" || callee == "run2" {
                             "2 or 3".to_string()
+                        } else if callee == "spawn" {
+                            "1 or more".to_string()
                         } else {
                             expected_arity.to_string()
                         };
