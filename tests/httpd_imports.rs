@@ -92,6 +92,7 @@ fn handler_uses_sibling_module() {
         }
         s
     };
+    child.wait().ok();
 
     assert!(
         resp.contains("hello, world"),
@@ -151,6 +152,7 @@ fn single_file_handler_still_works() {
 
     let resp = http_get(port, "/");
     child.kill().ok();
+    child.wait().ok();
 
     assert!(
         resp.contains("standalone"),
