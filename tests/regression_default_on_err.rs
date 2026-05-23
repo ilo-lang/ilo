@@ -186,6 +186,12 @@ fn nil_coalesce_on_result_emits_ilo_t041() {
         stderr.contains("default-on-err"),
         "expected diagnostic to suggest default-on-err, got: {stderr}"
     );
+    // Hint must also name the full-control match rewrite, with the canonical
+    // `;`-separated arm syntax (not bare whitespace).
+    assert!(
+        stderr.contains("~v:v;^_:"),
+        "expected diagnostic to suggest `?<r>{{~v:v;^_:<d>}}` rewrite, got: {stderr}"
+    );
 }
 
 #[test]
