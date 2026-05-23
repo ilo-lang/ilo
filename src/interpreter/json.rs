@@ -76,6 +76,7 @@ impl Value {
             Value::LazyStdinLines(_) => {
                 Err("stdin-lines iterator cannot be serialized".to_string())
             }
+            Value::LazyHttpLines(_) => Err("http-lines iterator cannot be serialized".to_string()),
             Value::World {
                 net,
                 read,

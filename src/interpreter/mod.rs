@@ -313,6 +313,65 @@ impl StdinLinesHandle {
     }
 }
 
+type HttpLinesInner =
+    Arc<Mutex<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>>>;
+
+/// A lazy handle to an HTTP response's line iterator.
+///
+/// Mirrors [`StdinLinesHandle`] but feeds from the body of a chunked /
+/// streaming HTTP response rather than stdin. Produced by `get-stream`,
+/// `get-stream-h`, `pst-stream`, `pst-stream-h` (ILO-46), consumed by the
+/// tree-walker's `Stmt::ForEach` arm one line at a time so the response body
+/// is never fully buffered. The underlying iterator owns the open
+/// connection — when the handle is dropped (loop exits, value goes out of
+/// scope) the connection is dropped with it.
+///
+/// On WASM the variant is never constructed (the builtins return Err early).
+#[allow(clippy::type_complexity)]
+pub struct HttpLinesHandle {
+    inner: HttpLinesInner,
+}
+
+impl std::fmt::Debug for HttpLinesHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<http-lines>")
+    }
+}
+
+impl Clone for HttpLinesHandle {
+    fn clone(&self) -> Self {
+        HttpLinesHandle {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl PartialEq for HttpLinesHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl HttpLinesHandle {
+    /// Wrap an arbitrary line iterator (typically `BufReader::lines()` over
+    /// an HTTP response body) into a shareable handle.
+    pub fn from_lines(
+        it: Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>,
+    ) -> Self {
+        HttpLinesHandle {
+            inner: Arc::new(Mutex::new(it)),
+        }
+    }
+
+    /// Pull the next line from the underlying iterator.
+    pub fn next_line(&self) -> Option<std::result::Result<String, std::io::Error>> {
+        self.inner
+            .lock()
+            .expect("HttpLinesHandle lock poisoned")
+            .next()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -364,6 +423,13 @@ pub enum Value {
     /// fully buffered.  On WASM the builtin returns `Err` before this
     /// variant is constructed.
     LazyStdinLines(StdinLinesHandle),
+    /// Lazy HTTP-response line iterator. Produced by `get-stream`,
+    /// `get-stream-h`, `pst-stream`, `pst-stream-h` (ILO-46 client side).
+    /// Same drain-on-iterate semantics as `LazyStdinLines`: the foreach loop
+    /// calls `next_line()` each iteration, so the response body is never
+    /// fully buffered. On WASM the variant is never constructed (the
+    /// builtins return Err early).
+    LazyHttpLines(HttpLinesHandle),
 }
 
 impl std::fmt::Display for Value {
@@ -447,6 +513,7 @@ impl std::fmt::Display for Value {
                 None => write!(f, "{tag}"),
             },
             Value::LazyStdinLines(_) => write!(f, "<stdin-lines>"),
+            Value::LazyHttpLines(_) => write!(f, "<http-lines>"),
         }
     }
 }
@@ -6811,6 +6878,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Ok(http_wasm::result_to_value(result))
         };
     }
+    // HTTP streaming client (ILO-46). Each variant returns a lazy line
+    // iterator (Value::LazyHttpLines) drained one chunk-line at a time by
+    // `@line stream {...}` foreach. Cap-check the URL up front and surface
+    // any backend error as Err before opening the connection.
+    if builtin == Some(Builtin::GetStream) && args.len() == 1 {
+        return http_stream_get_dispatch(env, &args[0], None);
+    }
+    if builtin == Some(Builtin::GetStreamH) && args.len() == 2 {
+        return http_stream_get_dispatch(env, &args[0], Some(&args[1]));
+    }
+    if builtin == Some(Builtin::PostStream) && args.len() == 2 {
+        return http_stream_post_dispatch(env, &args[0], &args[1], None);
+    }
+    if builtin == Some(Builtin::PostStreamH) && args.len() == 3 {
+        return http_stream_post_dispatch(env, &args[0], &args[1], Some(&args[2]));
+    }
     // HTTP verb cluster (#5z). Delegated to #[inline(never)] helpers so the
     // call_function frame stays small. Each verb gets an explicit `if builtin ==`
     // guard so the check-dispatch-arms script can measure them individually.
@@ -9800,6 +9883,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         Value::LazyStdinLines(_) => serde_json::Value::String("<stdin-lines>".to_string()),
+        Value::LazyHttpLines(_) => serde_json::Value::String("<http-lines>".to_string()),
         Value::World {
             net,
             read,
@@ -10518,6 +10602,45 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                                 return Err(RuntimeError::new(
                                     "ILO-R012",
                                     format!("for-line: stdin read error: {}", e),
+                                ));
+                            }
+                            Some(Ok(s)) => {
+                                env.push_scope();
+                                env.define(binding, Value::Text(Arc::new(s)));
+                                let result = eval_body(env, body, false);
+                                env.pop_scope();
+                                match result? {
+                                    BodyResult::Return(v) => {
+                                        return Ok(Some(BodyResult::Return(v)));
+                                    }
+                                    BodyResult::Break(v) => {
+                                        last = v;
+                                        break;
+                                    }
+                                    BodyResult::Continue => continue,
+                                    BodyResult::TailCall { .. } => {
+                                        unreachable!("TailCall escaping non-tail loop body");
+                                    }
+                                    BodyResult::Value(v) => last = v,
+                                }
+                            }
+                        }
+                    }
+                    Ok(Some(BodyResult::Value(last)))
+                }
+                // `get-stream` / `pst-stream` produce a lazy HTTP iterator.
+                // Drain one line per chunk-line as bytes arrive; never buffer.
+                // I/O errors surface via ILO-R009 with "http-stream read error".
+                Value::LazyHttpLines(handle) => {
+                    let mut last = Value::Nil;
+                    loop {
+                        let line = handle.next_line();
+                        match line {
+                            None => break,
+                            Some(Err(e)) => {
+                                return Err(RuntimeError::new(
+                                    "ILO-R009",
+                                    format!("http-stream read error: {}", e),
                                 ));
                             }
                             Some(Ok(s)) => {
@@ -11379,6 +11502,116 @@ fn is_secret_env_var(name: &str) -> bool {
         || upper.ends_with("_PASSWD")
         || upper.ends_with("_CREDENTIAL")
         || upper.ends_with("_CREDENTIALS")
+}
+
+/// Helper: extract a headers map argument into a `Vec<(String, String)>`.
+/// Errors as ILO-R009 when the value isn't `M t t`-shaped.
+fn http_stream_headers(name: &str, v: &Value) -> Result<Vec<(String, String)>> {
+    match v {
+        Value::Map(m) => Ok(m
+            .iter()
+            .map(|(k, val)| {
+                let vs: String = match val {
+                    Value::Text(s) => (**s).clone(),
+                    other => format!("{other:?}"),
+                };
+                (k.to_display_string(), vs)
+            })
+            .collect()),
+        other => Err(RuntimeError::new(
+            "ILO-R009",
+            format!("{name}: headers must be M t t, got {:?}", other),
+        )),
+    }
+}
+
+/// Dispatch for `get-stream` / `get-stream-h`. Cap-checks the URL, then
+/// asks the HTTP backend for a streaming line iterator.
+fn http_stream_get_dispatch(
+    env: &mut Env,
+    url_v: &Value,
+    headers_v: Option<&Value>,
+) -> Result<Value> {
+    let name = if headers_v.is_some() {
+        "get-stream-h"
+    } else {
+        "get-stream"
+    };
+    let url = match url_v {
+        Value::Text(u) => u.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: first arg must be text (url), got {:?}", other),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::LazyHttpLines(HttpLinesHandle::from_lines(
+            errored_lines(msg),
+        )));
+    }
+    let headers = match headers_v {
+        Some(v) => http_stream_headers(name, v)?,
+        None => vec![],
+    };
+    let backend = http_wasm::default_backend();
+    match backend.get_stream(url.as_str(), &headers) {
+        Ok(iter) => Ok(Value::LazyHttpLines(HttpLinesHandle::from_lines(iter))),
+        Err(msg) => Ok(Value::LazyHttpLines(HttpLinesHandle::from_lines(
+            errored_lines(msg),
+        ))),
+    }
+}
+
+/// Build a one-shot iterator that yields a single `Err(io::Error)` then
+/// stops. Used to surface connect-time errors (cap denial, DNS, refused)
+/// via the same `LazyHttpLines` channel as mid-stream I/O errors so the
+/// `L t` runtime shape stays consistent.
+fn errored_lines(
+    msg: String,
+) -> Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send> {
+    Box::new(std::iter::once(Err(std::io::Error::other(msg))))
+}
+
+/// Dispatch for `pst-stream` / `pst-stream-h`. Cap-checks the URL, then
+/// streams the response body as lines.
+fn http_stream_post_dispatch(
+    env: &mut Env,
+    url_v: &Value,
+    body_v: &Value,
+    headers_v: Option<&Value>,
+) -> Result<Value> {
+    let name = if headers_v.is_some() {
+        "pst-stream-h"
+    } else {
+        "pst-stream"
+    };
+    let (url, body) = match (url_v, body_v) {
+        (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+        _ => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: requires (t, t), got ({:?}, {:?})", url_v, body_v),
+            ));
+        }
+    };
+    if let Err(msg) = env.caps.check_net(url.as_str()) {
+        return Ok(Value::LazyHttpLines(HttpLinesHandle::from_lines(
+            errored_lines(msg),
+        )));
+    }
+    let headers = match headers_v {
+        Some(v) => http_stream_headers(name, v)?,
+        None => vec![],
+    };
+    let backend = http_wasm::default_backend();
+    match backend.post_stream(url.as_str(), body.as_str(), &headers) {
+        Ok(iter) => Ok(Value::LazyHttpLines(HttpLinesHandle::from_lines(iter))),
+        Err(msg) => Ok(Value::LazyHttpLines(HttpLinesHandle::from_lines(
+            errored_lines(msg),
+        ))),
+    }
 }
 
 fn for_line_impl(source: &Value) -> Result<Value> {
