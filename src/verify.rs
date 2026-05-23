@@ -910,6 +910,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("hex", &["t"], "t"),
     ("hex-rev", &["t"], "t"),
     ("ct-eq", &["t", "t"], "b"),
+    // idxof s sub > O n (ILO-39): first code-point index of `sub` in `s`,
+    // or nil. Tree-bridge eligible, no FnRef, no I/O.
+    ("idxof", &["t", "t"], "O n"),
     // Raw-bytes crypto (ILO-383). Both accept hex-encoded text, decode to bytes,
     // and return hex-encoded SHA-256 digest. Error (ILO-R009) on odd-length or
     // non-hex input.
