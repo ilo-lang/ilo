@@ -230,6 +230,19 @@ pub enum Builtin {
     Del,
     Hed,
     Opt,
+    // HTTP streaming (ILO-46 client side). Each returns a lazy line iterator
+    // (`LazyHttpLines`) drained one chunk-line at a time by `@line stream {...}`
+    // foreach. Bytes flow through a `BufReader::lines()` adapter over the
+    // underlying chunked/SSE response — the body is never fully buffered.
+    // Tree-walker only at runtime; VM/Cranelift inherit via the tree bridge
+    // because the return type is opaque to the register engines (same shape
+    // as `for-line stdin`). All four perform a capability check via
+    // `Caps::check_net` before opening the connection. On WASM the streaming
+    // backends are not wired up and the builtins return Err.
+    GetStream,
+    GetStreamH,
+    PostStream,
+    PostStreamH,
 
     // Process spawn (argv-list only — no shell, no interpolation, no glob).
     // See SPEC.md "Process spawn" section for the security framing.
@@ -727,6 +740,10 @@ impl Builtin {
             "del" => Some(Builtin::Del),
             "hed" => Some(Builtin::Hed),
             "opt" => Some(Builtin::Opt),
+            "get-stream" => Some(Builtin::GetStream),
+            "get-stream-h" => Some(Builtin::GetStreamH),
+            "pst-stream" => Some(Builtin::PostStream),
+            "pst-stream-h" => Some(Builtin::PostStreamH),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
             "mset" => Some(Builtin::Mset),
@@ -962,6 +979,10 @@ impl Builtin {
             Builtin::Del => "del",
             Builtin::Hed => "hed",
             Builtin::Opt => "opt",
+            Builtin::GetStream => "get-stream",
+            Builtin::GetStreamH => "get-stream-h",
+            Builtin::PostStream => "pst-stream",
+            Builtin::PostStreamH => "pst-stream-h",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
             Builtin::Mset => "mset",
@@ -1469,6 +1490,13 @@ impl Builtin {
         // `run2-full-env cmd:t args:L t > R RunResult t` — opt-in full-env
         // variant of `run2`. Same policy as `run-full-env`.
         Builtin::Run2FullEnv,
+        // HTTP streaming client (ILO-46). Lazy-line iterators consumable via
+        // `@line stream {...}` foreach. Appended last to preserve every
+        // existing on-wire tag.
+        Builtin::GetStream,
+        Builtin::GetStreamH,
+        Builtin::PostStream,
+        Builtin::PostStreamH,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1511,7 +1539,12 @@ impl Builtin {
             | Builtin::Cabs
             | Builtin::Cmul
             | Builtin::Pairwise
-            | Builtin::Pdist2 => "experimental",
+            | Builtin::Pdist2
+            // HTTP streaming client (ILO-46) — experimental until released.
+            | Builtin::GetStream
+            | Builtin::GetStreamH
+            | Builtin::PostStream
+            | Builtin::PostStreamH => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1905,6 +1938,10 @@ mod tests {
             "pairwise",
             "pdist2",
             "par-map",
+            "get-stream",
+            "get-stream-h",
+            "pst-stream",
+            "pst-stream-h",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -2190,6 +2227,10 @@ mod tests {
             "pairwise",
             "pdist2",
             "par-map",
+            "get-stream",
+            "get-stream-h",
+            "pst-stream",
+            "pst-stream-h",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

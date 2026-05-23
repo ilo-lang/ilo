@@ -673,6 +673,13 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("getx", &["t", "M t t"], "R (M t _) t"),
     ("pstx", &["t", "t"], "R (M t _) t"),
     ("pstx", &["t", "t", "M t t"], "R (M t _) t"),
+    // HTTP streaming client (ILO-46). Each returns an opaque lazy iterator
+    // (`L t` at the verifier level; the runtime value is `Value::LazyHttpLines`).
+    // Consumed via `@line stream {...}` foreach.
+    ("get-stream", &["t"], "L t"),
+    ("get-stream-h", &["t", "M t t"], "L t"),
+    ("pst-stream", &["t", "t"], "L t"),
+    ("pst-stream-h", &["t", "t", "M t t"], "L t"),
     // HTTP verb cluster (#5z). Same shape as `pst` / `get` — optional `M t t`
     // headers map, returns `R t t`. `del`/`hd`/`opt` mirror `get`; `put`/`pat`
     // mirror `pst`.
