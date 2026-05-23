@@ -129,6 +129,70 @@ fn fld_user_fn_single_element() {
     run_all(FLD_USER_ADD, "main", &["[7]"], "7");
 }
 
+// ── fld closure-capture (ILO-454) ───────────────────────────────────────
+//
+// Regression: lambda passed to `fld` must capture outer locals at
+// closure-construction time and see the current (not stale) value on
+// every engine. These tests pin cross-engine parity for that shape.
+//
+// The captured outer local (`bump`) is verified by checking that the
+// fold result changes when the outer binding changes, which is impossible
+// if the lambda silently ignores the captured value.
+
+// Closure captures an outer local and adds it to the accumulator each iter.
+// main bump:n xs:L n>n — folds [1,2,3] summing (acc + bump) per item.
+// bump=10: each iter adds 10 → result = 0+10 + 10 + 10 = 30 (the bump,
+// not the list element, is what drives the sum).
+const FLD_LAMBDA_CAPTURE_BUMP: &str = "main bump:n xs:L n>n;fld (acc:n x:n>n;+acc bump) xs 0";
+
+#[test]
+fn fld_lambda_captures_outer_local_vm_jit() {
+    // ILO-454: lambda closure over outer locals must produce the correct
+    // (non-stale) value on every engine. bump=10, [1,2,3] → 0+10+10+10=30.
+    run_all(FLD_LAMBDA_CAPTURE_BUMP, "main", &["10", "[1,2,3]"], "30");
+}
+
+#[test]
+fn fld_lambda_captures_outer_local_varies_with_bump() {
+    // Confirm the captured value actually differs: bump=100 → 300, not 30.
+    // If the lambda saw a stale initial value both would produce the same
+    // output; distinct results prove the capture is live.
+    run_all(FLD_LAMBDA_CAPTURE_BUMP, "main", &["100", "[1,2,3]"], "300");
+}
+
+#[test]
+fn fld_lambda_capture_from_let_binding() {
+    // The outer local is computed (not a raw param) to exercise that
+    // let-binding values are captured correctly.
+    // np1 = bump + 1 = 6; fld over [1,2,3] accumulating np1 each iter → 18.
+    let src = "main bump:n xs:L n>n;np1=+bump 1;fld (acc:n x:n>n;+acc np1) xs 0";
+    run_all(src, "main", &["5", "[1,2,3]"], "18");
+}
+
+#[test]
+fn fld_lambda_capture_multiple_outer_locals() {
+    // Lambda closes over two outer locals (a and b) computed before the fold.
+    // fld over [1,2,3] adding (a + b) = 3 + 7 = 10 each iter → 30.
+    let src = "main>n;a=3;b=7;fld (acc:n x:n>n;+ acc (+ a b)) [1,2,3] 0";
+    run_all(src, "main", &[], "30");
+}
+
+#[test]
+fn fld_lambda_capture_binomial_coefficient() {
+    // Full binomial-coefficient shape (the original ILO-454 trigger).
+    // n=5, k=2 → C(5,2) = 10.
+    let src = concat!(
+        "binom n:n k:n>n;",
+        "np1=+n 1;",
+        "facn=fld (acc:n x:n>n;*acc x) (range 1 np1) 1;",
+        "fack=fld (acc:n x:n>n;*acc x) (range 1 (+ k 1)) 1;",
+        "facnk=fld (acc:n x:n>n;*acc x) (range 1 (+ (- n k) 1)) 1;",
+        "/ facn (* fack facnk)\n",
+        "main n:n k:n>n;binom n k"
+    );
+    run_all(src, "main", &["5", "2"], "10");
+}
+
 // Text concat fold: pins that the accumulator survives type changes
 // (init is text, the fn returns text every iter).
 const FLD_TEXT_CONCAT: &str = "join a:t b:t>t;+a b\nmain xs:L t>t;fld join xs \"\"";
