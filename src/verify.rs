@@ -5033,6 +5033,87 @@ impl VerifyContext {
                     Some(spanned.span),
                 );
             }
+            // ILO-T047: braced guard or match at tail position whose arm body
+            // ends with a bare value expression (no `ret`) silently falls
+            // through to nil when no arm/branch is taken.
+            //
+            //   ph{"value"}          ← braced guard; if ph is false → nil
+            //   ?r{~v:v;^_:0}        ← match; if no arm matches → nil
+            //
+            // The fix is `ret` inside the arm: `ph{ret "value"}`.
+            // We only fire when:
+            //   (a) the statement is at tail position in its body, AND
+            //   (b) the statement is a braced guard (no else) or a match, AND
+            //   (c) at least one arm/body ends with Stmt::Expr (not ret).
+            // We skip when there IS an else_body because cond{t}{e} is a
+            // ternary that always produces a value.
+            if is_tail {
+                let maybe_warn: Option<(&str, &str)> = match &spanned.node {
+                    Stmt::Guard {
+                        braceless: false,
+                        else_body: None,
+                        body,
+                        ..
+                    } => {
+                        let ends_with_bare_expr =
+                            body.last().is_some_and(|s| matches!(s.node, Stmt::Expr(_)));
+                        if ends_with_bare_expr {
+                            Some((
+                                "braced guard",
+                                "if the condition is false the function returns nil silently — use `ret` inside the body (e.g. `cond{ret value}`) or add an else branch",
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    Stmt::Match { arms, .. } => {
+                        // Only warn when the match is non-exhaustive. An
+                        // exhaustive match at tail position always produces a
+                        // value — the warning would be a false positive.
+                        // Exhaustive if: has wildcard/TypeIs arm, OR has both
+                        // Ok and Err arms (covers Result), OR has both true
+                        // and false literal arms (covers Bool).
+                        let has_wildcard = arms.iter().any(|a| {
+                            matches!(a.pattern, Pattern::Wildcard | Pattern::TypeIs { .. })
+                        });
+                        let has_ok = arms.iter().any(|a| matches!(a.pattern, Pattern::Ok(_)));
+                        let has_err = arms.iter().any(|a| matches!(a.pattern, Pattern::Err(_)));
+                        let has_true = arms
+                            .iter()
+                            .any(|a| matches!(a.pattern, Pattern::Literal(Literal::Bool(true))));
+                        let has_false = arms
+                            .iter()
+                            .any(|a| matches!(a.pattern, Pattern::Literal(Literal::Bool(false))));
+                        let is_exhaustive =
+                            has_wildcard || (has_ok && has_err) || (has_true && has_false);
+                        let any_bare = arms.iter().any(|a| {
+                            a.body
+                                .last()
+                                .is_some_and(|s| matches!(s.node, Stmt::Expr(_)))
+                        });
+                        if !is_exhaustive && any_bare {
+                            Some((
+                                "match",
+                                "if no arm matches the function returns nil silently — use `ret` inside arm bodies (e.g. `~v:ret v`) to make the return explicit",
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some((kind, hint)) = maybe_warn {
+                    self.warn(
+                        "ILO-T047",
+                        func,
+                        format!(
+                            "brace-form {kind} at tail position has bare value expression in arm body — value is discarded if branch is not taken"
+                        ),
+                        Some(hint.to_string()),
+                        Some(spanned.span),
+                    );
+                }
+            }
             last_ty = self.verify_stmt(func, scope, &spanned.node, spanned.span);
             if matches!(spanned.node, Stmt::Return(_) | Stmt::Break(_)) && i + 1 < stmts.len() {
                 let first_unreachable = stmts[i + 1].span;
@@ -12112,6 +12193,128 @@ mod tests {
              main>t;pick red"
             )
             .is_ok()
+        );
+    }
+
+    // ---- ILO-T047: silent brace-fallthrough on match/guard (no ret) ----
+
+    #[test]
+    fn t047_braced_guard_tail_bare_value_warns() {
+        // `ph{"value"}` at tail position: if ph is false the function returns
+        // nil silently. The model intended an early-return but wrote the wrong form.
+        let result = parse_and_verify_full("f x:b>t;x{\"value\"}");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert_eq!(
+            t047.len(),
+            1,
+            "expected one ILO-T047 warning, got {:?}",
+            result.warnings
+        );
+        assert!(t047[0].message.contains("braced guard"));
+    }
+
+    #[test]
+    fn t047_braced_guard_with_else_no_warn() {
+        // `cond{"t"}{"f"}` is a ternary — always produces a value. No warning.
+        let result = parse_and_verify_full("f x:b>t;x{\"yes\"}{\"no\"}");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert!(
+            t047.is_empty(),
+            "ternary should not warn ILO-T047: {:?}",
+            t047
+        );
+    }
+
+    #[test]
+    fn t047_braced_guard_with_ret_no_warn() {
+        // `cond{ret "value"}` is explicit — no warning.
+        let result = parse_and_verify_full("f x:b>t;x{ret \"value\"};\"default\"");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert!(
+            t047.is_empty(),
+            "explicit ret should not warn ILO-T047: {:?}",
+            t047
+        );
+    }
+
+    #[test]
+    fn t047_non_exhaustive_match_tail_bare_value_warns() {
+        // `?x{1:"one";2:"two"}` at tail — no wildcard, so if no arm matches → nil.
+        let result = parse_and_verify_full("f x:n>t;?x{1:\"one\";2:\"two\"}");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert_eq!(
+            t047.len(),
+            1,
+            "expected ILO-T047 for non-exhaustive match, got {:?}",
+            result.warnings
+        );
+        assert!(t047[0].message.contains("match"));
+    }
+
+    #[test]
+    fn t047_exhaustive_result_match_no_warn() {
+        // `?r{~v:v;^_:0}` covers all Result branches — exhaustive, no warning.
+        let result = parse_and_verify_full("f x:R n t>n;?x{~v:v;^_:0}");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert!(
+            t047.is_empty(),
+            "exhaustive Result match should not warn: {:?}",
+            t047
+        );
+    }
+
+    #[test]
+    fn t047_wildcard_match_no_warn() {
+        // `?x{1:"one";_:"other"}` — wildcard covers all → exhaustive, no warning.
+        let result = parse_and_verify_full("f x:n>t;?x{1:\"one\";_:\"other\"}");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert!(
+            t047.is_empty(),
+            "wildcard match should not warn: {:?}",
+            t047
+        );
+    }
+
+    #[test]
+    fn t047_guard_not_at_tail_no_warn() {
+        // Braced guard at non-tail position with bare value — the value is
+        // already discarded by `eval_body`'s `last` update, but the model
+        // can't be confused about return semantics here. ILO-T047 only fires
+        // at tail position.
+        let result = parse_and_verify_full("f x:b>t;x{\"side-effect\"};\"result\"");
+        let t047: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T047")
+            .collect();
+        assert!(
+            t047.is_empty(),
+            "non-tail guard should not warn ILO-T047: {:?}",
+            t047
         );
     }
 }
