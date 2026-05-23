@@ -48,6 +48,12 @@ Available since ILO-379. `ilo httpd <handler.ilo> --port N` runs a handler
 function `fn handle (req: Request) > Response` over chunked
 transfer-encoding.
 
+Since ILO-481 the handler file's `use` imports are resolved at startup,
+relative to the handler's own directory, exactly like `ilo run` and
+`ilo check`. A handler can therefore split logic across sibling modules
+(`use "store.ilo"`) instead of inlining everything in one file. A missing
+import surfaces a real diagnostic and the server refuses to start.
+
 ## Buffered HTTP (unchanged)
 
 For request/response patterns where the entire body is small and easy to
@@ -76,3 +82,4 @@ For stdin streaming, see `for-line stdin` (ILO-70).
 * ILO-46 — HTTP streaming, streaming stdin, and ilo httpd subcommand
 * ILO-379 — chunked transfer-encoding for `ilo httpd`
 * ILO-448 — client-side HTTP streaming builtins (`get-stream`, `pst-stream`, …)
+* ILO-481 — `ilo httpd` resolves `use` imports in handler files
