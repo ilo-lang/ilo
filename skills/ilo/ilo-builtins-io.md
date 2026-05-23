@@ -28,7 +28,9 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 Verb cluster is limited to the seven safe methods (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE and CONNECT are deliberately out of scope.
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
-**WASM targets**: `get` and `pst` work in WASM builds (`wasm32-wasi`, `wasm32-unknown-unknown`) via a `fetch` host import (module `"ilo_http"`). The host must export the `ilo_http` import set — see `src/interpreter/http_wasm.rs` for the full contract. `put`, `pat`, `del`, `hed`, `opt`, `get-to`, `pst-to`, `getx`, `pstx`, and `get-many` are native-only (return `Err` on WASM). HTTP streaming is out of scope (ILO-46). Cap flags (`--allow-net`) are enforced on WASM the same as native.
+**WASM targets**: `get` and `pst` work in WASM (`wasm32-wasi`, `wasm32-unknown-unknown`) via `fetch` host import (module `"ilo_http"`); host must export the import set — see `src/interpreter/http_wasm.rs`. `put`, `pat`, `del`, `hed`, `opt`, `get-to`, `pst-to`, `getx`, `pstx`, `get-many`, and `*-stream` are native-only. `--allow-net` enforced on WASM same as native.
+
+**Streaming (ILO-46)**: `get-stream url[+hs]`, `pst-stream url body[+hs]` → lazy `L t` line iter, drained via `@line (get-stream url){...}`. Body never buffered. SSE / log tails / NDJSON. Mid-stream → `ILO-R009`. Tree+VM.
 
 `getx url` / `pstx url body` (rich response, `R (M t _) t`): Ok-map with `status` (n), `headers` (M t t), `body` (t). Non-2xx is still Ok with status surfaced on the map; only transport failure is Err. Optional trailing request-headers map (M t t), same as `get`/`pst`. Use these when you need conditional requests (304), status-code branching (429), response-header reads (ETag, Link, X-RateLimit-*), or redirect following. Body-only `get`/`pst` stay cheaper for fire-and-forget; `getx`/`pstx` are the heavier variant. Response header names are lowercased on the Ok-map.
 
