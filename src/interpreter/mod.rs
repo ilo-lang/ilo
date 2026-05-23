@@ -5488,6 +5488,76 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Spawn) && !args.is_empty() {
+        // spawn fn args... > _
+        //
+        // Fire-and-forget OS thread (ILO-477). First arg is the callable
+        // (FnRef / Text / Closure); remaining args are forwarded to it.
+        // The parent returns Nil immediately. Errors and panics inside the
+        // thread are logged to stderr; they do not propagate.
+        //
+        // Caps are inherited via Arc::clone(&env.caps) — no new cap flag.
+        // Mirrors the threading model used by `ilo httpd` (per-connection
+        // std::thread::spawn) and `par-map` (worker-thread Env build).
+        let fn_name = match &args[0] {
+            Value::FnRef(n) => n.clone(),
+            Value::Text(n) => (**n).clone(),
+            Value::Closure { fn_name, .. } => fn_name.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "spawn: first arg must be a function reference, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        // Closure captures get appended after the forwarded args, the same
+        // way HOFs like `map`/`fld` thread captures through. Plain FnRef/Text
+        // have no captures.
+        let captures: Vec<Value> = match &args[0] {
+            Value::Closure { captures, .. } => captures.clone(),
+            _ => Vec::new(),
+        };
+        // The remaining args are the forwarded positional args.
+        let forwarded: Vec<Value> = args.iter().skip(1).cloned().collect();
+        let fns_snapshot = env.functions.clone();
+        let sum_variants_snapshot = env.sum_variants.clone();
+        let caps_snapshot = Arc::clone(&env.caps);
+        let fn_name_for_thread = fn_name.clone();
+        // Spawn the OS thread. We deliberately do not retain the JoinHandle:
+        // spawn is fire-and-forget for v1. The thread inherits the parent's
+        // caps via Arc::clone; user-fn callbacks invoke the same
+        // capability-checked builtins they would on the main thread.
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut worker_env = Env::with_caps(caps_snapshot);
+                worker_env.functions = fns_snapshot;
+                worker_env.sum_variants = sum_variants_snapshot;
+                let mut call_args = forwarded;
+                call_args.extend(captures);
+                call_function(&mut worker_env, &fn_name_for_thread, call_args)
+            }));
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    eprintln!("spawn: thread '{}' errored: {}", fn_name, e.message);
+                }
+                Err(panic) => {
+                    let msg = if let Some(s) = panic.downcast_ref::<&'static str>() {
+                        (*s).to_string()
+                    } else if let Some(s) = panic.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "<non-string panic payload>".to_string()
+                    };
+                    eprintln!("spawn: thread '{}' panicked: {}", fn_name, msg);
+                }
+            }
+        });
+        return Ok(Value::Nil);
+    }
     if builtin == Some(Builtin::Rndn) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(mu), Value::Number(sigma)) => {
