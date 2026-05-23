@@ -428,6 +428,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `?? (num s) 0` (`??` on `R T E`)  | `default-on-err (num s) 0` or `?(num s){~v:v;^_:0}` | `ILO-T041` |
 | `?bool{body}` (bool-conditional) | guard `=bool true body`, braced `=bool true{body}`, ternary `?bool a b`, or match `?bool{true:a; false:b}` | `ILO-P011`  |
 | `(x:n>n;>=x 0 0;x)` (braceless guard inside lambda) | `(x:n>n;?>=x 0 0 x)` (prefix ternary) or `(x:n>n;?>=x 0{0}{x})` (braced match) | `ILO-P023` |
+| `+a+" "+b+c` (infix-style chain with leading prefix `+`) | drop the leading `+`: `a+" "+b+c`; or `fmt "{} {} {}" a b c`; or nested prefix `+a +" " +b c`; or bind intermediates | `ILO-P010` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
@@ -581,6 +582,27 @@ The runtime emits a `hint:` diagnostic when one of these four pairs appears at a
 r=*a b;/r c    -- bind, then divide → 4
 /*a b c        -- equivalent, swapping the prefix-pair order
 ```
+
+### Infix-style chained `+` with a leading prefix `+`
+
+Infix `a+b+c` parses cleanly. But adding a leading `+` (`+a+b+c`) flips the
+expression into **prefix mode**: the parser reads `+a` as a prefix binop, so
+the immediately-following `+b` orphans and the chain unwinds into
+`ILO-P010` (expected expression, got EOF). The parser detects the
+`+atom+atom+...` shape (adjacent `+` between atoms) and attaches a hint
+pointing at the canonical rewrites:
+
+```
++a+" "+b+" "+c     -- rejected (ILO-P010 + targeted hint)
+a+" "+b+" "+c      -- OK (pure infix concat)
+fmt "{} {} {}" a b c   -- OK (formatted string)
++a +" " +b +" " c  -- OK (nested prefix, right-associative)
+s1=+a " ";s2=+s1 b;s3=+s2 " ";+s3 c   -- OK (bind intermediates)
+```
+
+The same rule applies to numeric chains (`+a+b+c` regardless of operand
+type). The fix is always one of: drop the leading `+`, switch to `fmt`,
+nest prefix ops with spaces, or bind intermediates.
 
 ### Infix precedence
 
