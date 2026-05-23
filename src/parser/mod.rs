@@ -446,6 +446,48 @@ impl Parser {
         }
     }
 
+    /// Check that `name` is safe to use as a binding LHS (not a reserved keyword,
+    /// builtin, or alias). Call this immediately after parsing a binding name
+    /// in foreach iter-var, match capture, or any other binding site not already
+    /// covered by the `name=expr` guards in `parse_stmt_body` /
+    /// `parse_decl_body`.  Returns `Err(ILO-P011)` on conflict.
+    fn check_binding_name(&self, name: &str) -> Result<()> {
+        // Reserved loop-control / stmt keywords
+        match name {
+            "wh" | "ret" | "brk" | "cnt" | "defer" | "errdefer" | "fld" => {
+                return Err(self.error_hint(
+                    "ILO-P011",
+                    format!("`{name}` is a reserved word and cannot be used as a binding name"),
+                    format!("pick a different name like `{name}v` or `my_{name}`"),
+                ));
+            }
+            _ => {}
+        }
+        // Builtin alias (e.g. `head`, `length`, `rng`)
+        if let Some(canonical) = resolve_alias(name) {
+            return Err(self.error_hint(
+                "ILO-P011",
+                format!(
+                    "`{name}` is an alias for the `{canonical}` builtin and cannot be used as a binding name"
+                ),
+                format!(
+                    "rename to something like `my{name}` or `{name}v`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches to `{canonical}`."
+                ),
+            ));
+        }
+        // Canonical builtin (e.g. `map`, `flat`, `spl`)
+        if Builtin::is_builtin(name) {
+            return Err(self.error_hint(
+                "ILO-P011",
+                format!("`{name}` is a builtin and cannot be used as a binding name"),
+                format!(
+                    "rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn at_end(&self) -> bool {
         self.pos >= self.tokens.len()
     }
@@ -3176,6 +3218,9 @@ statement boundary; bind the chain to a local first. For example, split \
                     }
                     _ => self.expect_ident()?,
                 };
+                if name != "_" {
+                    self.check_binding_name(&name)?;
+                }
                 Ok(Pattern::Err(name))
             }
             Some(Token::Tilde) => {
@@ -3187,6 +3232,9 @@ statement boundary; bind the chain to a local first. For example, split \
                     }
                     _ => self.expect_ident()?,
                 };
+                if name != "_" {
+                    self.check_binding_name(&name)?;
+                }
                 Ok(Pattern::Ok(name))
             }
             Some(Token::Underscore) => {
@@ -3244,6 +3292,9 @@ statement boundary; bind the chain to a local first. For example, split \
                     }
                     _ => self.expect_ident()?,
                 };
+                if binding != "_" {
+                    self.check_binding_name(&binding)?;
+                }
                 Ok(Pattern::TypeIs { ty, binding })
             }
             // `Tag(binding):` — named-sum variant pattern with optional payload binding
@@ -3259,6 +3310,9 @@ statement boundary; bind the chain to a local first. For example, split \
                         _ => self.expect_ident()?,
                     };
                     self.expect(&Token::RParen)?;
+                    if b != "_" {
+                        self.check_binding_name(&b)?;
+                    }
                     Some(b)
                 } else {
                     None
@@ -3277,6 +3331,7 @@ statement boundary; bind the chain to a local first. For example, split \
     fn parse_foreach(&mut self) -> Result<Stmt> {
         self.expect(&Token::At)?;
         let binding = self.expect_ident()?;
+        self.check_binding_name(&binding)?;
         // Range bounds accept any expression form: literals, idents, prefix
         // binops (`+i 2`), unary minus (`-n 1`), and call forms (`len xs`,
         // `at ys 0`). Call args greedily stop at `..` and `{` because neither
@@ -12751,5 +12806,97 @@ mod tests {
             panic!()
         };
         assert!(effect_set.is_none());
+    }
+
+    // ---- ILO-455: reserved-name diagnostic at all binding sites ----
+
+    #[test]
+    fn foreach_builtin_iter_var_fires_p011() {
+        // `@map xs{1}` — `map` is a builtin; foreach iter-var must reject it
+        let (_, errors) = parse_str_errors("f xs:l>n;@map xs{1}");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for foreach builtin binding");
+        assert!(
+            e.message.contains("`map` is a builtin"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn foreach_reserved_iter_var_fires_p011() {
+        // `@brk xs{1}` — `brk` is reserved for break
+        let (_, errors) = parse_str_errors("f xs:l>n;@brk xs{1}");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for foreach brk binding");
+        assert!(
+            e.message.contains("`brk`"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn foreach_alias_iter_var_fires_p011() {
+        // `@head xs{1}` — `head` is an alias for `hd`
+        let (_, errors) = parse_str_errors("f xs:l>n;@head xs{1}");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for foreach alias binding");
+        assert!(
+            e.message.contains("`head` is an alias"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn match_ok_capture_builtin_fires_p011() {
+        // `~map:map` in a match arm — `map` is a builtin, must not bind it
+        let (_, errors) = parse_str_errors("f x:n>n;?x{~map:map}");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for match ~map capture");
+        assert!(
+            e.message.contains("`map` is a builtin"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn match_err_capture_builtin_fires_p011() {
+        // `^map:map` in a match arm — same but err-arm
+        let (_, errors) = parse_str_errors("f x:n>n;?x{^map:map}");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for match ^map capture");
+        assert!(
+            e.message.contains("`map` is a builtin"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn match_type_is_capture_builtin_fires_p011() {
+        // `n map:map` type-is pattern — binding name `map` is a builtin
+        let (_, errors) = parse_str_errors("f x:n>n;?x{n map:map}");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for type-is pattern builtin binding");
+        assert!(
+            e.message.contains("`map` is a builtin"),
+            "message: {}",
+            e.message
+        );
     }
 }
