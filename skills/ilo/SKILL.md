@@ -28,7 +28,7 @@ This file is a thin bootstrap. The rich, version-matched ilo skill content is se
 2. Get a specific skill: `ilo skill get <name>`
 3. JSON envelope: `ilo skill list --json`
 
-Every skill subcommand accepts `--json`. The envelope is `{schemaVersion: 1, ...}`, matching the rest of ilo's CLI JSON contract.
+Every skill subcommand accepts `--json` (short alias `-j`, ILO-442). The envelope is `{schemaVersion: 1, ...}`, matching the rest of ilo's CLI JSON contract. `-j` works on every CLI subcommand — `ilo check -j`, `ilo spec -j ai`, `ilo run -j`, etc.
 
 ## Available skills
 
