@@ -126,11 +126,11 @@ impl HttpBackend for NativeHttpBackend {
 #[cfg(target_arch = "wasm32")]
 pub struct WasmFetchBackend;
 
-/// Raw host imports.  The host (browser, Deno, Cloudflare Workers, a custom
-/// wasmtime host) must provide these under module `"ilo_http"`.
+// Raw host imports.  The host (browser, Deno, Cloudflare Workers, a custom
+// wasmtime host) must provide these under module `"ilo_http"`.
 #[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "ilo_http")]
-extern "C" {
+unsafe extern "C" {
     /// Issue an HTTP GET.  Returns a response handle (0 = transport error).
     fn ilo_http_get(url_ptr: *const u8, url_len: usize, hdr_ptr: *const u8, hdr_len: usize) -> u32;
 

@@ -4,6 +4,14 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+## 26.5 — 2026-05-23
+
+**First CalVer release.** The versioning scheme shifts from semver to CalVer (`YY.M`, e.g. `26.5`; patches `YY.M.P`). The version string now carries recency so an agent loading `ilo spec --json ai` knows which spec applies from the version alone, no changelog lookup needed. Token-conservative (manifesto principle 1) vs semver's `0.12.1`. Last semver release was `0.12.1`; there is no `0.13.x`. Branching model splits: `main` carries stable + patch tags (`26.5`, `26.5.1`, `26.5.1-dev.N`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
+
+The optional file version pragma (`^26.5` on the first line of a `.ilo` file) ships with this cut. Absent pragma silently assumes the latest installed runtime, so existing 0.x files keep verifying as-is.
+
+This release also carries everything that had queued under `Unreleased` since 0.12.1: the run-family overhaul, language additions (`_=expr`, `\xNN` escapes, file version pragma), the builtin batch (`idxof`, `matvec`, `lstsq`, `OP_TAILCALL`, `jpar-list`, `get-to`/`pst-to`, `tz-offset`, `run2`, `rgxall-multi`, `fmod`, `dtparse-rel`, `dur-parse`/`dur-fmt`), the cascade-dedup diagnostic overhaul, and the `find_libilo_a` worktree-friendly target-dir lookup. Detail entries follow.
+
 ### Added
 
 - **run-family overhaul (ILO-35).** Three new process-spawn shapes for 0.13.0:
@@ -21,7 +29,6 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 ### Changed
 
 - `find_libilo_a` (AOT linker helper in `src/vm/compile_cranelift.rs`) now honours `CARGO_TARGET_DIR` and `.cargo/config.toml`'s `build.target-dir` before falling back to `$CARGO_MANIFEST_DIR/target`. Fix worktrees that redirect cargo's target dir out of the tree (e.g. `[build] target-dir = "/tmp/ilo-targets/..."`) no longer need a `ln -sf .../release/libilo.a target/release/libilo.a` workaround for the AOT tests to find the staticlib. Test-infrastructure only; no user-visible change to `ilo compile`.
-- Versioning scheme: semver → CalVer. Releases are `YY.M` (e.g. `26.5`), patches `YY.M.P` (e.g. `26.5.1`). The version string carries recency so an agent loading `ilo spec --json ai` knows which spec applies without a changelog lookup. Last semver release is `0.12.1`; first CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. Branching model splits: `main` carries stable + RC tags (`26.5`, `26.5.1`, `26.5.2-rc.1`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
 
 ### Added
 

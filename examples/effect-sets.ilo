@@ -25,4 +25,4 @@ lookup id:n>R n t ^not-found|invalid
 -- run: parse-positive "3"
 -- out: 3
 -- run: parse-positive "-1"
--- out: nil
+-- err: ^invalid
