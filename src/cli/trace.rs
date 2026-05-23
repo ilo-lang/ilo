@@ -98,7 +98,12 @@ fn trace_run(t: TraceArgs) -> i32 {
     // --watch filter: only emit events whose bindings touch one of the named vars.
     let watch = t.watch.clone();
     let emit = move |ev: TraceEvent| {
-        if !watch.is_empty() && !ev.bindings.iter().any(|(n, _)| watch.iter().any(|w| w == n)) {
+        if !watch.is_empty()
+            && !ev
+                .bindings
+                .iter()
+                .any(|(n, _)| watch.iter().any(|w| w == n))
+        {
             return;
         }
         emit_event(ev);
