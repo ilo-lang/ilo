@@ -2427,6 +2427,8 @@ For a program whose entry function returns a Result, the `~`/`^` wrapper is spli
 
 In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / `{"schemaVersion": 1, "error": {...}}`) and emitted to stdout; exit codes match the plain-mode table. The `schemaVersion` field was added in 0.12.1 to every CLI `--json` envelope (`run`, `graph`, `--ast`, `serv`, `tools --json`, `spec --json`) so agents can route on a single field across every command. See `JSON_OUTPUT.md` for the full audit table.
 
+**`-j` short alias (ILO-442).** Every subcommand that accepts `--json` also accepts the `-j` short form with identical behaviour: `ilo check -j file.ilo`, `ilo run -j 'code'`, `ilo spec -j ai`, `ilo skill -j list`, `ilo tools -j --mcp m.json`, `ilo version -j`, `ilo explain -j ILO-T001`, `ilo build -j prog.ilo`, etc. Manifesto P6 (every subcommand has `--json`) plus terser invocations for agent prompts.
+
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) - only the top-level program-return print path is split.
 
 The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
@@ -2451,7 +2453,7 @@ ilo 'code' [args...]            -- inline program; default-runs the entry functi
 ilo program.ilo [func] [args]   -- if `func` is omitted and the file declares exactly
                                    one function, that function runs automatically
 ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positional
-ilo check program.ilo [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
+ilo check program.ilo [--json|-j] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
 ilo test [path] [--engine vm|jit|all]  -- run `-- run:` / `-- out:` / `-- err:` assertions in .ilo files (exit 0 on all-pass, 1 on any failure)
 ilo build program.ilo -o out     -- AOT compile to a standalone binary (alias for `compile`)
 ilo run program.ilo --emit js    -- transpile to JavaScript and print to stdout (PR #713, ILO-73)

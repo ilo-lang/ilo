@@ -417,7 +417,7 @@ fn tools_cmd(args: &[String]) -> i32 {
                 fmt = ToolsOutputFmt::Ilo;
                 i += 1;
             }
-            "--json" => {
+            "--json" | "-j" => {
                 fmt = ToolsOutputFmt::Json;
                 i += 1;
             }

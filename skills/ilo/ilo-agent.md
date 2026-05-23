@@ -18,7 +18,9 @@ ilo skill show <name>           content with header
 
 Eight skills: `ilo-language`, `ilo-builtins`, `ilo-errors`, `ilo-tools`, `ilo-engines`, `ilo-agent`, `ilo-examples`, `ilo-edit-loop`. Load only what the task needs.
 
-Every skill subcommand accepts `--json`. `ilo skill list --json` returns `{schemaVersion, skills: [{name, description, path}]}`. `ilo -ai` emits the full concatenated spec for back-compat.
+Every skill subcommand accepts `--json` (short alias `-j`, ILO-442). `ilo skill list --json` returns `{schemaVersion, skills: [{name, description, path}]}`. `ilo -ai` emits the full concatenated spec for back-compat.
+
+`-j` is a universal short alias for `--json` on every subcommand: `ilo check -j file.ilo`, `ilo run -j 'code'`, `ilo spec -j ai`, `ilo tools -j --mcp m.json`, `ilo build -j prog.ilo`, etc. Terser invocations for agent prompts; identical behaviour to `--json`.
 
 ## Running
 

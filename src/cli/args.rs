@@ -314,7 +314,7 @@ pub struct ToolsArgs {
     pub ilo: bool,
 
     /// Shorthand: --json.
-    #[arg(long)]
+    #[arg(long, short = 'j')]
     pub json: bool,
 
     /// Show full signatures.
