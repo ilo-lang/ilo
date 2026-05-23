@@ -865,11 +865,12 @@ fn with_field_type_mismatch() {
 }
 
 #[test]
-#[ignore = "ILO-368: diagnostic code collision - verify.rs emits ILO-T044 (registered for World/net caps) for 'with cannot add new field'; needs a fresh code reassignment in the registry, out of 26.5 scope"]
 fn with_anon_record_new_field_rejected() {
-    // ILO-368: `with` on an anonymous record must not add new fields
+    // ILO-368: `with` on an anonymous record must not add new fields.
+    // Diagnostic is ILO-T046 (reassigned in 26.5; T044 was registered for
+    // World/net caps, T045 for generic bound violations).
     let src = "main>_;r={x:1 y:2};r with z:3";
-    assert_err(src, "ILO-T045", "main");
+    assert_err(src, "ILO-T046", "main");
 }
 
 #[test]

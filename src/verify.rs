@@ -6647,7 +6647,7 @@ ilo has no tuple type."
                                         ))
                                     });
                                 self.err(
-                                    "ILO-T044",
+                                    "ILO-T046",
                                     func,
                                     format!("'with' cannot add new field '{fname}' to an anonymous record"),
                                     hint,

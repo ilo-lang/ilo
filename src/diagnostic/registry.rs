@@ -1890,6 +1890,38 @@ add-one "hello"   -- ILO-T045: text does not satisfy numeric
 Fix: pass a numeric argument.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T046",
+        phase: Phase::Verify,
+        short: "'with' cannot add a new field to an anonymous record",
+        long: r#"## ILO-T046: 'with' on an anonymous record cannot add new fields
+
+`r with k:v` updates an existing field of an anonymous record `r`. It is
+not a constructor — you cannot introduce a field that was not present in
+the source value.
+
+Anonymous records (literal `{x:1 y:2}`) carry a closed field set inferred
+from the literal. `with` always returns a value of the same shape, so
+adding a field would change the type silently. The verifier catches the
+mismatch at the call site.
+
+### Example
+
+```
+main>_;r={x:1 y:2};r with z:3   -- ILO-T046: 'z' is not a field of r
+```
+
+Fix: either add the field to the source literal (`r={x:1 y:2 z:0}`),
+or build a fresh literal that contains every field you need.
+
+### Why this is a distinct code
+
+Named records (`type pt{x:n;y:n}; p=pt x:1 y:2`) carry their schema in the
+declaration, so adding an unknown field is rejected against the type
+definition with `ILO-T022`. Anonymous records have no declaration to point
+at, so the diagnostic anchors on the `with` call itself instead.
+"#,
+    },
 ];
 
 /// Look up an error entry by code (e.g. `"ILO-T005"`).
