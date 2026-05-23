@@ -22,12 +22,12 @@
 --   ilo-language:1410  ilo-builtins-core:995  ilo-builtins-math:1323
 --   ilo-builtins-io:1834  ilo-builtins-text:1114  ilo-agent:1330
 limit-for name:t>n
-  ?name{"ilo-language":1500
+  ?name{"ilo-language":1550
         "ilo-builtins-core":1060
         "ilo-builtins-math":1390
-        "ilo-builtins-io":1900
-        "ilo-builtins-text":1180
-        "ilo-agent":1395
+        "ilo-builtins-io":2550
+        "ilo-builtins-text":1300
+        "ilo-agent":1600
         _:1000}
 
 -- Ordered list of skill module names (matches Python predecessor exactly).
