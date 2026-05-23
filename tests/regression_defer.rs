@@ -94,7 +94,6 @@ fn defer_fires_on_early_ret() {
 }
 
 #[test]
-#[ignore = "ILO-defer: VM does not surface the post-defer function return value correctly on the early-ret path; tree-walker passes the parallel test. Pre-existing main breakage, out of 26.5 scope"]
 fn defer_fires_on_early_ret_vm() {
     let src = "f x:n>n\n  defer +x 0\n  =x 0{ret 7}\n  x\n";
     let r1 = run_vm(src, "f", vec![Value::Number(0.0)]);
