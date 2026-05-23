@@ -1,0 +1,17 @@
+-- Recursion: braceless guards make base cases one line.
+-- Pattern: guard(s) for base case, bind recursive call(s), combine.
+
+-- Factorial: fac(n) = n * fac(n-1), base: fac(1) = 1
+fac n:n>n;<=n 1 1;r=fac -n 1;*n r
+
+-- Fibonacci: fib(n) = fib(n-1) + fib(n-2), base: fib(n<=1) = n
+fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
+
+-- run: fac 5
+-- out: 120
+-- run: fac 10
+-- out: 3628800
+-- run: fib 0
+-- out: 0
+-- run: fib 10
+-- out: 55
