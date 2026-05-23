@@ -438,6 +438,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `?bool{body}` (bool-conditional) | guard `=bool true body`, braced `=bool true{body}`, ternary `?bool a b`, or match `?bool{true:a; false:b}` | `ILO-P011`  |
 | `(x:n>n;>=x 0 0;x)` (braceless guard inside lambda) | `(x:n>n;?>=x 0 0 x)` (prefix ternary) or `(x:n>n;?>=x 0{0}{x})` (braced match) | `ILO-P023` |
 | `+a+" "+b+c` (infix-style chain with leading prefix `+`) | drop the leading `+`: `a+" "+b+c`; or `fmt "{} {} {}" a b c`; or nested prefix `+a +" " +b c`; or bind intermediates | `ILO-P010` |
+| `fmt "{}" +0.1 0.2` -> `0.30000000000000004` (float Display = full IEEE 754) | `fmt "{:.2f}" (+0.1 0.2)` for human-readable; `fmt2 v N` for precise dp | docs only |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
@@ -1011,6 +1012,8 @@ Called like functions, compiled to dedicated opcodes.
 | `fft xs` | discrete FFT: real samples → `L [re, im]`; zero-padded to next power of 2 | `L (L n)` |
 | `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
 | `fmt2 x digits` | format number `x` to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Compose with `fmt` for template + precision: `fmt "x={}" (fmt2 v 2)` | `t` |
+
+> **Float `{}` = full IEEE 754 precision.** `fmt "{}" v` on a non-integer float emits the shortest round-trip representation: `fmt "GC={}" 0.54166666 ` -> `"GC=0.54166666"`, `fmt "{}" +0.1 0.2` -> `"0.30000000000000004"`. For human-readable output use a precision spec (`fmt "GC={:.2f}%" pct` -> `"GC=54.17%"`, `fmt "{:.4f}" 3.14159` -> `"3.1416"`) or compose `fmt2` (`fmt "x={}" (fmt2 v 6)`). Integer-valued floats render without a decimal point (`fmt "{}" 2.0` -> `"2"`), so the trap only fires on non-integer values. This is intentional and language-stable — every `-- out:` annotation and golden test in the repo depends on it; changing the default would silently invalidate them.
 
 > **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine - nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
 
