@@ -694,10 +694,14 @@ Scope (deliberately tight to keep the surface predictable):
 - Only single-identifier slots matching the ident regex
   (`[a-z][a-z0-9]*(-[a-z0-9]+)*`). `{a-b}` works; `{Foo}`, `{x + 1}`,
   `{ }` pass through verbatim.
-- `{{` / `}}` escape to literal `{` / `}`, but only inside strings that
-  actually contain at least one `{ident}` slot. Strings with no
-  interpolation slot keep `{{` / `}}` verbatim so existing programs
-  (e.g. JSON templates) are not silently rewritten.
+- `{{` / `}}` escape to literal `{` / `}` in **every** double-quoted
+  string literal (Rust `format!` / Python `str.format` convention). The
+  agent always has a way to emit a literal `{` or `}` without dropping
+  to `chr 123` + concat.
+- A lone unmatched `{` or `}` in a string literal is a parse error
+  (`ILO-P024`) whose hint points at `{{` / `}}` as the canonical escape.
+  Matched but non-ident `{...}` (e.g. `{Foo}`, `{x+1}`) still passes
+  through verbatim so existing `fmt` templates keep working.
 - Bare `{}` keeps its existing meaning as a positional placeholder filled
   by trailing args of the enclosing `fmt` call.
 - Mixing `{ident}` and bare `{}` in the same string is left verbatim:

@@ -1226,7 +1226,10 @@ fn jpth_missing_key_returns_err() {
 
 #[test]
 fn jpth_invalid_json() {
-    let src = "main>t;r=jpth \"{bad\" \"a\";?r{~v:v;^_:\"err\"}";
+    // ILO-470: lone `{` in a string literal is now a parse error
+    // (ILO-P024). Build the malformed JSON via `fmt` with the `{{` escape
+    // so the runtime path through `jpth` still gets exercised.
+    let src = "main>t;r=jpth (fmt \"{{bad\") \"a\";?r{~v:v;^_:\"err\"}";
     assert_eq!(ok_out(src, "main", &[]), "err");
 }
 
@@ -1639,7 +1642,8 @@ fn rdb_csv_string() {
 
 #[test]
 fn rdb_invalid_json() {
-    let src = "main>t;r=rdb \"{nope\" \"json\";?r{~_:\"ok\";^_:\"err\"}";
+    // ILO-470: lone `{` is rejected at parse time; use `{{` escape.
+    let src = "main>t;r=rdb (fmt \"{{nope\") \"json\";?r{~_:\"ok\";^_:\"err\"}";
     assert_eq!(ok_out(src, "main", &[]), "err");
 }
 

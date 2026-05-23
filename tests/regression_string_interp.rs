@@ -209,18 +209,79 @@ fn plain_string_unchanged() {
     }
 }
 
-// ── 9) String with `{{` / `}}` but no `{ident}` keeps braces verbatim ──────
+// ── 9) `{{` / `}}` collapse to literal `{` / `}` in every string ───────────
 //
-// Non-interpolated strings (no `{ident}` slot) are not touched by the
-// desugar. This guards against silently changing semantics for programs
-// that build JSON / config text containing literal `{{`/`}}` (rare but
-// existed before this PR).
+// ILO-470: `{{` and `}}` are the escape for a literal `{` and `}` in any
+// string literal, not only ones that already contain a `{ident}` slot.
+// Without this escape an agent has no way to emit a literal `{` short of
+// `chr 123` + concat.
 
 #[test]
-fn double_brace_without_ident_unchanged() {
+fn double_brace_without_ident_collapses() {
     let src = "f>t;\"{{bad}}\"";
     for engine in ENGINES {
-        assert_eq!(run_ok(engine, src, "f", &[]), "{{bad}}", "engine={engine}");
+        assert_eq!(run_ok(engine, src, "f", &[]), "{bad}", "engine={engine}");
+    }
+}
+
+#[test]
+fn double_brace_left_alone_literal() {
+    // Literal `{` without interpolation context.
+    let src = "f>t;\"hello {{world}}\"";
+    for engine in ENGINES {
+        assert_eq!(
+            run_ok(engine, src, "f", &[]),
+            "hello {world}",
+            "engine={engine}"
+        );
+    }
+}
+
+#[test]
+fn double_brace_mixed_with_interpolation() {
+    // ILO-470 AC 2: mixing `{x}` with `{{y}}`.
+    let src = "f x:n>t;fmt \"a {x} b {{y}} c\"";
+    for engine in ENGINES {
+        assert_eq!(
+            run_ok(engine, src, "f", &["1"]),
+            "a 1 b {y} c",
+            "engine={engine}"
+        );
+    }
+}
+
+#[test]
+fn double_brace_around_interpolation() {
+    // ILO-470 AC 4: `"{{ {x} }}"` -> `"{ 1 }"`.
+    let src = "f x:n>t;fmt \"{{ {x} }}\"";
+    for engine in ENGINES {
+        assert_eq!(run_ok(engine, src, "f", &["1"]), "{ 1 }", "engine={engine}");
+    }
+}
+
+// ── Lone unmatched braces diagnose with ILO-P024 ───────────────────────────
+
+#[test]
+fn lone_open_brace_diagnoses() {
+    let src = "f>t;\"raw { only\"";
+    for engine in ENGINES {
+        let s = run_err(engine, src, "f", &[]);
+        assert!(
+            s.contains("ILO-P024") && s.contains("{{"),
+            "engine={engine}: expected ILO-P024 mentioning `{{{{`, got: {s}"
+        );
+    }
+}
+
+#[test]
+fn lone_close_brace_diagnoses() {
+    let src = "f>t;\"raw } only\"";
+    for engine in ENGINES {
+        let s = run_err(engine, src, "f", &[]);
+        assert!(
+            s.contains("ILO-P024") && s.contains("}}"),
+            "engine={engine}: expected ILO-P024 mentioning `}}}}`, got: {s}"
+        );
     }
 }
 
