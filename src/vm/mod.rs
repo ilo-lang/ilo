@@ -961,6 +961,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // the bridge lets VM and Cranelift produce the handle without a new
         // opcode. ForEach in the tree interpreter drains it one line at a time.
         (Builtin::ForLine, 1) => true,
+        // HTTP streaming client (ILO-46). Same opaque-return story as ForLine:
+        // returns a LazyHttpLines handle that ForEach drains one line at a time.
+        // Tree-bridged at zero opcode cost; no register-engine native opcodes.
+        (Builtin::GetStream, 1) => true,
+        (Builtin::GetStreamH, 2) => true,
+        (Builtin::PostStream, 2) => true,
+        (Builtin::PostStreamH, 3) => true,
         // par-map fn xs / par-map fn xs n — general parallel fan-out.
         // Takes a FnRef arg, so the tree interpreter handles the worker-thread
         // dispatch and user-fn callbacks. VM and Cranelift bail to the tree
@@ -7698,6 +7705,12 @@ enum HeapObj {
     /// The Arc makes this cheaply cloneable; the Mutex enables interior
     /// mutability across the VM's ownership model.
     LazyStdinLines(crate::interpreter::StdinLinesHandle),
+    /// Lazy HTTP-response line iterator — produced by `get-stream` /
+    /// `pst-stream` (ILO-46 client side). Same drain-on-iterate semantics as
+    /// `LazyStdinLines`; the VM's OP_FOREACH pulls one line per chunk-line
+    /// without converting to a List first. Tree-bridged because the value
+    /// is opaque to the register engines.
+    LazyHttpLines(crate::interpreter::HttpLinesHandle),
 }
 
 impl Drop for HeapObj {
@@ -7734,8 +7747,8 @@ impl Drop for HeapObj {
                     v.drop_rc();
                 }
             }
-            HeapObj::LazyStdinLines(_) => {
-                // The Arc inside StdinLinesHandle is cheaply dropped (refcount decrement).
+            HeapObj::LazyStdinLines(_) | HeapObj::LazyHttpLines(_) => {
+                // The Arc inside the handle is cheaply dropped (refcount decrement).
                 // No NanVal children to drop_rc.
             }
         }
@@ -7780,7 +7793,7 @@ fn materialize_list_view(v: NanVal) -> NanVal {
         // Tag-checked above, so unreachable for these variants. Closure and
         // LazyStdinLines share TAG_LIST but are not list-shaped — materialize
         // is a no-op for them.
-        HeapObj::Closure { .. } | HeapObj::LazyStdinLines(_) => v,
+        HeapObj::Closure { .. } | HeapObj::LazyStdinLines(_) | HeapObj::LazyHttpLines(_) => v,
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
@@ -7839,7 +7852,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         | HeapObj::OkVal(_)
         | HeapObj::ErrVal(_)
         | HeapObj::Closure { .. }
-        | HeapObj::LazyStdinLines(_) => {
+        | HeapObj::LazyStdinLines(_)
+        | HeapObj::LazyHttpLines(_) => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -7874,7 +7888,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
                 | HeapObj::OkVal(_)
                 | HeapObj::ErrVal(_)
                 | HeapObj::Closure { .. }
-                | HeapObj::LazyStdinLines(_) => {
+                | HeapObj::LazyStdinLines(_)
+                | HeapObj::LazyHttpLines(_) => {
                     debug_assert!(false, "ListView::src does not reference HeapObj::List");
                     &[]
                 }
@@ -8007,6 +8022,12 @@ impl NanVal {
 
     fn heap_stdin_lines(handle: crate::interpreter::StdinLinesHandle) -> Self {
         let rc = Rc::new(HeapObj::LazyStdinLines(handle));
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
+    }
+
+    fn heap_http_lines(handle: crate::interpreter::HttpLinesHandle) -> Self {
+        let rc = Rc::new(HeapObj::LazyHttpLines(handle));
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
@@ -8262,6 +8283,12 @@ impl NanVal {
                 // Wrap the lazy stdin handle in a HeapObj so the VM's OP_FOREACH
                 // can drain it one line at a time without buffering.
                 NanVal::heap_stdin_lines(handle.clone())
+            }
+            Value::LazyHttpLines(handle) => {
+                // Wrap the lazy HTTP-response handle in a HeapObj so the VM's
+                // OP_FOREACH can drain it one line at a time without buffering
+                // the response body.
+                NanVal::heap_http_lines(handle.clone())
             }
             Value::World {
                 net,
@@ -8520,6 +8547,7 @@ impl NanVal {
                         // Round-trip the lazy handle back to Value::LazyStdinLines.
                         Value::LazyStdinLines(handle.clone())
                     }
+                    HeapObj::LazyHttpLines(handle) => Value::LazyHttpLines(handle.clone()),
                 }
             },
         }
@@ -8606,6 +8634,7 @@ impl NanVal {
                             }
                         }
                         HeapObj::LazyStdinLines(handle) => Value::LazyStdinLines(handle.clone()),
+                        HeapObj::LazyHttpLines(handle) => Value::LazyHttpLines(handle.clone()),
                     }
                 }
             }
@@ -10404,6 +10433,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("index access on non-list"))
                             }
@@ -10445,6 +10475,7 @@ impl<'a> VM<'a> {
                                 | HeapObj::OkVal(_)
                                 | HeapObj::ErrVal(_)
                                 | HeapObj::LazyStdinLines(_)
+                                | HeapObj::LazyHttpLines(_)
                                 | HeapObj::Closure { .. } => {
                                     vm_err!(VmError::Type("foreach requires a list"))
                                 }
@@ -10497,6 +10528,24 @@ impl<'a> VM<'a> {
                                     Some(Ok(line)) => {
                                         reg_set!(a, NanVal::heap_string(line));
                                         ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
+                            }
+                            HeapObj::LazyHttpLines(handle) => {
+                                // Lazy HTTP response: pull the first chunk-line.
+                                match handle.next_line() {
+                                    None => {
+                                        // Empty body / connection closed before any data.
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "http-stream read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1;
                                     }
                                 }
                             }
@@ -10559,6 +10608,24 @@ impl<'a> VM<'a> {
                                     Some(Ok(line)) => {
                                         reg_set!(a, NanVal::heap_string(line));
                                         ip += 1; // skip JMP exit → stay in loop
+                                    }
+                                }
+                            }
+                            HeapObj::LazyHttpLines(handle) => {
+                                // Lazy HTTP response: pull next chunk-line.
+                                match handle.next_line() {
+                                    None => {
+                                        // Stream complete.
+                                    }
+                                    Some(Err(e)) => {
+                                        vm_err!(VmError::Runtime(format!(
+                                            "http-stream read error: {}",
+                                            e
+                                        )));
+                                    }
+                                    Some(Ok(line)) => {
+                                        reg_set!(a, NanVal::heap_string(line));
+                                        ip += 1;
                                     }
                                 }
                             }
@@ -11633,6 +11700,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("len requires string, list, or map"))
                             }
@@ -12782,6 +12850,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("has requires a list or text"))
                             }
@@ -12827,6 +12896,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("hd requires a list or text"))
                             }
@@ -12904,6 +12974,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("at requires a list or text"))
                             }
@@ -13303,6 +13374,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("tl requires a list or text"))
                             }
@@ -13410,6 +13482,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rev requires a list or text"))
                             }
@@ -13525,6 +13598,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("srt requires a list or text"))
                             }
@@ -13594,6 +13668,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rsrt requires a list or text"))
                             }
@@ -13826,6 +13901,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("slc requires a list or text"))
                             }
@@ -13882,6 +13958,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("lst requires a list"))
                             }
@@ -14037,6 +14114,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("take requires a list or text"))
                             }
@@ -14089,6 +14167,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("drop requires a list or text"))
                             }
@@ -14168,6 +14247,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 return Err(VmError::Type("+= requires a list"));
                             }
@@ -14195,6 +14275,7 @@ impl<'a> VM<'a> {
                             | HeapObj::OkVal(_)
                             | HeapObj::ErrVal(_)
                             | HeapObj::LazyStdinLines(_)
+                            | HeapObj::LazyHttpLines(_)
                             | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("+= requires a list"))
                             }
@@ -15203,6 +15284,9 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                     HeapObj::LazyStdinLines(_) => {
                         serde_json::Value::String("<stdin-lines>".to_string())
                     }
+                    HeapObj::LazyHttpLines(_) => {
+                        serde_json::Value::String("<http-lines>".to_string())
+                    }
                 }
             }
         }
@@ -15372,7 +15456,8 @@ fn nanval_truthy(v: NanVal) -> bool {
                     | HeapObj::OkVal(_)
                     | HeapObj::ErrVal(_)
                     | HeapObj::Closure { .. }
-                    | HeapObj::LazyStdinLines(_) => true,
+                    | HeapObj::LazyStdinLines(_)
+                    | HeapObj::LazyHttpLines(_) => true,
                 }
             },
         }
