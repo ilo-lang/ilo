@@ -7678,6 +7678,29 @@ mod tests {
         assert!(parse_and_verify("f xs:L n>n;s=0;@x xs{s=+s x};s").is_ok());
     }
 
+    // ILO-458: foreach over a list of records must bind the element with the
+    // list's element type, so record-field access on the binding works without
+    // any annotation. Previously a buggy walk could infer the binding as `_`
+    // and cause `e.path` to fail ILO-T018 against the user's intuition.
+    #[test]
+    fn foreach_record_list_field_access_ilo458() {
+        // `errs:L err` → `@e errs{...}` binds `e:err` → `e.path` resolves.
+        let src = "type err{path:t;code:n}\ngo errs:L err>t;@e errs{p=e.path};\"ok\"";
+        let result = parse_and_verify(src);
+        assert!(result.is_ok(), "ILO-458 regression: {result:?}");
+    }
+
+    // ILO-458 partner: a `L _` list (intentionally untyped, e.g. `jpar!`'s Ok)
+    // binds the element as `_` and `.field` access stays Unknown — no false
+    // ILO-T018 either way. The diagnostic that matters surfaces at the call
+    // site that *consumes* the field (e.g. a typed builtin), not at the `.`.
+    #[test]
+    fn foreach_unknown_list_field_access_stays_unknown_ilo458() {
+        let src = "go xs:L _>t;@e xs{p=e.path};\"ok\"";
+        let result = parse_and_verify(src);
+        assert!(result.is_ok(), "ILO-458 L _ should not error: {result:?}");
+    }
+
     #[test]
     fn foreach_on_non_list() {
         let result = parse_and_verify("f x:n>n;@i x{i};0");
