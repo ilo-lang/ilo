@@ -195,6 +195,19 @@ pub(crate) const OP_DEFER_PUSH: u8 = 191;
 //   failing defer cannot hide the real return value.
 pub(crate) const OP_DEFER_DRAIN: u8 = 192;
 
+// OP_DEFER_SCOPE_PUSH: push a scope sentinel onto the frame's defer stack.
+// No operands used.  Marks the start of a block scope (loop body, if/match arm)
+// so that OP_DEFER_SCOPE_POP can drain only the defers registered since this marker.
+pub(crate) const OP_DEFER_SCOPE_PUSH: u8 = 194;
+
+// OP_DEFER_SCOPE_POP: drain defers registered since the most recent scope sentinel.
+//   A = register holding the value being yielded from the block (used for errdefer).
+// Drains all defer entries above the innermost sentinel (LIFO), then removes
+// the sentinel.  Entries with kind=0 always fire; kind=1 fire only when R[A] is Err.
+// OP_DEFER_DRAIN (function return) still drains any remaining entries including
+// leftover sentinels from early-return paths through unclosed scopes.
+pub(crate) const OP_DEFER_SCOPE_POP: u8 = 195;
+
 // Statement-boundary trace hook (ILO-343).
 // Emitted by the compiler after each top-level statement when trace debug
 // info is available. Only fires when TRACE_HOOK is installed; otherwise it
@@ -1892,6 +1905,10 @@ struct LoopContext {
     continue_patches: Option<Vec<usize>>,
     break_patches: Vec<usize>,
     result_reg: u8,
+    /// When the loop body contains `defer`, this holds the result register to
+    /// pass to OP_DEFER_SCOPE_POP so errdefer entries can check for error exits.
+    /// `None` means no per-iteration scope push was emitted for this loop.
+    scope_defer_result_reg: Option<u8>,
 }
 
 struct RegCompiler {
@@ -2570,19 +2587,19 @@ impl RegCompiler {
                     r
                 });
 
-                // Only emit RET if the last non-OP_STMT instruction isn't already RET.
-                // OP_STMT (ILO-343) trace markers may be the last word in code;
-                // scan past them to find the real terminal.
-                let last_is_ret = self
-                    .current
-                    .code
-                    .iter()
-                    .rev()
-                    .find(|&&w| (w >> 24) as u8 != OP_STMT)
-                    .map(|&inst| (inst >> 24) as u8 == OP_RET)
-                    .unwrap_or(false);
-                if !last_is_ret {
-                    self.emit_abx(OP_RET, ret_reg, 0);
+                // Emit a final return unless the last statement was itself an
+                // unconditional return / break / continue (signalled by result=None).
+                //
+                // The old heuristic scanned backwards for OP_RET, but that
+                // incorrectly matched a OP_RET inside a *conditional* braceless
+                // guard body when the guard was the last-but-one statement and
+                // the final statement produced no bytecode of its own (e.g. a bare
+                // variable reference).  Using `result.is_none()` is both simpler
+                // and correct: compile_stmt returns None only for Stmt::Return,
+                // Stmt::Break, and Stmt::Continue — all of which already emit their
+                // own OP_RET / OP_JMP (ILO-447 / early-ret return-value fix).
+                if result.is_some() {
+                    self.emit_ret(ret_reg);
                 }
 
                 self.current.reg_count = self.max_reg;
@@ -3108,6 +3125,12 @@ impl RegCompiler {
                 if let Some(else_b) = else_body {
                     // Ternary: cond{then}{else} — produce value, no early return
                     let result_reg = self.alloc_reg();
+
+                    // then-branch: scope push/pop around body if it contains defer (ILO-447).
+                    let then_has_defer = body_has_defer(body);
+                    if then_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                    }
                     let then_result = self.compile_body(body);
                     let then_reg = then_result.unwrap_or_else(|| {
                         let r = self.alloc_reg();
@@ -3115,13 +3138,21 @@ impl RegCompiler {
                         self.emit_abx(OP_LOADK, r, ki);
                         r
                     });
+                    if then_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_POP, then_reg, 0, 0);
+                    }
                     if then_reg != result_reg {
                         self.emit_abc(OP_MOVE, result_reg, then_reg, 0);
                     }
                     let jump_over_else = self.emit_jmp_placeholder();
                     self.current.patch_jump(jump);
 
+                    // else-branch: scope push/pop if it contains defer (ILO-447).
                     self.next_reg = result_reg + 1;
+                    let else_has_defer = body_has_defer(else_b);
+                    if else_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                    }
                     let else_result = self.compile_body(else_b);
                     let else_reg = else_result.unwrap_or_else(|| {
                         let r = self.alloc_reg();
@@ -3129,6 +3160,9 @@ impl RegCompiler {
                         self.emit_abx(OP_LOADK, r, ki);
                         r
                     });
+                    if else_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_POP, else_reg, 0, 0);
+                    }
                     if else_reg != result_reg {
                         self.emit_abc(OP_MOVE, result_reg, else_reg, 0);
                     }
@@ -3138,6 +3172,13 @@ impl RegCompiler {
                 } else if *braceless {
                     // Braceless guard `cond expr`: early return from the
                     // enclosing function. Emit OP_RET on the body tail.
+                    // Braceless guards are early-returns; function-level DEFER_DRAIN
+                    // handles function-scoped defers.  A defer inside a braceless
+                    // guard's tiny body is an edge case; wrap it for correctness.
+                    let bl_has_defer = body_has_defer(body);
+                    if bl_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                    }
                     let body_result = self.compile_body(body);
                     let ret_reg = body_result.unwrap_or_else(|| {
                         let r = self.alloc_reg();
@@ -3145,6 +3186,9 @@ impl RegCompiler {
                         self.emit_abx(OP_LOADK, r, ki);
                         r
                     });
+                    if bl_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_POP, ret_reg, 0, 0);
+                    }
                     self.emit_ret(ret_reg);
                     self.current.patch_jump(jump);
                     self.next_reg = saved_next;
@@ -3159,8 +3203,15 @@ impl RegCompiler {
                     let result_reg = self.alloc_reg();
                     let nil_ki = self.current.add_const(Value::Nil);
                     self.emit_abx(OP_LOADK, result_reg, nil_ki);
+                    let br_has_defer = body_has_defer(body);
+                    if br_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                    }
                     let body_result = self.compile_body(body);
                     let body_reg = body_result.unwrap_or(result_reg);
+                    if br_has_defer {
+                        self.emit_abc(OP_DEFER_SCOPE_POP, body_reg, 0, 0);
+                    }
                     if body_reg != result_reg {
                         self.emit_abc(OP_MOVE, result_reg, body_reg, 0);
                     }
@@ -3218,11 +3269,23 @@ impl RegCompiler {
                 let body_top = self.current.code.len();
 
                 // Push loop context for break/continue
+                // Emit a scope sentinel before the body if the body contains defer,
+                // so OP_DEFER_SCOPE_POP can drain per-iteration defers (ILO-447).
+                let body_has_scope_defer = body_has_defer(body);
+                if body_has_scope_defer {
+                    self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                }
+
                 self.loop_stack.push(LoopContext {
                     loop_top,
                     continue_patches: Some(Vec::new()), // foreach: patches fixed up below
                     break_patches: Vec::new(),
                     result_reg: last_reg,
+                    scope_defer_result_reg: if body_has_scope_defer {
+                        Some(last_reg)
+                    } else {
+                        None
+                    },
                 });
 
                 // Compile body
@@ -3236,8 +3299,14 @@ impl RegCompiler {
                     self.emit_abc(OP_MOVE, last_reg, br, 0);
                 }
 
-                // Patch continue jumps to the FOREACHNEXT instruction.
+                // Drain the per-iteration defer scope before advancing to next iteration.
+                // continue_target points here so `cnt` also drains before looping (ILO-447).
                 let continue_target = self.current.code.len();
+                if body_has_scope_defer {
+                    self.emit_abc(OP_DEFER_SCOPE_POP, last_reg, 0, 0);
+                }
+
+                // Patch continue jumps to the scope-pop / FOREACHNEXT instruction.
                 if let Some(patches) = &self.loop_stack.last().unwrap().continue_patches {
                     let patches: Vec<usize> = patches.clone();
                     for patch in patches {
@@ -3303,12 +3372,23 @@ impl RegCompiler {
                 self.emit_abc(OP_LT, cmp_reg, counter_reg, end_reg);
                 let exit_jump = self.emit_jmpf(cmp_reg);
 
+                // Emit scope sentinel for per-iteration defer (ILO-447).
+                let fr_body_has_defer = body_has_defer(body);
+                if fr_body_has_defer {
+                    self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                }
+
                 // Push loop context for break/continue
                 self.loop_stack.push(LoopContext {
                     loop_top,
                     continue_patches: Some(Vec::new()),
                     break_patches: Vec::new(),
                     result_reg: last_reg,
+                    scope_defer_result_reg: if fr_body_has_defer {
+                        Some(last_reg)
+                    } else {
+                        None
+                    },
                 });
 
                 // Compile body
@@ -3322,8 +3402,14 @@ impl RegCompiler {
                     self.emit_abc(OP_MOVE, last_reg, br, 0);
                 }
 
-                // Patch continue jumps to counter increment
+                // Drain per-iteration defer scope before advancing counter (ILO-447).
+                // continue_target points here so `cnt` also drains before looping.
                 let continue_target = self.current.code.len();
+                if fr_body_has_defer {
+                    self.emit_abc(OP_DEFER_SCOPE_POP, last_reg, 0, 0);
+                }
+
+                // Patch continue jumps to the scope-pop / counter increment.
                 if let Some(patches) = &self.loop_stack.last().unwrap().continue_patches {
                     let patches: Vec<usize> = patches.clone();
                     for patch in patches {
@@ -3359,12 +3445,30 @@ impl RegCompiler {
                 let cond_reg = self.compile_expr(condition);
                 let exit_jump = self.emit_jmpf(cond_reg);
 
-                // Push loop context for break/continue
+                // Emit scope sentinel for per-iteration defer (ILO-447).
+                let wh_body_has_defer = body_has_defer(body);
+                if wh_body_has_defer {
+                    self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+                }
+
+                // Push loop context for break/continue.
+                // For while with body-level defer, continue must drain the scope
+                // before re-evaluating the condition; we use a continue_patches vec
+                // and patch them to a scope_pop / loop_top sequence below.
                 self.loop_stack.push(LoopContext {
                     loop_top,
-                    continue_patches: None, // while: continue jumps to loop_top
+                    continue_patches: if wh_body_has_defer {
+                        Some(Vec::new())
+                    } else {
+                        None
+                    },
                     break_patches: Vec::new(),
                     result_reg: last_reg,
+                    scope_defer_result_reg: if wh_body_has_defer {
+                        Some(last_reg)
+                    } else {
+                        None
+                    },
                 });
 
                 // Compile body
@@ -3378,7 +3482,20 @@ impl RegCompiler {
                     self.emit_abc(OP_MOVE, last_reg, br, 0);
                 }
 
-                // Jump back to loop top
+                // Drain per-iteration scope and jump back (ILO-447).
+                let continue_target = self.current.code.len();
+                if wh_body_has_defer {
+                    self.emit_abc(OP_DEFER_SCOPE_POP, last_reg, 0, 0);
+                    // Patch any `cnt` jumps to arrive at the scope_pop.
+                    if let Some(patches) = &self.loop_stack.last().unwrap().continue_patches {
+                        let patches: Vec<usize> = patches.clone();
+                        for patch in patches {
+                            let offset = continue_target as isize - patch as isize - 1;
+                            let encoded = encode_abx(OP_JMP, 0, offset as i16 as u16);
+                            self.current.code[patch] = encoded;
+                        }
+                    }
+                }
                 self.emit_jump_to(loop_top);
 
                 // Exit: patch condition-false jump and all break jumps
@@ -3400,11 +3517,16 @@ impl RegCompiler {
             Stmt::Break(expr) => {
                 if let Some(ctx) = self.loop_stack.last() {
                     let result_reg = ctx.result_reg;
+                    let scope_reg = ctx.scope_defer_result_reg;
                     if let Some(e) = expr {
                         let reg = self.compile_expr(e);
                         if reg != result_reg {
                             self.emit_abc(OP_MOVE, result_reg, reg, 0);
                         }
+                    }
+                    // Drain per-iteration defer scope before breaking out (ILO-447).
+                    if let Some(sr) = scope_reg {
+                        self.emit_abc(OP_DEFER_SCOPE_POP, sr, 0, 0);
                     }
                     let jmp = self.emit_jmp_placeholder();
                     // Re-borrow mutably to push break patch
@@ -3417,8 +3539,15 @@ impl RegCompiler {
 
             Stmt::Continue => {
                 if let Some(ctx) = self.loop_stack.last() {
+                    let scope_reg = ctx.scope_defer_result_reg;
                     if ctx.continue_patches.is_some() {
-                        // Foreach: emit placeholder, patch later
+                        // Foreach/ForRange/While-with-defer: drain scope then emit placeholder.
+                        // The placeholder will be patched to the scope_pop / counter-increment.
+                        // But we emit scope_pop inline here so the JMP arrives after the
+                        // explicit scope_pop at continue_target — actually we want to jump
+                        // TO the scope_pop at continue_target so it fires for us.
+                        // Emit a plain JMP placeholder; it patches to continue_target which
+                        // includes the SCOPE_POP.
                         let jmp = self.emit_jmp_placeholder();
                         if let Some(ctx) = self.loop_stack.last_mut()
                             && let Some(patches) = ctx.continue_patches.as_mut()
@@ -3426,8 +3555,13 @@ impl RegCompiler {
                             patches.push(jmp);
                         }
                     } else {
-                        // While: jump back to loop_top (condition re-eval)
+                        // While without defer: jump back to loop_top (condition re-eval)
                         let top = ctx.loop_top;
+                        // Drain scope if needed (shouldn't happen since while-with-defer
+                        // now uses continue_patches, but guard for safety).
+                        if let Some(sr) = scope_reg {
+                            self.emit_abc(OP_DEFER_SCOPE_POP, sr, 0, 0);
+                        }
                         self.emit_jump_to(top);
                     }
                 }
@@ -3573,6 +3707,30 @@ impl RegCompiler {
         closure_reg
     }
 
+    /// Compile a match arm body, wrapping it with OP_DEFER_SCOPE_PUSH /
+    /// OP_DEFER_SCOPE_POP if the arm contains any defer statements (ILO-447).
+    /// Returns the register holding the arm's result value (possibly `result_reg`
+    /// if the body produced no register).
+    fn compile_arm_body_scoped(
+        &mut self,
+        arm_body: &[crate::ast::Spanned<Stmt>],
+        result_reg: u8,
+    ) -> u8 {
+        let arm_has_defer = body_has_defer(arm_body);
+        if arm_has_defer {
+            self.emit_abc(OP_DEFER_SCOPE_PUSH, 0, 0, 0);
+        }
+        let body_result = self.compile_body(arm_body);
+        let br = body_result.unwrap_or(result_reg);
+        if arm_has_defer {
+            self.emit_abc(OP_DEFER_SCOPE_POP, br, 0, 0);
+        }
+        if br != result_reg {
+            self.emit_abc(OP_MOVE, result_reg, br, 0);
+        }
+        result_reg
+    }
+
     fn compile_match_arms(&mut self, sub_reg: u8, result_reg: u8, arms: &[MatchArm]) {
         let mut end_jumps = Vec::with_capacity(arms.len());
 
@@ -3592,12 +3750,7 @@ impl RegCompiler {
                     self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
                     self.add_local("_", bind_reg);
 
-                    let body_result = self.compile_body(&arm.body);
-                    if let Some(br) = body_result
-                        && br != result_reg
-                    {
-                        self.emit_abc(OP_MOVE, result_reg, br, 0);
-                    }
+                    self.compile_arm_body_scoped(&arm.body, result_reg);
                     self.next_reg = saved_next;
                     self.locals.truncate(saved_locals);
                     for j in end_jumps {
@@ -3615,12 +3768,7 @@ impl RegCompiler {
                     self.emit_abc(OP_UNWRAP, bind_reg, sub_reg, 0);
                     self.add_local(binding, bind_reg);
 
-                    let body_result = self.compile_body(&arm.body);
-                    if let Some(br) = body_result
-                        && br != result_reg
-                    {
-                        self.emit_abc(OP_MOVE, result_reg, br, 0);
-                    }
+                    self.compile_arm_body_scoped(&arm.body, result_reg);
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
                 }
@@ -3634,12 +3782,7 @@ impl RegCompiler {
                     self.emit_abc(OP_UNWRAP, bind_reg, sub_reg, 0);
                     self.add_local(binding, bind_reg);
 
-                    let body_result = self.compile_body(&arm.body);
-                    if let Some(br) = body_result
-                        && br != result_reg
-                    {
-                        self.emit_abc(OP_MOVE, result_reg, br, 0);
-                    }
+                    self.compile_arm_body_scoped(&arm.body, result_reg);
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
                 }
@@ -3658,12 +3801,7 @@ impl RegCompiler {
                     self.emit_abc(OP_EQ, eq_reg, sub_reg, const_reg);
                     let skip = self.emit_jmpf(eq_reg);
 
-                    let body_result = self.compile_body(&arm.body);
-                    if let Some(br) = body_result
-                        && br != result_reg
-                    {
-                        self.emit_abc(OP_MOVE, result_reg, br, 0);
-                    }
+                    self.compile_arm_body_scoped(&arm.body, result_reg);
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
                 }
@@ -3683,12 +3821,7 @@ impl RegCompiler {
                     let bind_reg = self.alloc_reg();
                     self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
                     self.locals.push((binding.clone(), bind_reg));
-                    let body_result = self.compile_body(&arm.body);
-                    if let Some(br) = body_result
-                        && br != result_reg
-                    {
-                        self.emit_abc(OP_MOVE, result_reg, br, 0);
-                    }
+                    self.compile_arm_body_scoped(&arm.body, result_reg);
                     end_jumps.push(self.emit_jmp_placeholder());
                     self.current.patch_jump(skip);
                 }
@@ -3730,12 +3863,7 @@ impl RegCompiler {
                             self.add_local(bind_name, bind_reg);
                         }
 
-                        let body_result = self.compile_body(&arm.body);
-                        if let Some(br) = body_result
-                            && br != result_reg
-                        {
-                            self.emit_abc(OP_MOVE, result_reg, br, 0);
-                        }
+                        self.compile_arm_body_scoped(&arm.body, result_reg);
                         end_jumps.push(self.emit_jmp_placeholder());
                         self.current.patch_jump(skip);
                         let _ = type_id; // type_id used for future type-tracking
@@ -3752,12 +3880,7 @@ impl RegCompiler {
                         self.emit_abc(OP_EQ, eq_reg, sub_reg, nil_reg);
                         let skip = self.emit_jmpf(eq_reg);
 
-                        let body_result = self.compile_body(&arm.body);
-                        if let Some(br) = body_result
-                            && br != result_reg
-                        {
-                            self.emit_abc(OP_MOVE, result_reg, br, 0);
-                        }
+                        self.compile_arm_body_scoped(&arm.body, result_reg);
                         end_jumps.push(self.emit_jmp_placeholder());
                         self.current.patch_jump(skip);
                     } else {
@@ -3796,12 +3919,7 @@ impl RegCompiler {
                                     for tb in &to_body {
                                         self.current.patch_jump_to(*tb, body_pos);
                                     }
-                                    let body_result = self.compile_body(&arm.body);
-                                    if let Some(br) = body_result
-                                        && br != result_reg
-                                    {
-                                        self.emit_abc(OP_MOVE, result_reg, br, 0);
-                                    }
+                                    self.compile_arm_body_scoped(&arm.body, result_reg);
                                     end_jumps.push(self.emit_jmp_placeholder());
                                     self.current.patch_jump(skip);
                                 } else {
@@ -3819,12 +3937,7 @@ impl RegCompiler {
                                 let bind_reg = self.alloc_reg();
                                 self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
                                 self.add_local("_", bind_reg);
-                                let body_result = self.compile_body(&arm.body);
-                                if let Some(br) = body_result
-                                    && br != result_reg
-                                {
-                                    self.emit_abc(OP_MOVE, result_reg, br, 0);
-                                }
+                                self.compile_arm_body_scoped(&arm.body, result_reg);
                                 // This arm always matches — patch all end_jumps and return
                                 for j in end_jumps {
                                     self.current.patch_jump(j);
@@ -14618,6 +14731,11 @@ impl<'a> VM<'a> {
 
                     // LIFO: drain in reverse order.
                     for (callable, kind) in defers.into_iter().rev() {
+                        // Skip scope sentinels (kind==0xFF) left over from early-return
+                        // paths through unclosed block scopes (ILO-447).
+                        if kind == 0xFF {
+                            continue;
+                        }
                         let should_run = kind == 0 || (kind == 1 && is_error);
                         if !should_run {
                             callable.drop_rc();
@@ -14709,6 +14827,117 @@ impl<'a> VM<'a> {
                         ci = f.chunk_idx as usize;
                         ip = f.ip;
                         base = f.stack_base;
+                    }
+                }
+
+                // ── ILO-447: block-scope defer ────────────────────────────────────
+                OP_DEFER_SCOPE_PUSH => {
+                    // Push a sentinel entry (kind = 0xFF) to mark the start of a
+                    // block scope.  No operands are used.
+                    unsafe { self.frames.last_mut().unwrap_unchecked() }
+                        .defer_stack
+                        .push((NanVal::nil(), 0xFF));
+                }
+
+                OP_DEFER_SCOPE_POP => {
+                    // A = register holding the block-yield value (for errdefer check).
+                    // Drain all entries pushed since the innermost sentinel, LIFO,
+                    // then remove the sentinel itself.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let block_val = reg!(a);
+                    let is_error = (block_val.0 & TAG_MASK) == TAG_ERR;
+
+                    // Find the sentinel (kind == 0xFF) from the top.
+                    let sentinel_pos = {
+                        let frame = unsafe { self.frames.last().unwrap_unchecked() };
+                        frame.defer_stack.iter().rposition(|(_, k)| *k == 0xFF)
+                    };
+
+                    if let Some(pos) = sentinel_pos {
+                        // Drain entries above the sentinel in LIFO order.
+                        let defers = {
+                            let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                            frame.defer_stack.drain(pos..).collect::<Vec<_>>()
+                        };
+                        // defers[0] is the sentinel; skip it.  The rest are LIFO.
+                        for (callable, kind) in defers.into_iter().skip(1).rev() {
+                            let should_run = kind == 0 || (kind == 1 && is_error);
+                            if !should_run {
+                                callable.drop_rc();
+                                continue;
+                            }
+                            let (thunk_fn_idx, captures): (usize, Vec<NanVal>) = if callable
+                                .is_fnref()
+                            {
+                                let (_kind, id) = callable.fnref_parts();
+                                (id as usize, Vec::new())
+                            } else if callable.is_heap() && (callable.0 & TAG_MASK) == TAG_LIST {
+                                let heap = unsafe { callable.as_heap_ref() };
+                                if let HeapObj::Closure {
+                                    kind: _k,
+                                    id,
+                                    captures,
+                                } = heap
+                                {
+                                    let caps = captures.clone();
+                                    (*id as usize, caps)
+                                } else {
+                                    callable.drop_rc();
+                                    continue;
+                                }
+                            } else {
+                                callable.drop_rc();
+                                continue;
+                            };
+                            callable.drop_rc();
+
+                            let new_base = self.stack.len();
+                            let cap_count = captures.len();
+                            let reg_count = self
+                                .program
+                                .chunks
+                                .get(thunk_fn_idx)
+                                .map(|c| c.reg_count as usize)
+                                .unwrap_or(cap_count);
+                            let new_len = new_base + reg_count;
+                            {
+                                let old_len = self.stack.len();
+                                if new_len > old_len {
+                                    self.stack.reserve(new_len - old_len);
+                                    let nil = NanVal::nil();
+                                    let ptr = self.stack.as_mut_ptr();
+                                    for i in old_len..new_len {
+                                        unsafe { ptr.add(i).write(nil) };
+                                    }
+                                    unsafe { self.stack.set_len(new_len) };
+                                }
+                            }
+                            for (i, cap) in captures.into_iter().enumerate() {
+                                if !cap.is_number() {
+                                    cap.clone_rc();
+                                }
+                                unsafe {
+                                    *self.stack.as_mut_ptr().add(new_base + i) = cap;
+                                }
+                            }
+                            unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+                            self.frames.push(CallFrame {
+                                chunk_idx: thunk_fn_idx as u16,
+                                ip: 0,
+                                stack_base: new_base,
+                                result_reg: 0,
+                                defer_stack: Vec::new(),
+                            });
+                            let stop = self.frames.len() - 1;
+                            let saved_stop = self.execute_stop_depth;
+                            self.execute_stop_depth = stop;
+                            let _ = self.execute();
+                            self.execute_stop_depth = saved_stop;
+                            let f = unsafe { self.frames.last().unwrap_unchecked() };
+                            ci = f.chunk_idx as usize;
+                            ip = f.ip;
+                            base = f.stack_base;
+                        }
                     }
                 }
 
