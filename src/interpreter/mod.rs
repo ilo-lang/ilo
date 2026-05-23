@@ -14213,6 +14213,7 @@ mod tests {
             ],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         }
     }
 
@@ -14297,6 +14298,7 @@ mod tests {
             ],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let result = run(&prog, Some("a"), vec![Value::Number(1.0)]).unwrap();
         assert_eq!(

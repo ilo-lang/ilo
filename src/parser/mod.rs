@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::builtins::Builtin;
 use crate::lexer::Token;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Default cap on AST nesting depth. Borrowed from Zero (rocicorp/mono#6000)
 /// after the same "untrusted source can blow the parser stack" attack surface
@@ -113,6 +113,14 @@ pub struct Parser {
     /// suppress the cascade of `ILO-T005 undefined function 'X'` errors at
     /// every call site (the parse error already covered the root cause).
     parse_failed_fns: HashMap<String, ParseFailRef>,
+    /// Callee names recorded at parse time when a `name==expr` shape is
+    /// observed — i.e. a binding LHS ident immediately followed (no
+    /// whitespace) by the two-character `==` token. The misparse is
+    /// `name = (callee args)`, so we capture each top-level callee name
+    /// in the RHS expression for verify to consult when emitting
+    /// `ILO-T005` on those calls. See ILO-469. Diagnostic-only — we do
+    /// NOT accept `==` as a fused bind-then-equality form.
+    glued_eq_binding_sites: HashSet<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -179,6 +187,7 @@ impl Parser {
             lambda_counter: 0,
             lambda_depth: 0,
             parse_failed_fns: HashMap::new(),
+            glued_eq_binding_sites: HashSet::new(),
         }
     }
 
@@ -523,6 +532,7 @@ impl Parser {
                 declarations,
                 source: None,
                 parse_failed_fns: std::mem::take(&mut self.parse_failed_fns),
+                glued_eq_binding_sites: std::mem::take(&mut self.glued_eq_binding_sites),
             },
             errors,
         )
@@ -2421,7 +2431,18 @@ statement boundary; bind the chain to a local first. For example, split \
     }
 
     fn parse_let(&mut self) -> Result<Stmt> {
+        // Capture the LHS ident's end byte before consuming, so we can spot
+        // the `name==expr` (no-space) shape: the lexer joins `==` into a
+        // single `Token::Eq` with a 2-byte span. Glued + 2-byte span means
+        // the user wrote `name==expr` intending `name = (=expr)` (binding
+        // then prefix equality). We let it parse as a normal binding but
+        // record the RHS callee names so verify can swap in the
+        // missing-space hint on the resulting ILO-T005 (see ILO-469).
+        let lhs_end = self.peek_span().end;
         let name = self.expect_ident()?;
+        let eq_span = self.peek_span();
+        let glued_double_eq = eq_span.start == lhs_end
+            && eq_span.end.saturating_sub(eq_span.start) == 2;
         self.expect(&Token::Eq)?;
         // Friendly hint: `name={...}` is a common reach for a map-literal from
         // other languages. ilo builds maps with `mmap` + `mset`. Catch it
@@ -2439,6 +2460,11 @@ statement boundary; bind the chain to a local first. For example, split \
             ));
         }
         let value = self.parse_expr()?;
+
+        // ILO-469: record glued-`==` misparse sites for verify to hint on.
+        if glued_double_eq {
+            collect_call_callees(&value, &mut self.glued_eq_binding_sites);
+        }
 
         // Check if this is a ternary assignment: v=cond{then}{else}
         // or a conditional assignment: v=cond{body}
@@ -6971,6 +6997,24 @@ fn subject_source(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Ref(name) => Some(name.clone()),
         _ => None,
+    }
+}
+
+/// Walk a binding RHS expression and record the callee name of any `Call`
+/// found at the top level. Used by ILO-469 to mark the misparsed call sites
+/// of `name==expr` (which parses as `name = (callee ...)`) so verify can
+/// emit the missing-space hint on the resulting `ILO-T005`.
+fn collect_call_callees(expr: &Expr, out: &mut HashSet<String>) {
+    match expr {
+        Expr::Call { function, .. } => {
+            out.insert(function.clone());
+        }
+        // The intended misread shape is a single Call on the RHS, but if the
+        // RHS happened to nest (e.g. unary/Ok/Err wrapping), recurse one
+        // level to still catch the user's intended callee.
+        Expr::UnaryOp { operand, .. } => collect_call_callees(operand, out),
+        Expr::Ok(inner) | Expr::Err(inner) => collect_call_callees(inner, out),
+        _ => {}
     }
 }
 

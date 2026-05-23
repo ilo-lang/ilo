@@ -144,6 +144,11 @@ struct VerifyContext {
     ///      Without this, ONE broken function body produces N undefined-
     ///      function errors (one per call site), burying the root cause.
     parse_failed_fns: HashMap<String, ParseFailRef>,
+    /// Callee names sourced from `Program.glued_eq_binding_sites`. When
+    /// `ILO-T005` would fire on one of these names, we swap in a hint
+    /// recommending the spaced form `name = =expr` (binding then prefix
+    /// equality) instead of the generic call-vs-binop nudge — see ILO-469.
+    glued_eq_binding_sites: std::collections::HashSet<String>,
     /// Tracks which parse-failed function names we've already emitted the
     /// collapsed `ILO-T005` cross-reference for, so call sites #2..N stay
     /// silent. Reset per `verify()` call (lives on VerifyContext).
@@ -593,6 +598,37 @@ fn call_vs_binop_hint(callee: &str, args: &[Expr]) -> Option<String> {
         write `+{callee} {arg_src}` (add), `-{callee} {arg_src}` (subtract), `*{callee} {arg_src}` (multiply), or `/{callee} {arg_src}` (divide). \
         See ILO-T005 `--explain` for the call-vs-binop gotcha."
     ))
+}
+
+/// ILO-469 hint: the user wrote `name==expr` (no space) intending
+/// `name = (expr == ...)` — binding then prefix equality. The lexer joined
+/// `==` into one `Token::Eq`, so the parser read it as binding `name = ...`
+/// and the RHS `q ""` parsed as a call on `q`. Recommend the canonical
+/// spaced form `name = =q expr` (binding LHS, space, prefix-equality
+/// operator, operands).
+fn glued_double_eq_hint(callee: &str, args: &[Expr]) -> String {
+    // Render up to two args' surface text for a readable rewrite example.
+    let arg_src: Vec<String> = args
+        .iter()
+        .take(2)
+        .map(|a| match a {
+            Expr::Literal(Literal::Number(n)) => format!("{n}"),
+            Expr::Literal(Literal::Text(t)) => format!("\"{t}\""),
+            Expr::Literal(Literal::Bool(b)) => b.to_string(),
+            Expr::Ref(n) => n.clone(),
+            _ => "...".to_string(),
+        })
+        .collect();
+    let rendered_args = if arg_src.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", arg_src.join(" "))
+    };
+    format!(
+        "looks like `<name>==<expr>` written without a space — `==` lexed as one token, so this parsed as a binding `<name> = ({callee}{rendered_args})`. \
+        If you meant binding-then-equality, add the missing space: `<name> = ={callee}{rendered_args}` (single `=` for the binding, then prefix `=a b` for equality). \
+        ilo does not fuse `==` into a single binding+equality token."
+    )
 }
 
 fn closest_match<'a>(name: &str, candidates: impl Iterator<Item = &'a String>) -> Option<String> {
@@ -4400,6 +4436,7 @@ impl VerifyContext {
             errors: Vec::new(),
             in_loop: false,
             parse_failed_fns: HashMap::new(),
+            glued_eq_binding_sites: std::collections::HashSet::new(),
             suppressed_undef_reported: std::collections::HashSet::new(),
         }
     }
@@ -6208,10 +6245,17 @@ impl VerifyContext {
                             Some(span),
                         );
                     } else {
-                        let suggestion = call_vs_binop_hint(callee, args).unwrap_or_else(|| {
-                            format!(
-                                "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
-                            )
+                        let suggestion = if self.glued_eq_binding_sites.contains(callee) {
+                            Some(glued_double_eq_hint(callee, args))
+                        } else {
+                            None
+                        }
+                        .unwrap_or_else(|| {
+                            call_vs_binop_hint(callee, args).unwrap_or_else(|| {
+                                format!(
+                                    "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
+                                )
+                            })
                         });
                         self.err(
                             "ILO-T005",
@@ -6267,9 +6311,13 @@ impl VerifyContext {
                     for (n, _, _) in BUILTINS {
                         candidates.push(n.to_string());
                     }
-                    let hint = closest_match(callee, candidates.iter())
-                        .map(|s| format!("did you mean '{s}'?"))
-                        .or_else(|| call_vs_binop_hint(callee, args));
+                    let hint = if self.glued_eq_binding_sites.contains(callee) {
+                        Some(glued_double_eq_hint(callee, args))
+                    } else {
+                        closest_match(callee, candidates.iter())
+                            .map(|s| format!("did you mean '{s}'?"))
+                            .or_else(|| call_vs_binop_hint(callee, args))
+                    };
                     self.err(
                         "ILO-T005",
                         func,
@@ -7399,6 +7447,7 @@ pub fn verify(program: &Program) -> VerifyResult {
 pub fn verify_with_effects(program: &Program, show_effects: bool) -> VerifyResult {
     let mut ctx = VerifyContext::new();
     ctx.parse_failed_fns = program.parse_failed_fns.clone();
+    ctx.glued_eq_binding_sites = program.glued_eq_binding_sites.clone();
 
     // Phase 1: collect declarations
     ctx.collect_declarations(program);
@@ -8852,6 +8901,7 @@ mod tests {
             ],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -8898,6 +8948,7 @@ mod tests {
             ],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -8947,6 +8998,7 @@ mod tests {
             ],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -11215,6 +11267,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let result = verify(&prog);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -11465,6 +11518,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let result = verify(&prog);
         // Should not panic; the Unknown binding is just a permissive fallback
@@ -11489,6 +11543,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -11528,6 +11583,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -12417,6 +12473,62 @@ mod tests {
             t047[0].message.contains("braceless guard"),
             "message should mention 'braceless guard': {}",
             t047[0].message
+        );
+    }
+
+    // ---- ILO-469: glued `==` binding hint ----
+
+    #[test]
+    fn ilo_469_glued_double_eq_emits_hint() {
+        // `wc==q ""` (no space) parses as `wc = (q "")` — a call on `q` with
+        // arg `""`. The binding-then-equality misparse must surface T005 *with*
+        // the new spaced-form hint pointing at `wc = =q ""`.
+        let result = parse_and_verify_full(r#"main>n;q="hello";wc==q "";0"#);
+        let t005: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| e.code == "ILO-T005")
+            .collect();
+        assert_eq!(t005.len(), 1, "expected one ILO-T005, got {:?}", result.errors);
+        let hint = t005[0]
+            .hint
+            .as_ref()
+            .expect("ILO-T005 should carry the ILO-469 spaced-form hint");
+        assert!(
+            hint.contains("without a space") && hint.contains("=q"),
+            "hint should explain missing space and show spaced rewrite `=q ...`: {hint}"
+        );
+    }
+
+    #[test]
+    fn ilo_469_spaced_form_parses_and_verifies_cleanly() {
+        // Canonical rewrite `wc = =q ""` (binding LHS, then prefix equality)
+        // must parse and verify with no errors — guards against the hint
+        // being a false positive on the actual fix shape.
+        let result = parse_and_verify_full(r#"main>n;q="hello";wc = =q "";0"#);
+        assert!(
+            result.errors.is_empty(),
+            "spaced form should verify cleanly: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn ilo_469_unrelated_t005_keeps_generic_hint() {
+        // A T005 on a callee that was NOT recorded as a glued-`==` site must
+        // still get the existing call-vs-binop hint, not the ILO-469 hint —
+        // detector must only fire when the `=` was glued to the prior ident.
+        let result = parse_and_verify_full(r#"main>n;q=5;q 3"#);
+        let t005: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| e.code == "ILO-T005")
+            .collect();
+        assert_eq!(t005.len(), 1);
+        let hint = t005[0].hint.as_ref().expect("T005 should have a hint");
+        assert!(
+            !hint.contains("without a space"),
+            "ILO-469 hint must not fire on plain call-vs-binop sites: {hint}"
         );
     }
 

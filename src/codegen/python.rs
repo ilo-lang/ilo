@@ -2249,6 +2249,7 @@ mod tests {
             }],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         let py = emit(&prog);
         assert!(
@@ -2329,6 +2330,7 @@ mod tests {
             declarations: vec![],
             source: None,
             parse_failed_fns: Default::default(),
+            glued_eq_binding_sites: Default::default(),
         };
         prog.declarations.push(Decl::Use {
             path: "x.ilo".into(),
