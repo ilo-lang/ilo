@@ -870,7 +870,7 @@ Called like functions, compiled to dedicated opcodes.
 | `map fn xs` | apply `fn` to each element | `L b` |
 | `flt fn xs` | keep elements where `fn x` is true | `L a` |
 | `ct fn xs` | count elements where `fn x` is true (avoids `len (flt fn xs)`'s intermediate list alloc) | `n` |
-| `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...` | accumulator |
+| `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...`. Outer order is `fn xs init` (NOT `fn init xs` like Haskell/Python `reduce`). Lambda is `{acc el> ...}` — accumulator first, element second (NOT element-first like JS `Array.reduce`). Example: `fld {a x> +a x} [1 2 3] 0` → `6` | accumulator |
 | `flatmap fn xs` | map then flatten one level | `L b` |
 | `mapr fn xs` | map with short-circuit Result propagation: collects Ok values, returns first Err | `R (L b) e` |
 | `default-on-err r d` | unwrap `R T E` to `T`, returning `d` if Err; verifier requires `d` matches Ok type. Mirror of `??` for Result (`??` is nil-coalesce for `O T` only - use `default-on-err` for Result). Prefer over `?r{~v:v;^_:d}` when no error payload is needed. ILO-T040 when first arg is not `R T E` (hint steers at `??` only when first arg is Optional); ILO-T042 when the default's type doesn't match the Ok type; ILO-T041 when `??` is used on a Result. T041 is suppressed when the lhs type is `Unknown` (e.g. type-variable params) to avoid false positives on generic code | `T` |
