@@ -87,6 +87,27 @@ pub trait HttpBackend {
     /// Perform an HTTP POST with a text body.  Returns `Ok(body_text)` or
     /// `Err(message)`.
     fn post(&self, url: &str, body: &str, headers: &[(String, String)]) -> Result<String, String>;
+
+    /// Stream an HTTP GET response as lines (ILO-46 client side). Returns a
+    /// boxed `Iterator<Item = Result<String, String>>` that drains the body
+    /// one line at a time as bytes arrive — never buffers the full response.
+    /// Each `Ok(line)` is one chunk-line (newline stripped, trailing `\r`
+    /// trimmed for `\r\n` chunked encoding). Transport / I/O errors surface
+    /// as `Err(msg)` from the iterator; the outer `Result` only fails when
+    /// the initial connection can't be opened.
+    fn get_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>;
+
+    /// Stream an HTTP POST response as lines. Same semantics as `get_stream`.
+    fn post_stream(
+        &self,
+        url: &str,
+        body: &str,
+        headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>;
 }
 
 // ── Native backend (minreq) ───────────────────────────────────────────────────
@@ -116,6 +137,42 @@ impl HttpBackend for NativeHttpBackend {
         req.send()
             .map_err(|e| e.to_string())
             .and_then(|r| r.as_str().map(|s| s.to_owned()).map_err(|e| e.to_string()))
+    }
+
+    fn get_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>
+    {
+        let mut req = minreq::get(url);
+        for (k, v) in headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        let resp = req.send_lazy().map_err(|e| e.to_string())?;
+        // BufReader's `lines()` strips both `\n` and the trailing `\r` for
+        // `\r\n` chunked encoding, which is exactly what we want for SSE-
+        // style line consumption.
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(resp);
+        Ok(Box::new(reader.lines()))
+    }
+
+    fn post_stream(
+        &self,
+        url: &str,
+        body: &str,
+        headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>
+    {
+        let mut req = minreq::post(url).with_body(body);
+        for (k, v) in headers {
+            req = req.with_header(k.as_str(), v.as_str());
+        }
+        let resp = req.send_lazy().map_err(|e| e.to_string())?;
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(resp);
+        Ok(Box::new(reader.lines()))
     }
 }
 
@@ -195,6 +252,25 @@ impl HttpBackend for WasmFetchBackend {
         };
         read_response(handle)
     }
+
+    fn get_stream(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>
+    {
+        Err("HTTP streaming not supported on this build".to_string())
+    }
+
+    fn post_stream(
+        &self,
+        _url: &str,
+        _body: &str,
+        _headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>
+    {
+        Err("HTTP streaming not supported on this build".to_string())
+    }
 }
 
 /// Read the body from a response handle, then free it.
@@ -237,6 +313,25 @@ impl HttpBackend for StubHttpBackend {
         _headers: &[(String, String)],
     ) -> Result<String, String> {
         Err("http feature not enabled".to_string())
+    }
+
+    fn get_stream(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>
+    {
+        Err("HTTP streaming not supported on this build".to_string())
+    }
+
+    fn post_stream(
+        &self,
+        _url: &str,
+        _body: &str,
+        _headers: &[(String, String)],
+    ) -> Result<Box<dyn Iterator<Item = std::result::Result<String, std::io::Error>> + Send>, String>
+    {
+        Err("HTTP streaming not supported on this build".to_string())
     }
 }
 

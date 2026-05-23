@@ -743,6 +743,10 @@ Called like functions, compiled to dedicated opcodes.
 | `getx url headers` | as `getx`, with request headers (`M t t` map) | `R (M t _) t` |
 | `pstx url body` | HTTP POST with rich response. Same Ok-map shape as `getx`. | `R (M t _) t` |
 | `pstx url body headers` | as `pstx`, with request headers (`M t t` map) | `R (M t _) t` |
+| `get-stream url` | HTTP GET, lazy line iterator over the response body — bytes drain as they arrive, never buffered (ILO-46). Consume via `@line (get-stream url){...}`. Each iteration yields one chunk-line with the trailing newline stripped. Cap-checked via `--allow-net` before opening the connection. On WASM returns Err. Mid-stream I/O errors surface as ILO-R009. Tree + VM only (Cranelift JIT follow-up). | `L t` |
+| `get-stream-h url headers` | as `get-stream`, with request headers (`M t t` map) | `L t` |
+| `pst-stream url body` | HTTP POST that streams the response body as a lazy line iterator. Same semantics as `get-stream`. | `L t` |
+| `pst-stream-h url body headers` | as `pst-stream`, with request headers (`M t t` map) | `L t` |
 | `put url body` | HTTP PUT with text body | `R t t` |
 | `put url body headers` | HTTP PUT with body and custom headers (`M t t` map) | `R t t` |
 | `pat url body` | HTTP PATCH with text body | `R t t` |

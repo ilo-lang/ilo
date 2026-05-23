@@ -4,6 +4,10 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Added
+
+- **Client-side HTTP streaming (ILO-448).** Four new builtins that return a lazy `L t` line iterator over a chunked / SSE response body: `get-stream url`, `get-stream-h url headers`, `pst-stream url body`, `pst-stream-h url body headers`. Consume via `@line (get-stream url){...}` - one chunk-line per iteration, body never fully buffered. Cap-checked via `--allow-net` before opening the connection; mid-stream I/O errors surface as `ILO-R009 http-stream read error: ...`. WASM returns `Err`. Symmetric counterpart to the server-side `ilo httpd` + chunked transfer encoding shipped in ILO-46 / ILO-379; unblocks `ilo-lang/crew`'s per-machine agent daemon needing an SSE consumer. Tree + VM only in this release; Cranelift JIT follow-up. See `docs/streaming.md` and `examples/sse-client.ilo`.
+
 ## 26.5 — 2026-05-23
 
 **First CalVer release.** The versioning scheme shifts from semver to CalVer (`YY.M`, e.g. `26.5`; patches `YY.M.P`). The version string now carries recency so an agent loading `ilo spec --json ai` knows which spec applies from the version alone, no changelog lookup needed. Token-conservative (manifesto principle 1) vs semver's `0.12.1`. Last semver release was `0.12.1`; there is no `0.13.x`. Branching model splits: `main` carries stable + patch tags (`26.5`, `26.5.1`, `26.5.1-dev.N`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
