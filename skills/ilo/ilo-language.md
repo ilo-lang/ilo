@@ -21,6 +21,34 @@ Single-line: `f x:n>n;+x 1`. Brace-block: `f x:n>n { s=+x 1; *s s }` (same seman
 
 Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a*b)+c`; outer binds inner LEFT. Atoms/nested-ops not calls; bind first: `r=fac -n 1;*n r`. No compound `<=a b`. Glued `-n` = neg literal; bare `0 -1` errs ILO-P001. **`??` precedence**: `+a ??d b`=`a + (d ?? b)`, NOT `(a??d)+b`. For `(a??d)+b` bind first (`x=a??d;+x b`) or wrap (`+(a??d) b`).
 
+### `*/` `/*` `+-` `-+` — adjacent-prefix-pair trap (READ THIS)
+
+`*/` is **NOT** a 3-arg compound multiply-then-divide. It is two **separate** prefix ops `*` then `/`, parsed by the standard "outer binds inner LEFT" rule. So:
+
+```
+*/a b c   -- parses as  (a/b)*c   ← b is the DIVISOR (2nd arg), not the 3rd
+/*a b c   -- parses as  (a*b)/c   ← c is the divisor
++-a b c   -- parses as  (a-b)+c
+-+a b c   -- parses as  (a+b)-c
+```
+
+This is the most-asked-about gotcha in agent feedback: `*/ sz 0.3 0` looks like "scale `sz` by 0.3, then divide by 0" but actually evaluates `(sz / 0.3) * 0` — and if the second arg is `0` you get a runtime divide-by-zero from the `/`, not from the trailing `0`. The runtime fires a `hint:` diagnostic naming the parse order for all four pairs (`*/`, `/*`, `+-`, `-+`) at prefix position.
+
+To get **multiply-then-divide** `(a*b)/c` (the common percentage-scaling shape), pick one:
+
+```
+/*a b c        -- swap the prefix-pair order (terse)
+r=*a b;/r c    -- bind the product, then divide (explicit)
+```
+
+Worked example — scale `sz` by 30% with explicit divisor:
+
+```
+-- DON'T:  */ sz 0.3 100   parses as (sz / 0.3) * 100 = sz * 333.33...
+-- DO:     /*sz 0.3 100    parses as (sz * 0.3) / 100 = sz * 0.003
+-- DO:     r=*sz 0.3;/r 100
+```
+
 ## idents
 
 `[a-z][a-z0-9]*(-[a-z0-9]+)*`, short (1-3 chars). No capitals/underscores except after `.` / `.?` for JSON keys (`r.URL`). Comments `-- to EOL`; `--x` is a comment (use `- -x 1`).
