@@ -1,0 +1,30 @@
+-- get-stream url > L t — lazy HTTP-response line iterator (ILO-448).
+--
+-- Consume Server-Sent Events (or any chunked / streaming HTTP response)
+-- one line at a time. Unlike `get` (which buffers the entire body), the
+-- iterator returned by `get-stream` drains as bytes arrive, so the body
+-- is never fully buffered. Each `@line` iteration binds the next
+-- chunk-line with the trailing newline stripped (and `\r` for `\r\n`
+-- chunked encoding).
+--
+-- Companion builtins:
+--   get-stream-h url hdrs > L t          GET with custom request headers
+--   pst-stream url body > L t            POST, stream the response
+--   pst-stream-h url body hdrs > L t     POST + headers
+--
+-- Connect-time failures (cap denial, DNS, connection refused) and
+-- mid-stream I/O errors both surface as ILO-R009 from the foreach with
+-- a "http-stream read error: ..." message. The runtime shape stays
+-- `L t` either way.
+--
+-- This example connects to a local SSE endpoint and echoes each event
+-- line to stdout. It requires a running server, so there is no `-- run:`
+-- assertion. See `tests/http_streaming.rs` for runnable coverage.
+
+main>n
+  n=0
+  @line (get-stream "http://localhost:7777/events/stream") {
+    prnt line
+    n=+ n 1
+  }
+  n
