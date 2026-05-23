@@ -106,7 +106,6 @@ fn trace_missing_file_exits_nonzero() {
 // ── trace command: --depth expr ───────────────────────────────────────────────
 
 #[test]
-#[ignore = "ILO-344: --depth expr is parsed but not wired into the VM trace path; needs an OP_EXPR hook in run_with_trace"]
 fn trace_depth_expr_emits_expr_kind_events() {
     let (ok, stdout, _stderr) = run_args(&[
         "trace",
@@ -206,7 +205,6 @@ fn trace_watch_unknown_var_emits_nothing() {
 }
 
 #[test]
-#[ignore = "ILO-344: --depth expr is parsed but not wired into the VM trace path; needs an OP_EXPR hook in run_with_trace"]
 fn trace_depth_expr_watch_filters_expr_events() {
     let (ok, stdout, _stderr) = run_args(&[
         "trace",
