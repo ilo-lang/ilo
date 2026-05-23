@@ -987,6 +987,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // bridge at zero opcode cost; native dispatch is a follow-up.
         (Builtin::ParMap, 2) => true,
         (Builtin::ParMap, 3) => true,
+        // spawn fn args... > _ (ILO-477). Variadic. Tree-walker only at
+        // runtime; VM and Cranelift inherit through the bridge — the tree
+        // interpreter owns the std::thread::spawn + closure dispatch.
+        // Native register-engine support is a follow-up ticket.
+        (Builtin::Spawn, n) if n >= 1 => true,
         _ => false,
     }
 }
