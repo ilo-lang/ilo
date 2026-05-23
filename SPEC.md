@@ -315,7 +315,7 @@ The parser calls `parse_body_with` (for function bodies) and `parse_lambda_body`
 - `?x{a:1;b:2;}` and `?x{a:1;b:2}` parse identically — the trailing `;` before `}` is silently dropped.
 - A `;` at the very start of a body (before any statement) is **not** a trailing semicolon — it is a missing-statement parse error (`ILO-P001`/`ILO-P003`). Only a `;` after a valid statement is silently consumed.
 - The header/body separator `;` in `name params>return;body` is similarly optional when the token stream contains a newline at that boundary (the lexer converts indented newlines to `;`). The parser checks `peek() == Semi` and advances past it if present.
-- fn declarations are **top-level only**; for a one-off helper that needs a local, use an inline lambda. A `name params>type;body` shape inside another function's body is rejected with `ILO-P023` (ILO-460); the closure-capture variant is tracked separately.
+- fn declarations are **top-level only**; for a one-off helper that needs a local, use an inline lambda. A `name params>type;body` shape inside another function's body is rejected with `ILO-P024` (ILO-460); the closure-capture variant is tracked separately.
 
 ---
 
@@ -444,6 +444,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `?h <bool-ref> a b` (keyword form on bare ref) | `?<bool-ref> a b` (bare-bool prefix ternary) | `ILO-W003` |
 | `pred q:t>b;=q "" 1;false` (guard tail literal) | `=q "" true;false` (tail value must match declared return type) | `ILO-T008` |
 | Nested `helper x:n>n;body` inside another function body | inline lambda `helper=(x:n>n;body)` (captures locals), or lift to top-level and thread the local as an explicit param | `ILO-P023` |
+| Nested `helper x:n>n;body` inside another function body | inline lambda `helper=(x:n>n;body)` (captures locals), or lift to top-level and thread the local as an explicit param | `ILO-P024` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 

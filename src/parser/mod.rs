@@ -1205,7 +1205,7 @@ statement boundary; bind the chain to a local first. For example, split \
         // Non-sum type decls cannot have type params
         if !type_params.is_empty() {
             return Err(self.error(
-                "ILO-P023",
+                "ILO-P024",
                 "generic type parameters `<...>` are only allowed on sum type declarations (`type Name<a> = ...`)".into(),
             ));
         }
@@ -2235,7 +2235,7 @@ statement boundary; bind the chain to a local first. For example, split \
                     // one-off captures, or top-level helper with explicit
                     // params.
                     return Err(self.error_hint(
-                        "ILO-P023",
+                        "ILO-P024",
                         "fn declarations are top-level only; this one is inside another function's body".to_string(),
                         "use an inline lambda for a one-off helper that captures locals (e.g. `proc = (x:n>n; +x rows)` or `proc = {x> +x rows}`), or lift the helper to the top level and pass the captured value as an explicit parameter".to_string(),
                     ));
@@ -13075,18 +13075,18 @@ mod tests {
         assert!(effect_set.is_none());
     }
 
-    // ── Nested fn decls (ILO-460 / ILO-P023) ─────────────────────────────────
+    // ── Nested fn decls (ILO-460 / ILO-P024) ─────────────────────────────────
 
     #[test]
     fn nested_fn_decl_in_body_rejected() {
         // `proc x:n>n; +x rows` declared inside `main`'s body used to be
         // silently hoisted to top-level, dropping the enclosing scope. Reject
-        // it with ILO-P023 pointing at the inner header.
+        // it with ILO-P024 pointing at the inner header.
         let source = "main>n\n  rows=[1 2 3]\n  proc x:n>n; +x rows\n  proc 5";
         let (_, errors) = parse_str_errors(source);
         assert!(
-            errors.iter().any(|e| e.code == "ILO-P023"),
-            "expected ILO-P023 for nested fn decl, got: {:?}",
+            errors.iter().any(|e| e.code == "ILO-P024"),
+            "expected ILO-P024 for nested fn decl, got: {:?}",
             errors
         );
     }
@@ -13104,12 +13104,12 @@ mod tests {
     #[test]
     fn inline_lambda_in_body_still_parses() {
         // The recommended rewrite — inline lambda capturing `rows` — must
-        // continue to parse cleanly with no ILO-P023.
+        // continue to parse cleanly with no ILO-P024.
         let source = "main>n\n  rows=[1 2 3]\n  proc=(x:n>n; +x 1)\n  proc 5";
         let (_, errors) = parse_str_errors(source);
         assert!(
-            !errors.iter().any(|e| e.code == "ILO-P023"),
-            "inline lambda must not trip ILO-P023: {:?}",
+            !errors.iter().any(|e| e.code == "ILO-P024"),
+            "inline lambda must not trip ILO-P024: {:?}",
             errors
         );
     }

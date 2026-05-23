@@ -699,7 +699,7 @@ mn<a:Comparable>   -- capitalised bound name, not allowed (lexer rejects capital
 "#,
     },
     ErrorEntry {
-        code: "ILO-P023",
+        code: "ILO-P024",
         phase: Phase::Parse,
         short: "braceless guard inside a lambda body",
         long: r#"## ILO-P023: braceless guard inside a lambda body
@@ -743,7 +743,7 @@ the lambda. A future runtime change (tracked as a follow-up to ILO-473)
 may switch braceless guards inside lambda bodies to target the lambda;
 until then this diagnostic prevents the silent-miscompile failure mode.
         short: "nested fn declaration inside function body",
-        long: r#"## ILO-P023: nested fn declaration inside function body
+        long: r#"## ILO-P024: nested fn declaration inside function body
 
 A `name params>type;body` declaration appeared inside another function's
 body. Function declarations in ilo are **top-level only**. Earlier
