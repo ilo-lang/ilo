@@ -699,7 +699,7 @@ mn<a:Comparable>   -- capitalised bound name, not allowed (lexer rejects capital
 "#,
     },
     ErrorEntry {
-        code: "ILO-P024",
+        code: "ILO-P023",
         phase: Phase::Parse,
         short: "braceless guard inside a lambda body",
         long: r#"## ILO-P023: braceless guard inside a lambda body
@@ -742,6 +742,11 @@ call site, e.g. assign the predicate to a name and guard on it outside
 the lambda. A future runtime change (tracked as a follow-up to ILO-473)
 may switch braceless guards inside lambda bodies to target the lambda;
 until then this diagnostic prevents the silent-miscompile failure mode.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-P024",
+        phase: Phase::Parse,
         short: "nested fn declaration inside function body",
         long: r#"## ILO-P024: nested fn declaration inside function body
 
@@ -769,27 +774,14 @@ lambda:
 
     main>n
       rows = [1 2 3]
-      proc = (x:n>n; +x rows)    -- inline lambda, captures `rows`
+      proc = (x:n>n; +x rows)
       proc 5
 
-Or the brace-body lambda form:
+Or lift the helper to the top level and pass the captured value as an
+explicit parameter:
 
-    main>n
-      rows = [1 2 3]
-      proc = {x> +x rows}
-      proc 5
-
-For a reusable helper, lift it to the top level and pass the captured
-value as an explicit parameter:
-
-    proc x:n rs:[n]>n; +x rs
-
-    main>n
-      rows = [1 2 3]
-      proc 5 rows
-
-Tracking ticket for closure-capturing nested fn decls is linked from
-the diagnostic's introducing PR.
+    proc rows:L n x:n>n;+x (sum rows)
+    main>n;proc [1 2 3] 5
 "#,
     },
     ErrorEntry {

@@ -83,8 +83,7 @@ fn bind_chain_brace_jit() {
 // runs fine; this test pins that behaviour so the SPEC's promise of multi-line
 // brace bodies stays honoured.
 
-const BIND_CHAIN_BRACE_MULTILINE: &str =
-    "add-and-double x:n y:n>n {\n  s = +x y\n  *s 2\n}\n";
+const BIND_CHAIN_BRACE_MULTILINE: &str = "add-and-double x:n y:n>n {\n  s = +x y\n  *s 2\n}\n";
 
 #[test]
 fn bind_chain_brace_multiline_vm() {

@@ -92,7 +92,10 @@ const VARIANTS_PARENS: &str = concat!(
 
 fn check_parens_workaround(engine: &str) {
     let out = run_ok(engine, VARIANTS_PARENS, "main", &[]);
-    assert_eq!(out, "3", "paren-wrapped variants produce a 3-element list {engine}");
+    assert_eq!(
+        out, "3",
+        "paren-wrapped variants produce a 3-element list {engine}"
+    );
 }
 
 // --- Workaround B: pre-bind each variant -------------------------------
@@ -104,7 +107,10 @@ const VARIANTS_BIND: &str = concat!(
 
 fn check_bind_workaround(engine: &str) {
     let out = run_ok(engine, VARIANTS_BIND, "main", &[]);
-    assert_eq!(out, "3", "pre-bound variants produce a 3-element list {engine}");
+    assert_eq!(
+        out, "3",
+        "pre-bound variants produce a 3-element list {engine}"
+    );
 }
 
 // --- Payload-less variants stay valid (no false positive) --------------
@@ -119,7 +125,10 @@ const PAYLOADLESS_OK: &str = concat!(
 
 fn check_payloadless_unchanged(engine: &str) {
     let out = run_ok(engine, PAYLOADLESS_OK, "main", &[]);
-    assert_eq!(out, "3", "payload-less variants in list still work {engine}");
+    assert_eq!(
+        out, "3",
+        "payload-less variants in list still work {engine}"
+    );
 }
 
 fn check_all(engine: &str) {

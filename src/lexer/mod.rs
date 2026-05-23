@@ -1795,7 +1795,13 @@ fn backslash_lambda_hint(source: &str, after_backslash: usize) -> Option<String>
     }
     Some(format!(
         "`\\{param}{}` is a Haskell/Rust/ML lambda shorthand. ilo has two canonical lambda forms — paren (with types) and brace (no types): at a HOF call site write `map ({param}:t>r;body) xs` or `map {{{param}> body}} xs`. Example: `map ({param}:n>n;+{param} 1) xs` or `map {{{param}> +{param} 1}} xs`.",
-        if typed { ":t>body" } else if bytes[i] == b'{' { "{body}" } else { " -> body" }
+        if typed {
+            ":t>body"
+        } else if bytes[i] == b'{' {
+            "{body}"
+        } else {
+            " -> body"
+        }
     ))
 }
 

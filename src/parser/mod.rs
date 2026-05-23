@@ -541,9 +541,7 @@ impl Parser {
                 source: None,
                 parse_failed_fns: std::mem::take(&mut self.parse_failed_fns),
                 glued_eq_binding_sites: std::mem::take(&mut self.glued_eq_binding_sites),
-                h_keyword_simple_ref_sites: std::mem::take(
-                    &mut self.h_keyword_simple_ref_sites,
-                ),
+                h_keyword_simple_ref_sites: std::mem::take(&mut self.h_keyword_simple_ref_sites),
             },
             errors,
         )
@@ -2483,8 +2481,8 @@ statement boundary; bind the chain to a local first. For example, split \
         let lhs_end = self.peek_span().end;
         let name = self.expect_ident()?;
         let eq_span = self.peek_span();
-        let glued_double_eq = eq_span.start == lhs_end
-            && eq_span.end.saturating_sub(eq_span.start) == 2;
+        let glued_double_eq =
+            eq_span.start == lhs_end && eq_span.end.saturating_sub(eq_span.start) == 2;
         self.expect(&Token::Eq)?;
         // Friendly hint: `name={...}` is a common reach for a map-literal from
         // other languages. ilo builds maps with `mmap` + `mset`. Catch it
@@ -6991,9 +6989,7 @@ fn lambda_keyword_message(tok: &Token) -> Option<(String, String)> {
         _ => return None,
     };
     Some((
-        format!(
-            "`{kw}` is a reserved word and cannot start an expression"
-        ),
+        format!("`{kw}` is a reserved word and cannot start an expression"),
         format!(
             "ilo has two canonical lambda forms — paren (with types) `(p:t>r;body)` or brace (no types) `{{p> body}}`. At a HOF call site write `flt (x:n>b;>x 0) xs` or `flt {{x> >x 0}} xs`. The `{kw}`-keyword inline form is not accepted; for a named function use `name params>return;body` at the top level."
         ),
@@ -9153,8 +9149,7 @@ mod tests {
     // rewrite.
     #[test]
     fn hint_p010_chained_infix_plus_text() {
-        let (_, errors) =
-            parse_str_errors("f a:t b:t c:t>t;+a+\" \"+b+\" \"+c");
+        let (_, errors) = parse_str_errors("f a:t b:t c:t>t;+a+\" \"+b+\" \"+c");
         let e = errors
             .iter()
             .find(|e| e.code == "ILO-P010")
