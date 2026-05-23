@@ -1968,6 +1968,53 @@ definition with `ILO-T022`. Anonymous records have no declaration to point
 at, so the diagnostic anchors on the `with` call itself instead.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T047",
+        phase: Phase::Verify,
+        short: "list-literal element is a sum-variant constructor without parens",
+        long: r#"## ILO-T047: list-literal element is a sum-variant constructor without parens
+
+Inside a list literal `[...]`, each whitespace-separated token is treated as
+its own element by default. `[a b c]` is a 3-element list, not a call.
+When an element is the bare name of a payload-carrying sum-variant
+constructor and the next element looks like its payload, the parser leaves
+the name as a function reference (not a call) — the list ends up holding a
+function value next to a stray value, almost never what the agent meant.
+
+This is the sum-variant analogue of `ILO-P101` (the same trap for variadic
+builtins).
+
+**Wrong:**
+
+    type msg = login(t) | logout(t) | heartbeat(n)
+    main>_;ms=[login "alice" logout "bob" heartbeat 5]
+
+`login`, `logout`, and `heartbeat` parse as bare function references, and
+`"alice"`, `"bob"`, `5` parse as their own list elements. The constructors
+are never applied.
+
+**Fix A: paren-wrap each construction.**
+
+    ms=[(login "alice") (logout "bob") (heartbeat 5)]
+
+**Fix B: pre-bind each variant.**
+
+    a=login "alice"
+    b=logout "bob"
+    c=heartbeat 5
+    ms=[a b c]
+
+Use this when the constructions are reused, or when the inline form gets
+unreadable.
+
+### Why this isn't auto-applied
+
+`[fn-name arg ...]` is a perfectly valid list shape for payload-less
+variants and arity-known builtins. Silently rewriting it as a call would
+change meaning for legitimate code. The diagnostic-only rule keeps the
+single-shape parser rule and tells the agent which rewrite to apply.
+"#,
+    },
 ];
 
 /// Look up an error entry by code (e.g. `"ILO-T005"`).

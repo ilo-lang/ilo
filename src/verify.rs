@@ -6454,6 +6454,53 @@ impl VerifyContext {
             }
 
             Expr::List(items) => {
+                // ILO-T047: detect bare sum-variant constructor names followed by
+                // a value-shaped neighbour inside a list literal. The parser
+                // leaves `[login "alice" logout "bob"]` as four list elements
+                // because variant constructors aren't in `fn_arity` — the
+                // verifier sees a function reference adjacent to a payload-shaped
+                // value, which is almost never what the agent meant. Mirror the
+                // ILO-P101 shape: emit a hint naming both canonical rewrites
+                // (paren-wrap, pre-bind) and continue with normal inference so
+                // downstream errors aren't suppressed.
+                let mut i = 0;
+                while i + 1 < items.len() {
+                    if let Expr::Ref(name) = &items[i]
+                        && self.variant_constructors.contains(name)
+                        && let Some(sig) = self.functions.get(name)
+                        && sig.params.len() == 1
+                    {
+                        let payload_ty = sig.params[0].1.clone();
+                        // Peek the neighbour without polluting diagnostics: we
+                        // re-infer it below as part of normal inference, but the
+                        // err() call here only adds the hint, not the inference
+                        // itself.
+                        let next_ty = self.infer_expr(func, scope, &items[i + 1], span);
+                        if compatible(&payload_ty, &next_ty)
+                            || compatible(&next_ty, &payload_ty)
+                        {
+                            self.err(
+                                "ILO-T047",
+                                func,
+                                format!(
+                                    "list-literal element '{name}' is a sum-variant constructor followed by what looks like its payload; the constructor is not being called"
+                                ),
+                                Some(format!(
+                                    "list-literal elements are atoms by default — `{name}` parses as a function reference, not a call. \
+                                     Either paren-wrap each construction: `[({name} <arg>) ...]`, \
+                                     or bind first: `a={name} <arg>;[a ...]`"
+                                )),
+                                Some(span),
+                            );
+                            // Skip past the consumed neighbour so we don't fire
+                            // again on the next pair if it happens to chain.
+                            i += 2;
+                            continue;
+                        }
+                    }
+                    i += 1;
+                }
+
                 if items.is_empty() {
                     Ty::List(Box::new(Ty::Unknown))
                 } else {
