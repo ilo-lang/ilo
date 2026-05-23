@@ -351,6 +351,8 @@ main>n;flat=cat xs " ";spl flat ". "
 
 Short builtin names are precious surface and ilo reserves a stable subset of them. To save agents (and their carry-forward scripts) from "what got reserved this release?" debugging cycles, the language publishes the full short-name reserve list plus a forward-compatibility rule for future builtins.
 
+**Type-sigil letters are not reserved as identifiers.** The primitive type letters `n` (number), `t` (text), `b` (bool) — and the compound sigils `L`, `R`, `O`, `M`, `S`, `F` — are *position*-scoped. They are recognised as types only after `:` in a parameter binding or after `>` in a return-type annotation. Everywhere else (binding LHS, expression operand, fn name) they are normal lowercase identifiers. `t = 5` binds a local `t`; the canonical first example `tot p:n q:n r:n>n;s=*p q;t=*s r;+s t` uses `t` as a scratch local. Agents are free to use `n`, `t`, `b` as variables. Capital letters remain rejected as user identifiers (the rule `[a-z][a-z0-9]*(-[a-z0-9]+)*` is the source of truth). See [ILO-478](https://linear.app/ilo-lang/issue/ILO-478) for the in-flight migration that makes the primitive sigils uppercase (`N`/`T`/`B`) and removes this positional caveat.
+
 **Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
 
 ```
