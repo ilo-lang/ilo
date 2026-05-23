@@ -607,7 +607,7 @@ fn serialize_decls<S: serde::Serializer>(decls: &[Decl], s: S) -> Result<S::Ok, 
 }
 
 /// A complete program is a list of declarations
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     #[serde(serialize_with = "serialize_decls")]
     pub declarations: Vec<Decl>,
@@ -634,6 +634,16 @@ pub struct Program {
     /// not accept `==` as a fused bind-then-equality form (anti-P2).
     #[serde(skip)]
     pub glued_eq_binding_sites: HashSet<String>,
+    /// Spans where the parser saw the `?h cond a b` general prefix-ternary
+    /// keyword form with a simple bool-Ref condition — i.e. a shape that
+    /// the cheaper bare-bool prefix ternary `?cond a b` would express
+    /// identically. Surfaced by `verify` as an `ILO-W003` advisory so an
+    /// agent reaching for the keyword form when the bool was already a
+    /// bare ref learns the shorter shape (ILO-463). Empty when the
+    /// keyword form was used legitimately (comparison-led first operand,
+    /// nested call, etc.).
+    #[serde(skip)]
+    pub h_keyword_simple_ref_sites: Vec<(Span, String)>,
 }
 
 /// Identity of the parse error that disabled type-checking for a function.
@@ -1422,6 +1432,7 @@ mod tests {
             source: Some("f x:n>n;x".to_string()),
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let json = serde_json::to_string(&prog).unwrap();
         assert!(!json.contains("source"));
@@ -1457,6 +1468,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1499,6 +1511,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1533,6 +1546,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1568,6 +1582,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1598,6 +1613,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         assert!(matches!(&prog.declarations[0], Decl::Function { body, .. } if body.len() == 2));
@@ -1630,6 +1646,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1674,6 +1691,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1718,6 +1736,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1769,6 +1788,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1806,6 +1826,7 @@ mod tests {
             source: Some("f x:n>n;x".to_string()),
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let json = serde_json::to_string_pretty(&prog).unwrap();
         let deserialized: Program = serde_json::from_str(&json).unwrap();
@@ -1841,6 +1862,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         // resolve_aliases replaces known aliases; "len" → "length" (if aliased) or stays
         resolve_aliases(&mut prog);
@@ -1881,6 +1903,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {

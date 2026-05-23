@@ -24218,6 +24218,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let _ = compile(&prog);
     }
@@ -29176,6 +29177,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let compiled = compile(&prog).unwrap();
         let result = run(&compiled, None, vec![]);
@@ -29220,6 +29222,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let compiled = compile(&prog).unwrap();
         let provider = DummyProvider;
@@ -30740,6 +30743,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let compiled = compile(&prog).expect("compile ok");
         // Type "pt" should exist exactly once in the registry
