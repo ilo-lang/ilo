@@ -440,6 +440,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `+a+" "+b+c` (infix-style chain with leading prefix `+`) | drop the leading `+`: `a+" "+b+c`; or `fmt "{} {} {}" a b c`; or nested prefix `+a +" " +b c`; or bind intermediates | `ILO-P010` |
 | `fmt "{}" +0.1 0.2` -> `0.30000000000000004` (float Display = full IEEE 754) | `fmt "{:.2f}" (+0.1 0.2)` for human-readable; `fmt2 v N` for precise dp | docs only |
 | `*/ sz 0.3 0` ("scale then div by 0") | `*/a b c` is `(a/b)*c` — b is the divisor; for `(a*b)/c` use `/*sz 0.3 0` or bind `r=*sz 0.3;/r 0` | hint only |
+| `?h <bool-ref> a b` (keyword form on bare ref) | `?<bool-ref> a b` (bare-bool prefix ternary) | `ILO-W003` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
@@ -1769,6 +1770,8 @@ f mn:t>t;cn=(=mn "v40");sc1=?h cn "v4" "v3";sc1   -- in let-RHS
 ```
 
 The disambiguator is operand count: **two** operand atoms after `?h` keeps the bool-subject reading above (`?h a b` → `if h then a else b`); **three** operand atoms promotes `?h` to the fixed keyword form (`?h cond a b` → `if cond then a else b`). The keyword reading triggers only for the literal ident `h`, so every other bool-named subject (`?ready a b`, `?ok 1 0`, …) keeps the PR #330 semantics regardless of how many operands follow. Use the keyword form when the condition is a more complex bool expression than a single ref and you want the cheapest prefix shape; the brace form `?cond{a}{b}` works too but is two characters longer per occurrence.
+
+**`?h <bare-ref> a b` is the trap.** When the condition is already a bare bool ref the keyword form parses and runs identically to the cheaper bare-bool prefix ternary `?<ref> a b`. The verifier surfaces `ILO-W003` at every keyword-form site whose first operand is a single `Ref`, pointing the agent at the two-character-shorter shape. Motivating shape (ILO-463, `http-keepalive-pool`): `?h reusing 1 0` typechecks and produces the right value, but the canonical write is `?reusing 1 0`. The advisory does not fire when the first operand is a comparison (`?h =x 0 a b`), a call (`?h ok-pred? a b`), or any non-Ref atom — those are the keyword form's legitimate use cases.
 
 Each of the three operand slots accepts the same shapes as a prefix-binop operand - atom, nested prefix operator, or known-arity call. `?h =a b sev sc "NONE"` parses `sev sc` as `Call(sev, [sc])` in the then-slot, so `Call` results don't have to be bound first or paren-grouped (paren form `(sev sc)` still works as an explicit alternative).
 

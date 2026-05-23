@@ -121,6 +121,13 @@ pub struct Parser {
     /// `ILO-T005` on those calls. See ILO-469. Diagnostic-only — we do
     /// NOT accept `==` as a fused bind-then-equality form.
     glued_eq_binding_sites: HashSet<String>,
+    /// Sites where the parser disambiguated `?h <ref> <a> <b>` to the
+    /// general prefix-ternary keyword form but the first operand is a
+    /// single bare `Ref` — i.e. shape-equivalent to the cheaper bare-bool
+    /// prefix ternary `?<ref> <a> <b>`. Surfaced post-parse as an
+    /// `ILO-W003` advisory by `verify` so the agent learns the shorter
+    /// shape (ILO-463). Carries the call-site span and the ref name.
+    h_keyword_simple_ref_sites: Vec<(Span, String)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -188,6 +195,7 @@ impl Parser {
             lambda_depth: 0,
             parse_failed_fns: HashMap::new(),
             glued_eq_binding_sites: HashSet::new(),
+            h_keyword_simple_ref_sites: Vec::new(),
         }
     }
 
@@ -533,6 +541,9 @@ impl Parser {
                 source: None,
                 parse_failed_fns: std::mem::take(&mut self.parse_failed_fns),
                 glued_eq_binding_sites: std::mem::take(&mut self.glued_eq_binding_sites),
+                h_keyword_simple_ref_sites: std::mem::take(
+                    &mut self.h_keyword_simple_ref_sites,
+                ),
             },
             errors,
         )
@@ -2664,6 +2675,16 @@ statement boundary; bind the chain to a local first. For example, split \
             // (`?ready a b`, `?ok 1 0`, …) unambiguous and unchanged.
             if matches!(subj, Expr::Ref(n) if n == "h") && self.can_start_operand() {
                 let third = self.parse_prefix_binop_operand()?;
+                // ILO-463 advisory: `?h <ref> a b` keyword form with a
+                // bare-Ref condition is shape-equivalent to the cheaper
+                // bare-bool prefix ternary `?<ref> a b`. Record the site
+                // so `verify` can surface `ILO-W003` with the rewrite.
+                // Non-Ref first operands (comparison ops, calls, etc.)
+                // genuinely need the keyword form and are skipped.
+                if let Expr::Ref(cond_name) = &first {
+                    self.h_keyword_simple_ref_sites
+                        .push((self.peek_span(), cond_name.clone()));
+                }
                 return Ok(Stmt::Expr(Expr::Ternary {
                     condition: Box::new(first),
                     then_expr: Box::new(second),
@@ -3936,6 +3957,12 @@ statement boundary; bind the chain to a local first. For example, split \
             // a bare bool ref.
             if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && self.can_start_operand() {
                 let third = self.parse_prefix_binop_operand()?;
+                // ILO-463 advisory: mirrors the stmt-position branch
+                // above. See `parse_match_stmt` for the rationale.
+                if let Expr::Ref(cond_name) = &first {
+                    self.h_keyword_simple_ref_sites
+                        .push((self.peek_span(), cond_name.clone()));
+                }
                 return Ok(Expr::Ternary {
                     condition: Box::new(first),
                     then_expr: Box::new(second),

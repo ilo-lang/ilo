@@ -1600,6 +1600,34 @@ inspect it with `?`; use `jpar-list` when you know (or expect) the
 response to be an array.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-W003",
+        phase: Phase::Verify,
+        short: "`?h <ref> a b` uses keyword form on bare bool ref - drop the `h`",
+        long: r#"## ILO-W003: `?h <bare-ref> a b` keyword form on a bool ref
+
+You wrote `?h reusing 1 0` (or similar) where the first operand after
+`?h` is a single bare bool ref. The shape parses as the general
+prefix-ternary keyword form (`?h cond a b` → `if cond then a else b`)
+and runs identically, but the canonical bare-bool prefix ternary
+`?<ref> a b` expresses the same intent two characters shorter and
+avoids the `?h cond` vs `?cond` shape confusion that motivated this
+advisory (ILO-463, `http-keepalive-pool`).
+
+**Fix:** drop the `h`:
+
+```ilo
+f reusing:b>n;?reusing 1 0       -- canonical bare-bool prefix ternary
+```
+
+The keyword form `?h cond a b` is still the right choice when the
+condition is a comparison (`?h =x 0 a b`), a call (`?h ok-pred? a b`),
+or any non-Ref atom. The advisory only fires when the first operand
+is a single `Ref` — i.e. exactly the cases the bare-bool form already
+handles. See SPEC.md "Cross-language gotchas" for the trap row and
+the `?h cond a b` section for the disambiguator.
+"#,
+    },
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-R001",

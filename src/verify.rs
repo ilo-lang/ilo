@@ -7509,6 +7509,28 @@ pub fn verify_with_effects(program: &Program, show_effects: bool) -> VerifyResul
     // Phase 2: verify function bodies (includes effect-set mismatch warnings)
     ctx.verify_bodies_with_effects(program);
 
+    // ILO-W003 (ILO-463): surface parser advisories for `?h <ref> a b`
+    // keyword-form uses where the condition is already a bare bool ref.
+    // The keyword form is valid and runs identically, but the cheaper
+    // bare-bool prefix ternary `?<ref> a b` expresses the same intent
+    // in two fewer characters and removes the `?h cond` vs `?cond`
+    // confusion that motivated the issue (a persona reached for the
+    // wrong shape and burned a retry).
+    for (span, cond_name) in &program.h_keyword_simple_ref_sites {
+        ctx.errors.push(VerifyError {
+            code: "ILO-W003",
+            function: String::new(),
+            message: format!(
+                "`?h {cond_name} a b` uses the general prefix-ternary keyword form, but `{cond_name}` is already a bare bool ref"
+            ),
+            hint: Some(format!(
+                "drop the `h`: `?{cond_name} a b` is the bare-bool prefix ternary and expresses the same `if {cond_name} then a else b` two characters shorter. Keep `?h cond a b` for non-Ref conditions (`?h =x 0 a b`, `?h ok-pred? a b`)."
+            )),
+            span: Some(*span),
+            is_warning: true,
+        });
+    }
+
     let effects = if show_effects {
         infer_effects(program)
     } else {
@@ -9002,6 +9024,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let result = verify(&prog);
         assert!(
@@ -9049,6 +9072,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -9099,6 +9123,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -10374,6 +10399,119 @@ mod tests {
         );
     }
 
+    // ── ILO-W003 (ILO-463): `?h <ref> a b` → suggest `?<ref> a b` ────────
+    #[test]
+    fn h_keyword_with_bare_ref_warns_w003() {
+        // The originating bug: a persona wrote `?h reusing 1 0` expecting
+        // the bare-bool ternary; it parses as the keyword form and works,
+        // but the bare-bool form `?reusing 1 0` is the canonical shape.
+        let result = parse_and_verify_full("f reusing:b>n;?h reusing 1 0");
+        assert!(
+            result.errors.is_empty(),
+            "keyword form must remain valid: {:?}",
+            result.errors
+        );
+        let w003: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-W003")
+            .collect();
+        assert_eq!(
+            w003.len(),
+            1,
+            "expected one ILO-W003, got {:?}",
+            result.warnings
+        );
+        assert!(
+            w003[0].message.contains("reusing"),
+            "message should name the ref: {}",
+            w003[0].message
+        );
+        assert!(
+            w003[0]
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("?reusing a b")),
+            "hint should suggest `?reusing a b`: {:?}",
+            w003[0].hint
+        );
+    }
+
+    #[test]
+    fn h_keyword_with_comparison_no_warn() {
+        // `?h =x 0 1 99` — comparison-led first operand is the documented
+        // keyword-form use case. Must NOT warn.
+        let result = parse_and_verify_full("f x:n>n;?h =x 0 1 99");
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(
+            result.warnings.iter().all(|w| w.code != "ILO-W003"),
+            "comparison-led cond should not trigger W003: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn bare_bool_prefix_ternary_no_warn() {
+        // `?reusing 1 0` — the canonical bare-bool form. No warning.
+        let result = parse_and_verify_full("f reusing:b>n;?reusing 1 0");
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(
+            result.warnings.iter().all(|w| w.code != "ILO-W003"),
+            "bare-bool prefix ternary should not warn: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn h_keyword_with_bare_ref_runs_unchanged() {
+        // ILO-463 acceptance: emitting the W003 advisory must not change
+        // the semantics of the keyword form. Both shapes evaluate to the
+        // same value — proven by inspecting the parsed Ternary node.
+        use crate::ast::Expr;
+        let result = parse_and_verify_full("f reusing:b>n;?h reusing 1 0");
+        assert!(result.errors.is_empty());
+        // Find one W003 — verifying the wiring, not re-asserting the shape.
+        assert!(
+            result.warnings.iter().any(|w| w.code == "ILO-W003"),
+            "should have warned"
+        );
+        // And the AST is a Ternary with condition `reusing` — i.e. the
+        // keyword form was disambiguated correctly.
+        let prog = {
+            let tokens = crate::lexer::lex("f reusing:b>n;?h reusing 1 0").unwrap();
+            let pairs: Vec<_> = tokens
+                .into_iter()
+                .map(|(t, r)| {
+                    (
+                        t,
+                        crate::ast::Span {
+                            start: r.start,
+                            end: r.end,
+                        },
+                    )
+                })
+                .collect();
+            crate::parser::parse(pairs).0
+        };
+        let f = prog
+            .declarations
+            .iter()
+            .find_map(|d| match d {
+                crate::ast::Decl::Function { name, body, .. } if name == "f" => Some(body),
+                _ => None,
+            })
+            .expect("fn f present");
+        let stmt = &f[0].node;
+        let crate::ast::Stmt::Expr(Expr::Ternary { condition, .. }) = stmt else {
+            panic!("expected Ternary stmt, got {:?}", stmt);
+        };
+        assert!(
+            matches!(condition.as_ref(), Expr::Ref(n) if n == "reusing"),
+            "condition should be Ref(reusing), got {:?}",
+            condition
+        );
+    }
+
     #[test]
     fn jpar_no_bang_in_foreach_no_warn() {
         // Bare `jpar` (no unwrap) returns R, which fails the foreach with
@@ -11368,6 +11506,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let result = verify(&prog);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -11619,6 +11758,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let result = verify(&prog);
         // Should not panic; the Unknown binding is just a permissive fallback
@@ -11644,6 +11784,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let result = verify(&prog);
         assert!(
@@ -11684,6 +11825,7 @@ mod tests {
             source: None,
             parse_failed_fns: Default::default(),
             glued_eq_binding_sites: Default::default(),
+            h_keyword_simple_ref_sites: Vec::new(),
         };
         let result = verify(&prog);
         assert!(
