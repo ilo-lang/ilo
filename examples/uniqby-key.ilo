@@ -13,8 +13,9 @@ lbl n:n>t;>n 5 "big";"small"
 by-size ns:L n>L n;uniqby lbl ns
 
 -- Capturing lambda: bucket by a caller-supplied threshold. Captured
--- `t` flows through the closure and is read on every callback.
-by-thresh ns:L n t:n>L n;uniqby (n:n>t;>n t "big";"small") ns
+-- `t` flows through the closure and is read on every callback. Lambdas
+-- can't use braceless guards (ILO-P023) — use the prefix ternary.
+by-thresh ns:L n t:n>L n;uniqby (n:n>t;?>n t "big" "small") ns
 
 -- Mixed-type list: uniqby never aliases a Number with a Text that
 -- prints the same. Here all four items share the printed form "1" or

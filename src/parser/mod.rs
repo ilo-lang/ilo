@@ -100,6 +100,13 @@ pub struct Parser {
     lifted_decls: Vec<Decl>,
     /// Monotonic counter for synthetic lambda names.
     lambda_counter: usize,
+    /// How many enclosing lambda bodies we're currently parsing inside.
+    /// Incremented around the body parse of `parse_inline_lambda` and
+    /// `parse_brace_lambda`; consulted by `parse_braceless_guard_body` to
+    /// reject braceless guards inside lambda bodies (ILO-P023). Without this
+    /// guard, the braceless guard's early-return targets the *enclosing*
+    /// function rather than the lambda, silently miscompiling user intent.
+    lambda_depth: usize,
     /// Function names whose declaration was recognised at the header (name
     /// plus signature parsed) but whose return-type or body parse then
     /// errored. Surfaced on `Program.parse_failed_fns` so the verifier can
@@ -170,6 +177,7 @@ impl Parser {
             ctx: ParseContext::default(),
             lifted_decls: Vec::new(),
             lambda_counter: 0,
+            lambda_depth: 0,
             parse_failed_fns: HashMap::new(),
         }
     }
@@ -3416,6 +3424,20 @@ statement boundary; bind the chain to a local first. For example, split \
     /// Uses `parse_operand` (not `parse_expr`) so function calls are NOT consumed —
     /// call bodies require braces: `>=sp 1000{classify sp}`.
     fn parse_braceless_guard_body(&mut self, condition: Expr, negated: bool) -> Result<Stmt> {
+        // Braceless guards inside a lambda body would early-return from the
+        // *enclosing* function, not the lambda — silent miscompile (ILO-473).
+        // Reject with a clear hint naming both canonical rewrites. The runtime
+        // fix that makes guards target the lambda is tracked as a follow-up.
+        if self.lambda_depth > 0 {
+            return Err(self.error_hint(
+                "ILO-P023",
+                "braceless guard inside a lambda body".to_string(),
+                "braceless guards early-return from the enclosing function, not the lambda. \
+                 Use the prefix ternary `?cond then else` when both arms are values, \
+                 or a full braced match `?cond{then}{else}` when arms need statements."
+                    .to_string(),
+            ));
+        }
         let body_start = self.peek_span();
         let body_expr = self.parse_operand()?;
         let body_span = body_start.merge(self.prev_span());
@@ -5695,7 +5717,10 @@ For variable-position list indexing bind the head first: \
         // stopping when we see `)`. Reusing `parse_body` would consume the
         // `)` as part of normal at-body-end logic — instead, parse a
         // semicolon-separated sequence that terminates on RParen.
-        let body = self.parse_lambda_body()?;
+        self.lambda_depth += 1;
+        let body_res = self.parse_lambda_body();
+        self.lambda_depth -= 1;
+        let body = body_res?;
         self.pop_ctx(saved_ctx);
         let end = self.peek_span();
         // If the body completed but the next token is an Ident, the body
@@ -5845,27 +5870,13 @@ For variable-position list indexing bind the head first: \
         }
 
         // Parse body: `;`-separated statements until `}`.
-        let mut body = Vec::new();
-        if self.peek() != Some(&Token::RBrace) {
-            let span_start = self.peek_span();
-            let stmt = self.parse_stmt()?;
-            body.push(Spanned {
-                node: stmt,
-                span: span_start.merge(self.prev_span()),
-            });
-            while self.peek() == Some(&Token::Semi) {
-                self.advance();
-                if self.peek() == Some(&Token::RBrace) {
-                    break;
-                }
-                let span_start = self.peek_span();
-                let stmt = self.parse_stmt()?;
-                body.push(Spanned {
-                    node: stmt,
-                    span: span_start.merge(self.prev_span()),
-                });
-            }
-        }
+        // Track lambda depth so braceless guards inside the body get rejected
+        // with ILO-P023 (their early-return targets the enclosing fn, not the
+        // lambda — silent miscompile).
+        self.lambda_depth += 1;
+        let body = self.parse_brace_lambda_body_inner();
+        self.lambda_depth -= 1;
+        let body = body?;
         let end = self.peek_span();
         self.expect(&Token::RBrace)?;
 
@@ -5904,6 +5915,33 @@ For variable-position list indexing bind the head first: \
             let captures: Vec<Expr> = free.into_iter().map(Expr::Ref).collect();
             Ok(Expr::MakeClosure { fn_name, captures })
         }
+    }
+
+    /// Helper for `parse_brace_lambda`: parse the `;`-separated body until `}`.
+    /// Extracted so the caller can bracket the call with `lambda_depth +=/-=`.
+    fn parse_brace_lambda_body_inner(&mut self) -> Result<Vec<Spanned<Stmt>>> {
+        let mut body = Vec::new();
+        if self.peek() != Some(&Token::RBrace) {
+            let span_start = self.peek_span();
+            let stmt = self.parse_stmt()?;
+            body.push(Spanned {
+                node: stmt,
+                span: span_start.merge(self.prev_span()),
+            });
+            while self.peek() == Some(&Token::Semi) {
+                self.advance();
+                if self.peek() == Some(&Token::RBrace) {
+                    break;
+                }
+                let span_start = self.peek_span();
+                let stmt = self.parse_stmt()?;
+                body.push(Spanned {
+                    node: stmt,
+                    span: span_start.merge(self.prev_span()),
+                });
+            }
+        }
+        Ok(body)
     }
 
     /// Parse a `;`-separated sequence of statements terminated by `)`.

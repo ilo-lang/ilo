@@ -10,7 +10,7 @@ by-size ns:L n>M t (L n);grp lbl ns
 
 -- Capturing lambda: bucket by threshold supplied by the caller. The
 -- closure captures `t` and dispatches natively under Cranelift JIT/AOT.
-by-thresh ns:L n t:n>M t (L n);grp (n:n>t;>n t "big";"small") ns
+by-thresh ns:L n t:n>M t (L n);grp (n:n>t;?>n t "big" "small") ns
 
 -- Numeric key: grp floors finite floats to i64. Bucket items by their
 -- integer floor so 1.0, 1.5 and 1.9 share a key but 2.0 does not.

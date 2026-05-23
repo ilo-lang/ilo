@@ -699,6 +699,52 @@ mn<a:Comparable>   -- capitalised bound name, not allowed (lexer rejects capital
 "#,
     },
     ErrorEntry {
+        code: "ILO-P023",
+        phase: Phase::Parse,
+        short: "braceless guard inside a lambda body",
+        long: r#"## ILO-P023: braceless guard inside a lambda body
+
+A braceless guard (`>=x 10 "big"`, `=x 0 "zero"`, etc.) appeared inside
+a lambda body — either a paren lambda `(x:n>n;...)` or a brace lambda
+`{x> ...}`. Braceless guards at statement position are an *early return
+from the enclosing function*, not from the lambda. Inside a lambda this
+is almost never what the author meant: the lambda body silently skips
+past the guard and the enclosing function returns out from under the
+higher-order call.
+
+**Wrong (silent miscompile pre-ILO-473):**
+
+    map (x:n>n;=>x 0 0;x) xs
+    map {x> =>x 0 0;x} xs
+
+Both look like "if `x>=0` return `0`, else return `x`" — but the `=>x 0 0`
+early-returns from the *outer* function, not from the lambda. Hence this
+diagnostic.
+
+**Fix — prefix ternary (when both arms are values):**
+
+    map (x:n>n;?>=x 0 0 x) xs
+    map {x> ?>=x 0 0 x} xs
+
+`?cond then else` evaluates to `then` when `cond` is true, `else`
+otherwise. It is an *expression* and stays inside the lambda.
+
+**Fix — braced match (when arms need statements):**
+
+    map (x:n>n;?>=x 0{0}{x}) xs
+    map {x> ?>=x 0{0}{x}} xs
+
+The braced form is also expression-shaped and stays inside the lambda.
+
+**If you really do want to bail out of the enclosing function from inside
+the lambda,** write the `ret` explicitly so the intent is visible at the
+call site, e.g. assign the predicate to a name and guard on it outside
+the lambda. A future runtime change (tracked as a follow-up to ILO-473)
+may switch braceless guards inside lambda bodies to target the lambda;
+until then this diagnostic prevents the silent-miscompile failure mode.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P103",
         phase: Phase::Parse,
         short: "AST nesting depth exceeded",
