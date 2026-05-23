@@ -6697,7 +6697,7 @@ ilo has no tuple type."
                         func,
                         "`??` is nil-coalesce for `O T` (Optional), not `R T E` (Result)".into(),
                         Some(
-                            "use `default-on-err r d` to unwrap a Result with a fallback, or `?r{~v:v ^_:default}` for full control".into(),
+                            "rewrite `?? <r> <d>` as `default-on-err <r> <d>` (mirror builtin for `R T E`), or `?<r>{~v:v;^_:<d>}` for full control when no error payload is needed".into(),
                         ),
                         Some(span),
                     );

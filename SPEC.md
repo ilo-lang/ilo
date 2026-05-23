@@ -397,6 +397,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `((((...((1+1))))...))` 1000 deep | bind intermediates, or pass `--max-ast-depth N` | `ILO-P103` |
 | `dx=xj 0-xi` (call vs binop)     | `-xj xi` or pre-bind: `nxi=0-xi;+xj nxi` | `ILO-T005`  |
 | `tup.0` / `pair.0` (tuple access) | bind from `zip`-pair, then `at pair 0` (no tuple type) | `ILO-T004` |
+| `?? (num s) 0` (`??` on `R T E`)  | `default-on-err (num s) 0` or `?(num s){~v:v;^_:0}` | `ILO-T041` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
