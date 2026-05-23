@@ -766,6 +766,7 @@ Called like functions, compiled to dedicated opcodes.
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
 | `hex-rev s` | reverse the byte order of a hex-encoded string (byte-pair-wise). Input length must be even; odd length errors ILO-T013. Case preserved: `abCD` → `CDab`. Use for little-endian ↔ big-endian conversions (e.g. Bitcoin txid). | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
+| `idxof s sub` | first code-point index of `sub` in `s`, or nil when not found. Index is in code-point units (same convention as `at`), not raw byte offsets. Empty `sub` returns 0 (Python `str.find` / JS `indexOf` semantics). Replaces the verbose `flt`+`len` workaround for locating substrings. (ILO-39) | `O n` |
 | `tokcount s` | approximate cl100k_base token count of string `s`. On native targets uses tiktoken-rs cl100k_base BPE (exact OpenAI tokenisation); on WASM falls back to bytes/3.4 stub (within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. *Experimental* (PR #716, ILO-413). | `n` |
 | `run cmd argv` | spawn `cmd` with argv list — secrets scrubbed from child env by default; see [Process spawn](#process-spawn) | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`); secrets scrubbed from child env by default | `R RunResult t` |
