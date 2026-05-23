@@ -205,7 +205,13 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
             }
         }
 
-        Decl::Use { .. } => {}   // resolved before codegen — skip
+        Decl::Use { .. } => {} // resolved before codegen — skip
+        Decl::VersionPragma { version, .. } => {
+            // Re-emit the pragma at the top of the formatted file.
+            out.push('^');
+            out.push_str(&format_version_pragma(*version));
+            out.push('\n');
+        }
         Decl::Error { .. } => {} // poison node — skip
     }
 }
@@ -721,6 +727,14 @@ fn fmt_literal(lit: &Literal) -> String {
         }
         Literal::Nil => "nil".to_string(),
     }
+}
+
+/// Format a version pragma float as `YY.M` (e.g. `26.5`), preserving the
+/// minor component even when it would be zero (i.e. `26.0` → `"26.0"`).
+fn format_version_pragma(v: f64) -> String {
+    let major = v.trunc() as u32;
+    let minor = ((v - v.trunc()) * 100.0).round() as u32;
+    format!("{}.{}", major, minor)
 }
 
 fn fmt_num(n: f64) -> String {

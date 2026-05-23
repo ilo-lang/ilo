@@ -156,6 +156,7 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
             ));
         }
         Decl::Use { .. } => {}
+        Decl::VersionPragma { .. } => {}
         Decl::Error { .. } => {}
         Decl::SumType { name, variants, .. } => {
             // Emit each variant as a tagged-tuple constructor function.

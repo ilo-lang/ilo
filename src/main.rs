@@ -2623,7 +2623,7 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
         ast::Decl::TypeDef { name, .. } => Some(name),
         ast::Decl::Alias { name, .. } => Some(name),
         ast::Decl::SumType { name, .. } => Some(name),
-        ast::Decl::Use { .. } | ast::Decl::Error { .. } => None,
+        ast::Decl::Use { .. } | ast::Decl::VersionPragma { .. } | ast::Decl::Error { .. } => None,
     }
 }
 
@@ -3224,6 +3224,7 @@ fn decls_reference_prefix(decls: &[ast::Decl], prefix: &str) -> bool {
             | ast::Decl::SumType { .. }
             | ast::Decl::Alias { .. }
             | ast::Decl::Use { .. }
+            | ast::Decl::VersionPragma { .. }
             | ast::Decl::Error { .. } => false,
         };
         if referenced {

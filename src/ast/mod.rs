@@ -274,6 +274,17 @@ pub enum Decl {
         span: Span,
     },
 
+    /// `^26.5` — top-of-file version pragma declaring the minimum required runtime.
+    /// Recognised only at position 0 (before any other declaration).
+    /// Silently accepted; no code is generated. Stored so tooling
+    /// (e.g. `ilo --version-of`) can retrieve the declared version without
+    /// re-parsing. The `version` field encodes `YY.M` as a float (e.g. `26.5`).
+    VersionPragma {
+        version: f64,
+        #[serde(skip)]
+        span: Span,
+    },
+
     /// Poison node inserted during parser error recovery.
     /// Suppressed by the verifier; omitted from JSON AST output
     /// (filtered by the custom serializer on Program.declarations).
