@@ -275,6 +275,15 @@ Phase 2 captures run natively on every engine: the tree interpreter, the registe
 - **Braced match** when arms need statements: `map (x:n>n;?>=x 0{0}{x}) xs`
 
 Braceless guards at top-level function bodies continue to work — this restriction is lambda-body only. A future runtime change (follow-up to ILO-473) may switch the early-return target inside lambdas; until then the diagnostic prevents the silent miscompile.
+**Rejected lambda shapes (ILO-456).** Only the paren form `(x:t>r;body)` and the bare-param brace form `{x> body}` are accepted. Three shapes from other functional languages look plausible but are deliberately rejected — each emits a targeted hint naming both canonical forms and the call-site rewrite:
+
+| Shape (rejected)              | Use instead                                            |
+| ----------------------------- | ------------------------------------------------------ |
+| `flt {x:t> body} xs`          | `flt (x:t>r;body) xs` (paren is the typed form)        |
+| `flt \x:t>body xs`            | `flt (x:t>r;body) xs` or `flt {x> body} xs`            |
+| `flt fn x:t>r;body xs`        | `flt (x:t>r;body) xs` or `flt {x> body} xs`            |
+
+The brace form is the *bare-param* shorthand — its params are inferred as `any`, so `{x:n> body}` is a category error rather than a typed-brace lambda.
 
 ---
 
@@ -402,6 +411,9 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `=<a b`, `=>a b`                 | `<=a b`, `>=a b` (single token)          | `ILO-P003`  |
 | `f=fn x:n>n;+x 1` (lambda)       | `(x:n>n;+x 1)` (parenthesised lambda)    | `ILO-P009`  |
 | `\x{+x 1}` (Haskell/Rust lambda) | `(x:n>n;+x 1)` (parenthesised lambda)    | `ILO-L001`  |
+| `flt {x:t> body} xs` (typed-brace at HOF) | `flt (x:t>r;body) xs` (paren = typed; brace = bare params) | `ILO-P001`  |
+| `flt \x:t>body xs` (typed backslash)     | `flt (x:t>r;body) xs` or `flt {x> body} xs`                | `ILO-L001`  |
+| `flt fn x:t>r;body xs` (`fn`-keyword inline) | `flt (x:t>r;body) xs` or `flt {x> body} xs`           | `ILO-P009`  |
 | `main:>n;body`                   | `main>n;body` (no `:` before `>`)        | `ILO-P003`  |
 | Multi-line body without braces   | `@k xs{body}`, `cond{body}` on one line  | `ILO-P003`  |
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |

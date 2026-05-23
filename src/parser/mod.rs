@@ -5220,6 +5220,13 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 | Some(Token::Underscore)
                 | Some(Token::LParen)
                 | Some(Token::LBracket)
+                // ILO-456: `fn`/`def` mid-call-arg (e.g. `flt fn x:t>r;body xs`)
+                // routes into parse_atom_body so `lambda_keyword_message`
+                // surfaces the canonical-form hint at the call site, instead
+                // of the loop silently terminating and the next pass emitting
+                // a decl-level ILO-P001.
+                | Some(Token::KwFn)
+                | Some(Token::KwDef)
         )
     }
 
@@ -5871,6 +5878,23 @@ For variable-position list indexing bind the head first: \
             match self.peek() {
                 Some(Token::Ident(_)) => {
                     let name = self.expect_ident()?;
+                    // Typed-brace shape `{x:t> body}` — ILO-456. The brace form
+                    // is the bare-param shorthand: param types are inferred as
+                    // `any`. Personas coming from functional priors reach for
+                    // `{x:n> body}` and hit a misleading "expected param name
+                    // or `>`, got `:`". Surface the canonical-paren rewrite
+                    // here so the first retry is the right one.
+                    if self.peek() == Some(&Token::Colon) {
+                        return Err(self.error_hint(
+                            "ILO-P001",
+                            format!(
+                                "typed param `{name}:…` in brace-lambda — the brace form is the bare-param shorthand (types inferred as `any`)"
+                            ),
+                            format!(
+                                "ilo has two canonical lambda forms: paren (with types) `({name}:t>r;body)` or brace (no types) `{{{name}> body}}`. For a typed HOF lambda use the paren form — e.g. `flt ({name}:n>b;>{name} 0) xs`."
+                            ),
+                        ));
+                    }
                     params.push(Param {
                         name,
                         ty: Type::Any,
@@ -5883,7 +5907,7 @@ For variable-position list indexing bind the head first: \
                             "expected param name or `>` in brace-lambda, got {}",
                             self.peek().map_or("EOF".into(), |t| t.user_facing_name())
                         ),
-                        "brace-lambda syntax: `{param... > stmts}` — bare param names before `>`"
+                        "brace-lambda syntax: `{param... > stmts}` — bare param names before `>`. For a typed lambda use the paren form: `(x:t>r;body)`."
                             .into(),
                     ));
                 }
@@ -6847,7 +6871,9 @@ fn lambda_keyword_message(tok: &Token) -> Option<(String, String)> {
         format!(
             "`{kw}` is a reserved word and cannot start an expression"
         ),
-        "ilo's inline lambda syntax is `(p:t>r;body)`, e.g. `map (x:n>n;+x 1) xs`. For a named function use `name params>return;body` at the top level.".to_string(),
+        format!(
+            "ilo has two canonical lambda forms — paren (with types) `(p:t>r;body)` or brace (no types) `{{p> body}}`. At a HOF call site write `flt (x:n>b;>x 0) xs` or `flt {{x> >x 0}} xs`. The `{kw}`-keyword inline form is not accepted; for a named function use `name params>return;body` at the top level."
+        ),
     ))
 }
 
@@ -12481,7 +12507,7 @@ mod tests {
             .expect("expected ILO-P009 with `fn` lambda message");
         let hint = e.hint.as_ref().expect("expected hint");
         assert!(
-            hint.contains("(p:t>r;body)") && hint.contains("inline lambda"),
+            hint.contains("(p:t>r;body)") && hint.contains("canonical lambda forms"),
             "hint: {}",
             hint
         );
