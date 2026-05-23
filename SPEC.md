@@ -400,6 +400,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |
 | `- -*a b *c d` (double-minus)    | `- 0 +*a b *c d` (negate the sum)        | `ILO-P021`  |
 | `[k fmt2 v 2]` (call in list)    | `[k (fmt2 v 2)]` or bind-first           | `ILO-P101`  |
+| `[login "a" logout "b"]` (variant ctor in list) | `[(login "a") (logout "b")]` or bind-first | `ILO-T047`  |
 | `pts=gen-pts;cs0=[...];prnt cs0` at top level | `main>_;pts=gen-pts;cs0=[...];prnt cs0` (wrap in `main>_;`) | `ILO-P102` |
 | `((((...((1+1))))...))` 1000 deep | bind intermediates, or pass `--max-ast-depth N` | `ILO-P103` |
 | `dx=xj 0-xi` (call vs binop)     | `-xj xi` or pre-bind: `nxi=0-xi;+xj nxi` | `ILO-T005`  |
