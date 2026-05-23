@@ -868,6 +868,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::HexEnc, 1) => true,
         (Builtin::HexRev, 1) => true,
         (Builtin::CtEq, 2) => true,
+        // idxof s sub > O n (ILO-39). 2-arg text → Optional<n>, no FnRef,
+        // no I/O. Tree-bridge keeps VM + Cranelift in lockstep.
+        (Builtin::Idxof, 2) => true,
         // Raw-bytes crypto (ILO-383). Pure text-in / text-out, no FnRef args,
         // no I/O, no Result wrapper (errors propagate as ILO-R009 runtime errors
         // through the standard tree-bridge error path). VM and Cranelift
