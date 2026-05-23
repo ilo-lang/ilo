@@ -2218,7 +2218,27 @@ statement boundary; bind the chain to a local first. For example, split \
                     break;
                 }
                 if top_level && self.is_fn_decl_start_strict(self.pos) {
-                    break;
+                    // Distinguish a *sibling* top-level fn decl (separated by a
+                    // real un-indented newline that the lexer recorded as a
+                    // `decl_boundary`) from a *nested* one written inline
+                    // inside the enclosing function's body. The sibling case
+                    // is fine — break out and let `parse_program` pick up the
+                    // next decl. The nested case is the ILO-460 trap.
+                    if self.decl_boundary.get(self.pos).copied().flatten().is_some() {
+                        break;
+                    }
+                    // Nested fn declaration inside a function body. Earlier
+                    // versions silently let this terminate the body and then
+                    // hoisted the "next decl" to the top level, which lost the
+                    // enclosing scope (ILO-460). Reject with a precise hint
+                    // naming the two canonical rewrites: inline lambda for
+                    // one-off captures, or top-level helper with explicit
+                    // params.
+                    return Err(self.error_hint(
+                        "ILO-P023",
+                        "fn declarations are top-level only; this one is inside another function's body".to_string(),
+                        "use an inline lambda for a one-off helper that captures locals (e.g. `proc = (x:n>n; +x rows)` or `proc = {x> +x rows}`), or lift the helper to the top level and pass the captured value as an explicit parameter".to_string(),
+                    ));
                 }
                 let span_start = self.peek_span();
                 let stmt = self.parse_stmt()?;
@@ -13053,5 +13073,44 @@ mod tests {
             panic!()
         };
         assert!(effect_set.is_none());
+    }
+
+    // ── Nested fn decls (ILO-460 / ILO-P023) ─────────────────────────────────
+
+    #[test]
+    fn nested_fn_decl_in_body_rejected() {
+        // `proc x:n>n; +x rows` declared inside `main`'s body used to be
+        // silently hoisted to top-level, dropping the enclosing scope. Reject
+        // it with ILO-P023 pointing at the inner header.
+        let source = "main>n\n  rows=[1 2 3]\n  proc x:n>n; +x rows\n  proc 5";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P023"),
+            "expected ILO-P023 for nested fn decl, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn top_level_fn_decls_still_parse() {
+        // Sibling top-level fn decls keep parsing as before.
+        let source = "proc x:n>n;+x 1\nmain>n;proc 5";
+        let prog = parse_str(source);
+        assert_eq!(prog.declarations.len(), 2);
+        assert!(matches!(prog.declarations[0], Decl::Function { .. }));
+        assert!(matches!(prog.declarations[1], Decl::Function { .. }));
+    }
+
+    #[test]
+    fn inline_lambda_in_body_still_parses() {
+        // The recommended rewrite — inline lambda capturing `rows` — must
+        // continue to parse cleanly with no ILO-P023.
+        let source = "main>n\n  rows=[1 2 3]\n  proc=(x:n>n; +x 1)\n  proc 5";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            !errors.iter().any(|e| e.code == "ILO-P023"),
+            "inline lambda must not trip ILO-P023: {:?}",
+            errors
+        );
     }
 }

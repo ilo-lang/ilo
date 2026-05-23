@@ -742,6 +742,54 @@ call site, e.g. assign the predicate to a name and guard on it outside
 the lambda. A future runtime change (tracked as a follow-up to ILO-473)
 may switch braceless guards inside lambda bodies to target the lambda;
 until then this diagnostic prevents the silent-miscompile failure mode.
+        short: "nested fn declaration inside function body",
+        long: r#"## ILO-P023: nested fn declaration inside function body
+
+A `name params>type;body` declaration appeared inside another function's
+body. Function declarations in ilo are **top-level only**. Earlier
+versions silently hoisted the nested decl to the top level, which broke
+any reference to a local in the enclosing scope — the lifted helper had
+no access to it.
+
+**Example that triggers this:**
+
+    main>n
+      rows = [1 2 3]
+      proc x:n>n; +x rows   -- inner `proc` declaration: rejected
+      proc 5
+
+The inner `proc` looks like a helper that captures `rows`, but because
+fn decls are top-level only there is no closure environment to capture
+it into.
+
+**Fixes**
+
+For a one-off helper that needs to capture a local, use an inline
+lambda:
+
+    main>n
+      rows = [1 2 3]
+      proc = (x:n>n; +x rows)    -- inline lambda, captures `rows`
+      proc 5
+
+Or the brace-body lambda form:
+
+    main>n
+      rows = [1 2 3]
+      proc = {x> +x rows}
+      proc 5
+
+For a reusable helper, lift it to the top level and pass the captured
+value as an explicit parameter:
+
+    proc x:n rs:[n]>n; +x rs
+
+    main>n
+      rows = [1 2 3]
+      proc 5 rows
+
+Tracking ticket for closure-capturing nested fn decls is linked from
+the diagnostic's introducing PR.
 "#,
     },
     ErrorEntry {

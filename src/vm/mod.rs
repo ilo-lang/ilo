@@ -25521,8 +25521,7 @@ mod tests {
         // (caller slot + callee param slot). The callee's m=mset m k v therefore
         // takes the slow path, must NOT mutate the caller's map.
         let result = vm_run(
-            r#"addto m:M t t k:t v:t>t;m=mset m k v;mget m k ?? "miss"
-               f>t;m=mset mmap "a" "one";x=addto m "a" "two";mget m "a" ?? "miss""#,
+            "addto m:M t t k:t v:t>t;m=mset m k v;mget m k ?? \"miss\"\nf>t;m=mset mmap \"a\" \"one\";x=addto m \"a\" \"two\";mget m \"a\" ?? \"miss\"",
             Some("f"),
             vec![],
         );
