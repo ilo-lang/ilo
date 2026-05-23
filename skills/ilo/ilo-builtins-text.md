@@ -34,6 +34,26 @@ Signatures (pat first, string last):
 
 `fmt template args...` (no list splat). `fmt2 x digits > t` is a **decimal formatter**, not a fmt variant: `fmt2 3.14159 2` -> `"3.14"`. Compose: `fmt "x={}" (fmt2 v 2)`.
 
+**Float precision gotcha.** Plain `{}` on a float emits the **full IEEE 754 round-trip** representation, not a human-friendly truncation. `fmt "{}" /1 6` -> `"0.16666666666666666"`, `fmt "{}" +0.1 0.2` -> `"0.30000000000000004"`. Integer-valued floats render without a decimal (`fmt "{}" 2.0` -> `"2"`). For readable output use a precision spec or `fmt2`:
+
+```
+fmt "GC={:.2f}%" pct           -- "GC=54.17%"          (ratio-as-percent, canonical)
+fmt "pi={:.4f}" 3.14159265     -- "pi=3.1416"
+fmt "x={}" (fmt2 v 6)          -- compose fmt2 for 6dp without the spec
+fmt "n={:5d}" 42               -- "n=   42"            (integer width, space-pad)
+fmt "{:<8}|" "ok"              -- "ok      |"          (left-align width)
+```
+
+Supported specs (parser-checked; everything else errors with `ILO-T013` / `ILO-R009`):
+
+- `{}` — Display (full precision for floats).
+- `{.Nf}` / `{:.Nf}` — N decimal places, half-to-even rounding. Number arg required.
+- `{:N}` — right-align Display to width N (space-pad).
+- `{:<N}` — left-align Display to width N.
+- `{:Nd}` — integer right-align to width N (truncates toward zero).
+
+Out of scope: `{:e}` / `{:g}` (scientific / sig-figs), `{:06d}` (zero-pad), `{:+}` (forced sign), `{:x}` (hex). Compose `fmt2` / `padl` / `padr` instead.
+
 ## CSV / TSV
 
 `csv s` -> list of lists (comma-separated); `tsv s` -> list of lists (tab-separated).
