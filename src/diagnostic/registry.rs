@@ -745,6 +745,46 @@ until then this diagnostic prevents the silent-miscompile failure mode.
 "#,
     },
     ErrorEntry {
+        code: "ILO-P024",
+        phase: Phase::Parse,
+        short: "nested fn declaration inside function body",
+        long: r#"## ILO-P024: nested fn declaration inside function body
+
+A `name params>type;body` declaration appeared inside another function's
+body. Function declarations in ilo are **top-level only**. Earlier
+versions silently hoisted the nested decl to the top level, which broke
+any reference to a local in the enclosing scope — the lifted helper had
+no access to it.
+
+**Example that triggers this:**
+
+    main>n
+      rows = [1 2 3]
+      proc x:n>n; +x rows   -- inner `proc` declaration: rejected
+      proc 5
+
+The inner `proc` looks like a helper that captures `rows`, but because
+fn decls are top-level only there is no closure environment to capture
+it into.
+
+**Fixes**
+
+For a one-off helper that needs to capture a local, use an inline
+lambda:
+
+    main>n
+      rows = [1 2 3]
+      proc = (x:n>n; +x rows)
+      proc 5
+
+Or lift the helper to the top level and pass the captured value as an
+explicit parameter:
+
+    proc rows:L n x:n>n;+x (sum rows)
+    main>n;proc [1 2 3] 5
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P103",
         phase: Phase::Parse,
         short: "AST nesting depth exceeded",

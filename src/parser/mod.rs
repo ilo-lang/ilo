@@ -541,9 +541,7 @@ impl Parser {
                 source: None,
                 parse_failed_fns: std::mem::take(&mut self.parse_failed_fns),
                 glued_eq_binding_sites: std::mem::take(&mut self.glued_eq_binding_sites),
-                h_keyword_simple_ref_sites: std::mem::take(
-                    &mut self.h_keyword_simple_ref_sites,
-                ),
+                h_keyword_simple_ref_sites: std::mem::take(&mut self.h_keyword_simple_ref_sites),
             },
             errors,
         )
@@ -1205,7 +1203,7 @@ statement boundary; bind the chain to a local first. For example, split \
         // Non-sum type decls cannot have type params
         if !type_params.is_empty() {
             return Err(self.error(
-                "ILO-P023",
+                "ILO-P024",
                 "generic type parameters `<...>` are only allowed on sum type declarations (`type Name<a> = ...`)".into(),
             ));
         }
@@ -2218,7 +2216,38 @@ statement boundary; bind the chain to a local first. For example, split \
                     break;
                 }
                 if top_level && self.is_fn_decl_start_strict(self.pos) {
-                    break;
+                    // Distinguish a *sibling* top-level fn decl from a *nested*
+                    // one. Sibling signals:
+                    //   - an un-indented newline (decl_boundary marker), OR
+                    //   - the enclosing body has no binding statements yet
+                    //     (nothing for a nested fn to capture; this matches the
+                    //     ;-separated single-line patterns used by inline test
+                    //     fixtures and tiny scripts).
+                    // The ILO-460 trap shape always has a body local that the
+                    // intended-nested fn means to capture, so requiring a
+                    // binding tightens the diagnostic to the real bug.
+                    let has_boundary = self
+                        .decl_boundary
+                        .get(self.pos)
+                        .copied()
+                        .flatten()
+                        .is_some();
+                    let has_binding = stmts.iter().any(|s| matches!(s.node, Stmt::Let { .. }));
+                    if has_boundary || !has_binding {
+                        break;
+                    }
+                    // Nested fn declaration inside a function body. Earlier
+                    // versions silently let this terminate the body and then
+                    // hoisted the "next decl" to the top level, which lost the
+                    // enclosing scope (ILO-460). Reject with a precise hint
+                    // naming the two canonical rewrites: inline lambda for
+                    // one-off captures, or top-level helper with explicit
+                    // params.
+                    return Err(self.error_hint(
+                        "ILO-P024",
+                        "fn declarations are top-level only; this one is inside another function's body".to_string(),
+                        "use an inline lambda for a one-off helper that captures locals (e.g. `proc = (x:n>n; +x rows)` or `proc = {x> +x rows}`), or lift the helper to the top level and pass the captured value as an explicit parameter".to_string(),
+                    ));
                 }
                 let span_start = self.peek_span();
                 let stmt = self.parse_stmt()?;
@@ -2452,8 +2481,8 @@ statement boundary; bind the chain to a local first. For example, split \
         let lhs_end = self.peek_span().end;
         let name = self.expect_ident()?;
         let eq_span = self.peek_span();
-        let glued_double_eq = eq_span.start == lhs_end
-            && eq_span.end.saturating_sub(eq_span.start) == 2;
+        let glued_double_eq =
+            eq_span.start == lhs_end && eq_span.end.saturating_sub(eq_span.start) == 2;
         self.expect(&Token::Eq)?;
         // Friendly hint: `name={...}` is a common reach for a map-literal from
         // other languages. ilo builds maps with `mmap` + `mset`. Catch it
@@ -6960,9 +6989,7 @@ fn lambda_keyword_message(tok: &Token) -> Option<(String, String)> {
         _ => return None,
     };
     Some((
-        format!(
-            "`{kw}` is a reserved word and cannot start an expression"
-        ),
+        format!("`{kw}` is a reserved word and cannot start an expression"),
         format!(
             "ilo has two canonical lambda forms — paren (with types) `(p:t>r;body)` or brace (no types) `{{p> body}}`. At a HOF call site write `flt (x:n>b;>x 0) xs` or `flt {{x> >x 0}} xs`. The `{kw}`-keyword inline form is not accepted; for a named function use `name params>return;body` at the top level."
         ),
@@ -9122,8 +9149,7 @@ mod tests {
     // rewrite.
     #[test]
     fn hint_p010_chained_infix_plus_text() {
-        let (_, errors) =
-            parse_str_errors("f a:t b:t c:t>t;+a+\" \"+b+\" \"+c");
+        let (_, errors) = parse_str_errors("f a:t b:t c:t>t;+a+\" \"+b+\" \"+c");
         let e = errors
             .iter()
             .find(|e| e.code == "ILO-P010")
@@ -13053,5 +13079,44 @@ mod tests {
             panic!()
         };
         assert!(effect_set.is_none());
+    }
+
+    // ── Nested fn decls (ILO-460 / ILO-P024) ─────────────────────────────────
+
+    #[test]
+    fn nested_fn_decl_in_body_rejected() {
+        // `proc x:n>n; +x rows` declared inside `main`'s body used to be
+        // silently hoisted to top-level, dropping the enclosing scope. Reject
+        // it with ILO-P024 pointing at the inner header.
+        let source = "main>n\n  rows=[1 2 3]\n  proc x:n>n; +x rows\n  proc 5";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-P024"),
+            "expected ILO-P024 for nested fn decl, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn top_level_fn_decls_still_parse() {
+        // Sibling top-level fn decls keep parsing as before.
+        let source = "proc x:n>n;+x 1\nmain>n;proc 5";
+        let prog = parse_str(source);
+        assert_eq!(prog.declarations.len(), 2);
+        assert!(matches!(prog.declarations[0], Decl::Function { .. }));
+        assert!(matches!(prog.declarations[1], Decl::Function { .. }));
+    }
+
+    #[test]
+    fn inline_lambda_in_body_still_parses() {
+        // The recommended rewrite — inline lambda capturing `rows` — must
+        // continue to parse cleanly with no ILO-P024.
+        let source = "main>n\n  rows=[1 2 3]\n  proc=(x:n>n; +x 1)\n  proc 5";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            !errors.iter().any(|e| e.code == "ILO-P024"),
+            "inline lambda must not trip ILO-P024: {:?}",
+            errors
+        );
     }
 }

@@ -30,7 +30,10 @@ fn check_short_j_emits_json_diagnostic() {
     // JSON diagnostic goes to stderr in NDJSON mode; check both for the
     // leading brace so we're not coupling to which stream it lands on.
     let combined = format!("{stdout}{stderr}");
-    assert!(combined.contains("\"code\""), "expected JSON diagnostic, got: {combined}");
+    assert!(
+        combined.contains("\"code\""),
+        "expected JSON diagnostic, got: {combined}"
+    );
 }
 
 #[test]
@@ -55,8 +58,15 @@ fn run_short_j_wraps_value() {
 fn spec_short_j_ai_emits_json_envelope() {
     let (code, stdout, _stderr) = run(&["spec", "-j", "ai"]);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("{"), "stdout={}", &stdout[..stdout.len().min(80)]);
-    assert!(stdout.contains("\"builtins\""), "spec -j ai should include builtins");
+    assert!(
+        stdout.starts_with("{"),
+        "stdout={}",
+        &stdout[..stdout.len().min(80)]
+    );
+    assert!(
+        stdout.contains("\"builtins\""),
+        "spec -j ai should include builtins"
+    );
     assert!(stdout.contains("\"schemaVersion\""));
 }
 

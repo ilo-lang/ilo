@@ -5369,8 +5369,7 @@ impl VerifyContext {
                     && let Some(sig) = self.functions.get(func)
                 {
                     let expected = sig.return_type.clone();
-                    if expected != Ty::Unknown
-                        && !compatible_ext(&body_ty, &expected, &self.types)
+                    if expected != Ty::Unknown && !compatible_ext(&body_ty, &expected, &self.types)
                     {
                         let hint = match (&body_ty, &expected) {
                             (Ty::Number, Ty::Text) => {
@@ -6527,9 +6526,7 @@ impl VerifyContext {
                         // err() call here only adds the hint, not the inference
                         // itself.
                         let next_ty = self.infer_expr(func, scope, &items[i + 1], span);
-                        if compatible(&payload_ty, &next_ty)
-                            || compatible(&next_ty, &payload_ty)
-                        {
+                        if compatible(&payload_ty, &next_ty) || compatible(&next_ty, &payload_ty) {
                             self.err(
                                 "ILO-T047",
                                 func,
@@ -7984,23 +7981,36 @@ mod tests {
         let errors = result.unwrap_err();
         assert!(
             errors.iter().any(|e| e.code == "ILO-T008"
-                && e.message.contains("braceless-guard tail value type mismatch")),
+                && e.message
+                    .contains("braceless-guard tail value type mismatch")),
             "expected ILO-T008 braceless-guard-tail diagnostic, got {errors:?}"
         );
     }
 
     #[test]
     fn ilo468_braceless_guard_tail_wrong_type_inline_lambda() {
-        // Same trap inside an inline lambda passed to `flt`. The synthetic
-        // lambda function `__lit_0` must surface the mismatch.
-        let result =
-            parse_and_verify("m xs:L t>L t;flt (x:t>b;=x \"\" 1;false) xs");
-        assert!(result.is_err(), "expected ILO-T008 for lambda guard-tail mismatch");
-        let errors = result.unwrap_err();
+        // Post-ILO-473 (ILO-P023), braceless guards inside a lambda body are
+        // rejected at parse time, before T008's verify pass can fire. The two
+        // diagnostics are complementary — either path closes the original
+        // silent-miscompile failure mode. Assert P023 from the parser directly.
+        let tokens =
+            crate::lexer::lex("m xs:L t>L t;flt (x:t>b;=x \"\" 1;false) xs").expect("lex failed");
+        let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (_program, parse_errors) = crate::parser::parse(token_spans);
         assert!(
-            errors.iter().any(|e| e.code == "ILO-T008"
-                && e.message.contains("braceless-guard tail value type mismatch")),
-            "expected ILO-T008 braceless-guard-tail diagnostic, got {errors:?}"
+            parse_errors.iter().any(|e| e.code == "ILO-P023"),
+            "expected ILO-P023 (guard-in-lambda) at parse time, got {parse_errors:?}"
         );
     }
 
@@ -12828,7 +12838,12 @@ mod tests {
             .iter()
             .filter(|e| e.code == "ILO-T005")
             .collect();
-        assert_eq!(t005.len(), 1, "expected one ILO-T005, got {:?}", result.errors);
+        assert_eq!(
+            t005.len(),
+            1,
+            "expected one ILO-T005, got {:?}",
+            result.errors
+        );
         let hint = t005[0]
             .hint
             .as_ref()
