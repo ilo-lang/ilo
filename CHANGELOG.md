@@ -1,5 +1,7 @@
 # Changelog
 
+For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
+
 ## Unreleased
 
 ### Added
