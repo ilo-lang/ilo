@@ -372,6 +372,31 @@ fn match_bare_bool_with_let_body_suggests_eq_true_form() {
 }
 
 #[test]
+fn match_bare_bool_hint_names_guard_match_and_ternary_rewrites() {
+    // ILO-461: `?fits{...}` parses as match-on-bool; the hint must name the
+    // canonical bool-conditional rewrites (guard, braced-conditional,
+    // ternary, explicit true/false match arms).
+    let err = run_err("go>n;fits=true;errs=0;?fits{errs=+errs 1};errs");
+    assert!(err.contains("ILO-P011"), "stderr: {err}");
+    assert!(
+        err.contains("=fits true body"),
+        "should suggest guard form `=fits true body`: {err}"
+    );
+    assert!(
+        err.contains("=fits true{body}"),
+        "should still suggest braced-conditional `=fits true{{body}}`: {err}"
+    );
+    assert!(
+        err.contains("?fits a b") || err.contains("?fits{a}{b}"),
+        "should suggest a ternary form: {err}"
+    );
+    assert!(
+        err.contains("true:a") && err.contains("false:b"),
+        "should suggest explicit `true:`/`false:` match arms: {err}"
+    );
+}
+
+#[test]
 fn match_bare_bool_does_not_fire_on_real_pattern() {
     // `~v:body` is a real Ok-pattern arm — must not trigger the hint.
     run_ok("go>R n t;r=~5;?r{~v:v;^er:0}");
