@@ -835,6 +835,16 @@ statement boundary; bind the chain to a local first. For example, split \
                 }
                 self.parse_fn_decl()
             }
+            // `^<YY.M>` version pragma — only valid as the very first token in the
+            // file (pos == 0).  Recognised here rather than in the lexer because
+            // `^` has a second meaning (Err-constructor) everywhere else, and a
+            // lexer token split for file-start context adds significant complexity.
+            Some(Token::Caret)
+                if self.pos == 0
+                    && matches!(self.token_at(self.pos + 1), Some(Token::Number(n)) if *n > 0.0) =>
+            {
+                self.parse_version_pragma()
+            }
             Some(tok) => {
                 let msg = format!("expected declaration, got {}", tok.user_facing_name());
                 let hint = match tok {
@@ -3341,6 +3351,32 @@ statement boundary; bind the chain to a local first. For example, split \
                 operand: Box::new(inner),
             }))
         }
+    }
+
+    /// Parse `^<YY.M>` at position 0 — file-level version pragma.
+    /// Only called when `self.pos == 0` and the next token is a positive number.
+    /// Consumes `^` and the version number; returns `Decl::VersionPragma`.
+    fn parse_version_pragma(&mut self) -> Result<Decl> {
+        let start = self.peek_span();
+        self.expect(&Token::Caret)?;
+        let version = match self.peek().cloned() {
+            Some(Token::Number(n)) => {
+                self.advance();
+                n
+            }
+            tok => {
+                return Err(self.error(
+                    "ILO-P001",
+                    format!(
+                        "expected version number after `^`, got {}",
+                        tok.as_ref()
+                            .map_or("EOF".to_string(), |t| t.user_facing_name())
+                    ),
+                ));
+            }
+        };
+        let span = start.merge(self.prev_span());
+        Ok(Decl::VersionPragma { version, span })
     }
 
     /// Parse `^` at statement position — Err constructor: `^expr`
@@ -7878,6 +7914,58 @@ mod tests {
         assert!(
             matches!(&arms[0].body[0].node, Stmt::Expr(Expr::Err(_))),
             "expected Err expr in first arm"
+        );
+    }
+
+    /// ILO-451 regression: `^26.5` at top of file must parse as VersionPragma,
+    /// not emit ILO-P001.  Covers the general `^YY.M` form and verifies that
+    /// a following function declaration still parses correctly.
+    #[test]
+    fn version_pragma_accepted_at_file_start() {
+        // Plain pragma, no following decl
+        let (prog, errs) = parse_str_errors("^26.5");
+        assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+        assert_eq!(prog.declarations.len(), 1);
+        assert!(
+            matches!(&prog.declarations[0], Decl::VersionPragma { version, .. } if (*version - 26.5).abs() < 1e-9),
+            "expected VersionPragma(26.5), got {:?}",
+            prog.declarations[0]
+        );
+
+        // Pragma followed by a function
+        let (prog2, errs2) = parse_str_errors("^26.5\nmain>_;prnt \"ok\"");
+        assert!(errs2.is_empty(), "unexpected errors: {:?}", errs2);
+        assert_eq!(prog2.declarations.len(), 2);
+        assert!(
+            matches!(&prog2.declarations[0], Decl::VersionPragma { .. }),
+            "first decl should be VersionPragma"
+        );
+        assert!(
+            matches!(&prog2.declarations[1], Decl::Function { name, .. } if name == "main"),
+            "second decl should be main function"
+        );
+    }
+
+    /// `^` followed by a non-numeric token at position 0 must still error —
+    /// it is not a version pragma and should not silently produce garbage.
+    #[test]
+    fn caret_at_file_start_non_version_is_error() {
+        let (_, errs) = parse_str_errors("^\"not a version\"");
+        assert!(
+            !errs.is_empty(),
+            "expected parse error for non-numeric pragma"
+        );
+    }
+
+    /// `^` with a number NOT at position 0 must still be treated as an
+    /// Err-constructor expression inside a function body (regression guard).
+    #[test]
+    fn caret_mid_file_is_err_constructor_not_pragma() {
+        let (prog, errs) = parse_str_errors("f x:n>n;^x");
+        assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+        assert!(
+            matches!(&prog.declarations[0], Decl::Function { .. }),
+            "should be a function decl"
         );
     }
 

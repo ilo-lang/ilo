@@ -2486,6 +2486,7 @@ impl RegCompiler {
                 | Decl::SumType { .. }
                 | Decl::Alias { .. }
                 | Decl::Use { .. }
+                | Decl::VersionPragma { .. }
                 | Decl::Error { .. } => {}
             }
         }

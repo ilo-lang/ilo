@@ -4624,11 +4624,12 @@ impl VerifyContext {
                         },
                     );
                 }
-                Decl::TypeDef { .. } => {} // already handled
-                Decl::SumType { .. } => {} // already handled above
-                Decl::Alias { .. } => {}   // already handled
-                Decl::Use { .. } => {}     // resolved before verify — skip
-                Decl::Error { .. } => {}   // poison node — skip silently
+                Decl::TypeDef { .. } => {}       // already handled
+                Decl::SumType { .. } => {}       // already handled above
+                Decl::Alias { .. } => {}         // already handled
+                Decl::Use { .. } => {}           // resolved before verify — skip
+                Decl::VersionPragma { .. } => {} // pragma — no verification needed
+                Decl::Error { .. } => {}         // poison node — skip silently
             }
         }
 

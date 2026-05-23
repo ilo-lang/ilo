@@ -737,7 +737,11 @@ pub fn call_builtin_for_bridge_with_program(
                         .insert(v.name.clone(), (name.clone(), v.payload.is_some()));
                 }
             }
-            Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
+            Decl::TypeDef { .. }
+            | Decl::Alias { .. }
+            | Decl::Use { .. }
+            | Decl::VersionPragma { .. }
+            | Decl::Error { .. } => {}
         }
     }
     call_function(&mut env, name, args)
@@ -794,7 +798,11 @@ fn run_with_env(
                         .insert(v.name.clone(), (name.clone(), v.payload.is_some()));
                 }
             }
-            Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
+            Decl::TypeDef { .. }
+            | Decl::Alias { .. }
+            | Decl::Use { .. }
+            | Decl::VersionPragma { .. }
+            | Decl::Error { .. } => {}
         }
     }
 
@@ -9752,6 +9760,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         Decl::SumType { .. } => Err(RuntimeError::new(
             "ILO-R002",
             format!("{} is a sum type, not a callable function", name),
+        )),
+        Decl::VersionPragma { .. } => Err(RuntimeError::new(
+            "ILO-R002",
+            format!("{} is a version pragma, not a callable function", name),
         )),
     }
 }
