@@ -10,8 +10,9 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::Command;
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -283,6 +284,149 @@ fn backend_get_stream_native_iterates_lines() {
     let _ = srv.join().expect("server thread panicked");
 
     assert_eq!(collected, vec!["one", "two", "three"]);
+}
+
+// ── prompt-yield: first line arrives before the second is sent (ILO-489) ────
+
+/// Spawn a server that emits one short chunk, flushes, waits `gap`, then emits
+/// a second chunk, *without* closing the connection until told. Reports (over
+/// `tx`) the instant the second line is written, so the test can prove the
+/// client surfaced line 1 strictly before line 2 hit the wire.
+///
+/// This is the regression for ILO-489: a `BufReader::lines()` wrapper would
+/// block on a full read-buffer fill and not yield line 1 until line 2 (or the
+/// connection close) arrived. The incremental byte-iterator splitter yields
+/// line 1 the instant its `\n` lands.
+fn spawn_slow_drip_server(
+    gap: Duration,
+) -> (SocketAddr, mpsc::Receiver<Instant>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("local_addr");
+    let (tx, rx) = mpsc::channel::<Instant>();
+
+    let handle = thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = [0u8; 8192];
+        let _ = stream.read(&mut buf);
+
+        let head = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let _ = stream.write_all(head);
+        let _ = stream.flush();
+
+        // First line, flushed immediately.
+        let _ = stream.write_all(b"6\r\nfirst\n\r\n");
+        let _ = stream.flush();
+
+        // Idle, mimicking an SSE upstream between events.
+        thread::sleep(gap);
+
+        // Mark the instant line 2 goes on the wire, then send it.
+        let _ = tx.send(Instant::now());
+        let _ = stream.write_all(b"7\r\nsecond\n\r\n");
+        let _ = stream.write_all(b"0\r\n\r\n");
+        let _ = stream.flush();
+    });
+
+    (addr, rx, handle)
+}
+
+#[test]
+fn get_stream_yields_first_line_before_second_is_sent() {
+    use ilo::interpreter::http_wasm::default_backend;
+
+    let gap = Duration::from_millis(300);
+    let (addr, rx, srv) = spawn_slow_drip_server(gap);
+    let url = format!("http://{addr}/events");
+
+    let backend = default_backend();
+    let mut iter = backend
+        .get_stream(&url, &[])
+        .expect("backend get_stream should open the connection");
+
+    // Pull the first line. With prompt yielding this returns as soon as
+    // "first\n" arrives, well before the server sends line 2.
+    let first = iter
+        .next()
+        .expect("expected a first line")
+        .expect("first line read ok");
+    let first_seen = Instant::now();
+    assert_eq!(first, "first");
+
+    // The server only stamps `line2_sent_at` after its `gap` sleep. Prove the
+    // client saw line 1 strictly before line 2 hit the wire (with margin).
+    let line2_sent_at = rx
+        .recv()
+        .expect("server should report when it sends line 2");
+    assert!(
+        first_seen < line2_sent_at,
+        "first line should arrive before line 2 is sent: first_seen={first_seen:?} line2_sent_at={line2_sent_at:?}"
+    );
+    assert!(
+        line2_sent_at.duration_since(first_seen) > gap / 2,
+        "first line should arrive with comfortable margin before line 2 ({:?} elapsed, gap {:?})",
+        line2_sent_at.duration_since(first_seen),
+        gap,
+    );
+
+    // Drain the rest so the connection closes cleanly.
+    let second = iter
+        .next()
+        .expect("expected a second line")
+        .expect("second line read ok");
+    assert_eq!(second, "second");
+    assert!(iter.next().is_none(), "stream should end after two lines");
+
+    srv.join().expect("server thread panicked");
+}
+
+// ── trailing partial line (no final newline) is yielded at EOF ──────────────
+
+/// Spawn a server whose final chunk has *no* trailing newline, then closes.
+/// The splitter must still surface that partial line once before ending.
+fn spawn_no_final_newline_server() -> (SocketAddr, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let handle = thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = [0u8; 8192];
+        let _ = stream.read(&mut buf);
+
+        let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let _ = stream.write_all(head);
+        // "done\n" then "tail" with no newline, then terminate.
+        let _ = stream.write_all(b"5\r\ndone\n\r\n");
+        let _ = stream.write_all(b"4\r\ntail\r\n");
+        let _ = stream.write_all(b"0\r\n\r\n");
+        let _ = stream.flush();
+    });
+
+    (addr, handle)
+}
+
+#[test]
+fn get_stream_yields_trailing_partial_line() {
+    use ilo::interpreter::http_wasm::default_backend;
+
+    let (addr, srv) = spawn_no_final_newline_server();
+    let url = format!("http://{addr}/partial");
+
+    let backend = default_backend();
+    let iter = backend
+        .get_stream(&url, &[])
+        .expect("backend get_stream should open the connection");
+    let collected: Vec<String> = iter.map(|r| r.expect("line read ok")).collect();
+    srv.join().expect("server thread panicked");
+
+    assert_eq!(
+        collected,
+        vec!["done", "tail"],
+        "trailing newline-less line should be yielded at EOF"
+    );
 }
 
 // Silence unused-import warning under cfgs that drop one of the helpers.
