@@ -579,6 +579,19 @@ pub enum Builtin {
     // the full parent environment. Opt-in; prefer `run2` which scrubs secrets by default.
     // Tree-bridge eligible alongside `run2`.
     Run2FullEnv,
+    // `spawn fn args... > _` (ILO-477) — fire-and-forget background OS thread.
+    // First arg is the callable (FnRef / Text / Closure); remaining args are
+    // forwarded to it. Returns Nil immediately; the thread runs to completion
+    // independently. Runtime errors and panics inside the thread are logged to
+    // stderr and the thread dies; the parent is unaffected.
+    //
+    // Caps are inherited from the parent via `Arc::clone(&env.caps)` — no new
+    // cap flag. Tree-walker only at runtime; VM/Cranelift inherit via the
+    // tree-bridge (same shape as `par-map` / `for-line`).
+    //
+    // Out of scope for v1 (separate tickets): join handles, channels,
+    // supervision, cancellation, async runtime.
+    Spawn,
 }
 
 impl Builtin {
@@ -744,6 +757,7 @@ impl Builtin {
             "get-stream-h" => Some(Builtin::GetStreamH),
             "pst-stream" => Some(Builtin::PostStream),
             "pst-stream-h" => Some(Builtin::PostStreamH),
+            "spawn" => Some(Builtin::Spawn),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
             "mset" => Some(Builtin::Mset),
@@ -983,6 +997,7 @@ impl Builtin {
             Builtin::GetStreamH => "get-stream-h",
             Builtin::PostStream => "pst-stream",
             Builtin::PostStreamH => "pst-stream-h",
+            Builtin::Spawn => "spawn",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
             Builtin::Mset => "mset",
@@ -1497,6 +1512,11 @@ impl Builtin {
         Builtin::GetStreamH,
         Builtin::PostStream,
         Builtin::PostStreamH,
+        // `spawn fn args... > _` (ILO-477) — fire-and-forget background thread.
+        // Tree-walker only at runtime; VM/Cranelift inherit via the tree
+        // bridge. Variadic shape: first arg is the callable, the rest are
+        // forwarded to it. Appended last to preserve every existing on-wire tag.
+        Builtin::Spawn,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1544,7 +1564,9 @@ impl Builtin {
             | Builtin::GetStream
             | Builtin::GetStreamH
             | Builtin::PostStream
-            | Builtin::PostStreamH => "experimental",
+            | Builtin::PostStreamH
+            // Spawn (ILO-477) — experimental until released.
+            | Builtin::Spawn => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1942,6 +1964,7 @@ mod tests {
             "get-stream-h",
             "pst-stream",
             "pst-stream-h",
+            "spawn",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -2231,6 +2254,7 @@ mod tests {
             "get-stream-h",
             "pst-stream",
             "pst-stream-h",
+            "spawn",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

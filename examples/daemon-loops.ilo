@@ -1,0 +1,32 @@
+-- daemon-loops: three concurrent background loops via `spawn` (ILO-477).
+--
+-- `spawn fn args... > _` runs `fn args...` on a background OS thread and
+-- returns Nil immediately. Errors and panics inside the thread go to
+-- stderr; the parent is unaffected.
+--
+-- Use case: the load-bearing example is `ilo-lang/crew`'s per-machine
+-- agent daemon — it needs an MCP HTTP server in the foreground, an SSE
+-- consumer in the background, and a write-behind queue drainer also in
+-- the background. Without `spawn` the agent has to ship three glued
+-- processes; with it, a single ilo binary owns all three loops.
+--
+-- Out of scope for v1 (separate tickets): join handles, channels,
+-- supervision, cancellation, async runtime. This is fire-and-forget by
+-- design; treat each spawned loop as a long-lived process and write its
+-- state to disk or send it over the wire if you need cross-thread comms.
+
+-- ticker: print a labelled line every ~100ms for `n` iterations.
+ticker label:t n:n>_
+@i 0..n{prnt (fmt "{} tick {}" label i);sleep 100}
+
+-- main: spawn three tickers and wait long enough for them to finish.
+-- Output is interleaved (non-deterministic order) so we don't pin an
+-- exact stdout — the example is timing-sensitive by nature.
+main>_
+spawn ticker "alpha" 3;spawn ticker "beta" 3;spawn ticker "gamma" 3;sleep 500;prnt "parent done"
+
+-- run: ilo run examples/daemon-loops.ilo main
+-- Expected: nine "<label> tick <n>" lines interleaved across the three
+-- threads, followed by "parent done". No -- out: assertion: ordering
+-- depends on the OS scheduler, so this example is excluded from the
+-- examples_engines harness (cases with no -- out: are skipped).

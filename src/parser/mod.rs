@@ -6266,6 +6266,13 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // or `map fn ctx xs`: the verifier accepts 2 or 3 args and the
         // parser's greedy expansion of slot 1 picks up `n` when present.
         ("par-map", 2, &[0]),
+        // spawn fn args... (ILO-477). Variadic: slot 0 is the fn-ref, every
+        // subsequent operand is a forwarded positional arg. The minimum-arity
+        // entry (1) keeps slot 0 in fn-ref position so `spawn worker 1` parses
+        // as `Call(spawn, [Ref(worker), Number(1)])` rather than
+        // `Call(spawn, [Call(worker, [1])])`. Trailing args are picked up by
+        // the greedy positional loop in `parse_call_arg`'s caller.
+        ("spawn", 1, &[0]),
         // I/O
         ("prnt", 1, &[]),
         ("wr", 2, &[]),
