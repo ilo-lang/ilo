@@ -44,8 +44,15 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 -- Inline: semicolons separate statements; last expression returns.
 add-and-double x:n y:n>n;s=+x y;*s 2
 
--- Brace-block: explicit braces wrap the whole body (same semantics).
+-- Brace-block, single-line: explicit braces wrap the whole body (same semantics).
 add-and-double x:n y:n>n { s = +x y; *s 2 }
+
+-- Brace-block, multi-line: newlines inside `{ ... }` act as statement separators
+-- (same as `;`). The brace form may be inline or multi-line interchangeably.
+add-and-double x:n y:n>n {
+  s = +x y
+  *s 2
+}
 ```
 
 Multi-step transforms bind intermediate results as locals:
