@@ -2083,6 +2083,42 @@ change meaning for legitimate code. The diagnostic-only rule keeps the
 single-shape parser rule and tells the agent which rewrite to apply.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T048",
+        phase: Phase::Verify,
+        short: "loop iterator rebound inside its own loop",
+        long: r#"## ILO-T048: loop iterator rebound inside its own loop
+
+`x = +x 1` (or any rebind) of the loop iterator variable inside its own
+`@x ...` or `@x start..end` body has no effect across iterations — the
+loop engine resets the iterator from its cursor each iteration, so the
+rebind is silently discarded. Classic wrong-output footgun: the program
+runs cleanly and produces a quietly wrong result.
+
+**Trips this warning:**
+
+    f xs:L n>n
+      @x xs{x=+x 1}    -- the +1 is lost each iteration
+      0
+
+**Fixes**
+
+If you want a running accumulator, bind a *different* name and update it:
+
+    f xs:L n>n
+      acc=0
+      @x xs{acc=+acc x}
+      acc
+
+Or reach for `fld` directly:
+
+    f xs:L n>n;fld {a x>+a x} xs 0
+
+Nested loops: only the innermost binding triggers the warning. Rebinding
+the outer-loop variable from within an inner loop is fine — that's a
+different scope.
+"#,
+    },
 ];
 
 /// Look up an error entry by code (e.g. `"ILO-T005"`).
