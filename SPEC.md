@@ -439,6 +439,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `(x:n>n;>=x 0 0;x)` (braceless guard inside lambda) | `(x:n>n;?>=x 0 0 x)` (prefix ternary) or `(x:n>n;?>=x 0{0}{x})` (braced match) | `ILO-P023` |
 | `+a+" "+b+c` (infix-style chain with leading prefix `+`) | drop the leading `+`: `a+" "+b+c`; or `fmt "{} {} {}" a b c`; or nested prefix `+a +" " +b c`; or bind intermediates | `ILO-P010` |
 | `fmt "{}" +0.1 0.2` -> `0.30000000000000004` (float Display = full IEEE 754) | `fmt "{:.2f}" (+0.1 0.2)` for human-readable; `fmt2 v N` for precise dp | docs only |
+| `*/ sz 0.3 0` ("scale then div by 0") | `*/a b c` is `(a/b)*c` — b is the divisor; for `(a*b)/c` use `/*sz 0.3 0` or bind `r=*sz 0.3;/r 0` | hint only |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
@@ -579,11 +580,13 @@ can be `n`, so the parse silently produces the wrong arithmetic.
 The outer prefix op binds the inner prefix subexpression as its **left** operand, regardless of operator precedence. With two same-precedence ops side by side this is easy to misread:
 
 ```
-*/a b c     -- (a/b) * c   ← NOT (a*b)/c
+*/a b c     -- (a/b) * c   ← NOT (a*b)/c, NOT a 3-arg compound op
 /*a b c     -- (a*b) / c   ← NOT (a/b)*c
 +-a b c     -- (a-b) + c   ← NOT (a+b)-c
 -+a b c     -- (a+b) - c   ← NOT (a-b)+c
 ```
+
+`*/` is **not** a 3-arg compound multiply-then-divide. It is the prefix-`*` op with a nested prefix-`/` subexpression as its left operand, so the divisor is the **second** atom (`b`), not the third (`c`). Reading agents commonly mis-write `*/ sz 0.3 0` expecting `sz * 0.3 / 0` and trip a divide-by-zero from the `/0.3`-shaped subexpression once the inputs make `b` zero, since they assumed the trailing `0` was the divisor.
 
 The runtime emits a `hint:` diagnostic when one of these four pairs appears at a prefix position, since the parse order disagrees with the natural left-to-right reading. To force the other grouping, swap the ops or bind the inner result first:
 
