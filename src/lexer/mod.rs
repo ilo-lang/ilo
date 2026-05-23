@@ -1782,14 +1782,20 @@ fn backslash_lambda_hint(source: &str, after_backslash: usize) -> Option<String>
     if i >= bytes.len() {
         return None;
     }
-    // Accept `{body}` (the user-targeted shape) or `-> body` (Haskell).
-    let looks_like_lambda =
-        bytes[i] == b'{' || (i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'>');
+    // Accept `{body}` (the user-targeted shape), `-> body` (Haskell), or the
+    // typed shape `:t> body` (ML/F#-style — `\x:n>+x 1`). The typed form is
+    // the one ILO-456 personas reach for after the bare-param brace form
+    // accepts `{x> body}` but the typed-brace `{x:n> body}` is rejected.
+    let typed = bytes[i] == b':';
+    let looks_like_lambda = bytes[i] == b'{'
+        || (i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'>')
+        || typed;
     if !looks_like_lambda {
         return None;
     }
     Some(format!(
-        "`\\{param}{{body}}` is a Haskell/Rust lambda shorthand. ilo lambdas are parenthesised: `({param}:t>r;body)` (substitute the param type and return type). Example: `map (x:n>n;+x 1) xs`."
+        "`\\{param}{}` is a Haskell/Rust/ML lambda shorthand. ilo has two canonical lambda forms — paren (with types) and brace (no types): at a HOF call site write `map ({param}:t>r;body) xs` or `map {{{param}> body}} xs`. Example: `map ({param}:n>n;+{param} 1) xs` or `map {{{param}> +{param} 1}} xs`.",
+        if typed { ":t>body" } else if bytes[i] == b'{' { "{body}" } else { " -> body" }
     ))
 }
 
