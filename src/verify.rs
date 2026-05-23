@@ -5313,6 +5313,7 @@ impl VerifyContext {
                 condition,
                 body,
                 else_body,
+                braceless,
                 ..
             } => {
                 let _ = self.infer_expr(func, scope, condition, span);
@@ -5352,6 +5353,49 @@ impl VerifyContext {
                     scope.push(HashMap::new());
                     let _else_ty = self.verify_body(func, scope, eb);
                     scope.pop();
+                }
+
+                // ILO-468: a braceless guard early-returns the value of its
+                // tail expression. The function's existing return-type check
+                // only sees the body's *last* statement, so a guard with a
+                // type-wrong tail value followed by a type-correct fallback
+                // (`cond wrong-val;fallback`) slips through silently. Surface
+                // the mismatch here, against the enclosing function's
+                // declared return type.
+                if *braceless
+                    && let Some(last) = body.last()
+                    && let Stmt::Expr(_) = &last.node
+                    && body_ty != Ty::Unknown
+                    && let Some(sig) = self.functions.get(func)
+                {
+                    let expected = sig.return_type.clone();
+                    if expected != Ty::Unknown
+                        && !compatible_ext(&body_ty, &expected, &self.types)
+                    {
+                        let hint = match (&body_ty, &expected) {
+                            (Ty::Number, Ty::Text) => {
+                                Some("use 'str' to convert: str <expr>".to_string())
+                            }
+                            (Ty::Text, Ty::Number) => {
+                                Some("use 'num' to parse text (returns R n t)".to_string())
+                            }
+                            (Ty::Number, Ty::Bool) => Some(
+                                "guards return early — the tail value must be the function's return type. To test for non-zero, use `!=val 0`; for bool from comparison, the comparison itself already yields bool".to_string(),
+                            ),
+                            _ => Some(format!(
+                                "the braceless-guard tail value is an early return — change it to {expected}, or adjust the function's return type"
+                            )),
+                        };
+                        self.err(
+                            "ILO-T008",
+                            func,
+                            format!(
+                                "braceless-guard tail value type mismatch: expected {expected}, got {body_ty}"
+                            ),
+                            hint,
+                            Some(last.span),
+                        );
+                    }
                 }
 
                 body_ty
@@ -7923,6 +7967,59 @@ mod tests {
     #[test]
     fn valid_negated_guard() {
         assert!(parse_and_verify("f x:b>t;!x{\"yes\"};\"no\"").is_ok());
+    }
+
+    // ILO-468: a braceless guard early-returns its tail value. When the tail
+    // value's type doesn't match the function's declared return type, the
+    // fallback expression after the guard could mask the mismatch — the
+    // function body's last_ty equals the fallback's type, so the existing
+    // return-type check passes and the bug silently slips through.
+    #[test]
+    fn ilo468_braceless_guard_tail_wrong_type_named_fn() {
+        // pred returns b (bool); guard tail `1` is n (number); fallback `false`
+        // is bool, which by itself satisfies the function return type. Without
+        // the guard-tail check this passed verification silently.
+        let result = parse_and_verify("pred q:t>b;=q \"\" 1;false");
+        assert!(result.is_err(), "expected ILO-T008 for guard-tail mismatch");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-T008"
+                && e.message.contains("braceless-guard tail value type mismatch")),
+            "expected ILO-T008 braceless-guard-tail diagnostic, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn ilo468_braceless_guard_tail_wrong_type_inline_lambda() {
+        // Same trap inside an inline lambda passed to `flt`. The synthetic
+        // lambda function `__lit_0` must surface the mismatch.
+        let result =
+            parse_and_verify("m xs:L t>L t;flt (x:t>b;=x \"\" 1;false) xs");
+        assert!(result.is_err(), "expected ILO-T008 for lambda guard-tail mismatch");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.code == "ILO-T008"
+                && e.message.contains("braceless-guard tail value type mismatch")),
+            "expected ILO-T008 braceless-guard-tail diagnostic, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn ilo468_braceless_guard_tail_matching_type_ok() {
+        // Tail value is bool (matches declared return) — no diagnostic.
+        assert!(parse_and_verify("pred q:t>b;=q \"\" true;false").is_ok());
+    }
+
+    #[test]
+    fn ilo468_braceless_guard_negated_matching_type_ok() {
+        // `>` form of braceless guard, matching type — still clean.
+        assert!(parse_and_verify("pred q:t>b;>q \"\" false;true").is_ok());
+    }
+
+    #[test]
+    fn ilo468_braceless_guard_number_return_ok() {
+        // Function declared to return n; guard tail is also n — clean.
+        assert!(parse_and_verify("fz n:n>n;=n 0 99;n").is_ok());
     }
 
     #[test]

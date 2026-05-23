@@ -441,6 +441,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `fmt "{}" +0.1 0.2` -> `0.30000000000000004` (float Display = full IEEE 754) | `fmt "{:.2f}" (+0.1 0.2)` for human-readable; `fmt2 v N` for precise dp | docs only |
 | `*/ sz 0.3 0` ("scale then div by 0") | `*/a b c` is `(a/b)*c` — b is the divisor; for `(a*b)/c` use `/*sz 0.3 0` or bind `r=*sz 0.3;/r 0` | hint only |
 | `?h <bool-ref> a b` (keyword form on bare ref) | `?<bool-ref> a b` (bare-bool prefix ternary) | `ILO-W003` |
+| `pred q:t>b;=q "" 1;false` (guard tail literal) | `=q "" true;false` (tail value must match declared return type) | `ILO-T008` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
