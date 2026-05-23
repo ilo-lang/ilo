@@ -54,40 +54,7 @@ ilo has no globals. Thread state through function args (in-run) or persist to a 
 
 **Closure-threading** (in-run cache, paginated fetch, rate-limit window). Pass state in, return state out:
 
-**Canonical pagination idiom** (ILO-421): empty-token termination + tail-recursive accumulator + `!` Result propagation. See `examples/pagination.ilo` for the fully-tested, multi-case reference.
-
-```
--- fetch-page: one HTTP page → Result-wrapped [items, next-token].
--- next-token="" signals end-of-pages (server convention).
-fetch-page url:t token:t>R (L _) t
-  b=get! (fmt "{}?cursor={}" url token)
-  items=jpar-list! b
-  nxt=default-on-err (jpth b "next") ""
-  ~[items nxt]
-
--- fetch-all: tail-recursive accumulator.  Empty token = done.
--- `!` on fetch-page propagates Err without a match arm.
-fetch-all url:t token:t acc:L n>R (L n) t
-  =token "" ~acc
-  r=fetch-page! url token
-  page=at r 0
-  nxt=at r 1
-  fetch-all url nxt +acc page
-
--- Entry: seed with first-page token (often "0", "1", or "" per API).
-all-items url:t>R (L n) t;fetch-all url "0" []
-
--- Streaming count variant (no accumulator growth):
-count-all url:t token:t n:n>R n t
-  =token "" ~n
-  r=fetch-page! url token
-  fetch-all url (at r 1) +n len (at r 0)
-
--- Post-collection fold (fld threads acc over the gathered list):
-sum-all url:t>R n t;xs=fetch-all! url "0" [];~fld (a:n x:n>n;+a x) xs 0
-```
-
-Key rules: (1) termination guard (`=token "" ~acc`) must be the **first** statement so the recursive call stays in tail position; (2) use `fetch-page!` not `fetch-page` so Err propagates through `fetch-all` without explicit match arms; (3) `nxt` comes from `at r 1`, not from re-parsing the response — `jpth` already typed it.
+**Canonical pagination idiom** (ILO-421): empty-token termination + tail-recursive accumulator + `!` Result propagation. See `examples/pagination.ilo` for the worked reference. Key rules: (1) termination guard (`=token "" ~acc`) is the **first** statement so the recursive call stays tail-position; (2) use `fetch-page!` so Err propagates through `fetch-all` without explicit match arms; (3) pull `nxt` from `at r 1`, not by re-parsing — `jpth` already typed it.
 
 **File-backed** (cross-run OAuth token, refresh on expiry). Read cached value, do work, write refreshed value back. `wr`/`rd` survive across runs; `now-ms` gives a TTL stamp.
 
@@ -123,3 +90,7 @@ r.exit    -- number (0 = success)
 `now` (s), `now-ms`, `sleep ms`, `clock`. Date parsing/formatting (`dtfmt`, `dtparse`, `dtparse-rel`) lives in `ilo-builtins-text`.
 
 `tz-offset tz:t epoch:n > R n t` - DST-aware UTC offset (s) for IANA tz; east-positive.
+
+## Concurrency
+
+`spawn fn args... > _` (ILO-477) — fire-and-forget background OS thread. Returns nil immediately; the thread runs `fn args...` to completion. Errors and panics inside the thread go to stderr; the parent is unaffected. Caps inherited from parent (no new flag). Use for daemon-style programs needing multiple concurrent loops (canonical case: HTTP server + SSE consumer + queue drainer in one binary). V1 is deliberately narrow: no join handle, no channels, no supervision, no cancellation. Communicate cross-thread via files / HTTP. Tree-walker only at runtime; VM and Cranelift bridge through it. See `examples/daemon-loops.ilo`.
