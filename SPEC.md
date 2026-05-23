@@ -774,6 +774,10 @@ Called like functions, compiled to dedicated opcodes.
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `world` | return the current capability World token (see [Capability World](#capability-world)) | `W` |
+| `world-no-net` | construct a `W` with `net=false`; read/write/run from CLI flags | `W` |
+| `read-only w` | derive a `W` from `w` with `net=false`, `write=false`, `run=false`; read kept | `W` |
+| `net-only w` | derive a `W` from `w` with `read=false`, `write=false`, `run=false`; net kept | `W` |
+| `no-net w` | derive a `W` from `w` with `net=false`; read/write/run kept | `W` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
@@ -1281,6 +1285,24 @@ main>t;
   r=fetch w "https://api.example.com/data"
   ...
 ```
+
+**Sub-world masking (ILO-392).** Three builtins derive a more-restricted `W` from an existing one:
+
+| Builtin | net | read | write | run |
+|---------|-----|------|-------|-----|
+| `read-only w` | false | kept | false | false |
+| `net-only w` | kept | false | false | false |
+| `no-net w` | false | kept | kept | kept |
+
+```
+ro = read-only world        -- W: only read permitted; net/write/run=false
+nn = no-net world           -- W: net=false; read/write/run from CLI flags
+
+-- Pass a restricted world to a sub-function:
+fetch-only w:W url:t>R t t;get (no-net w) url  -- ERROR ILO-T044: no-net w has net=false
+```
+
+`read-only` and `no-net` statically deny net access, so the verifier emits **ILO-T044** if any net builtin is called in a scope where such a World is bound. `read-only` and `net-only` also statically deny write/run — ILO-T044 fires for `wr`/`wra`/`wro`/`wrl` and `run` calls respectively.
 
 See `examples/capability-world.ilo` and `examples/world-static-enforce.ilo` for working examples.
 

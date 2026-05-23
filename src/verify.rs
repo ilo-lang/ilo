@@ -29,8 +29,15 @@ pub enum Ty {
     /// - `None`        — dynamic (constructed via `world`, value is runtime-determined)
     /// - `Some(false)` — statically known to deny net (constructed via `world-no-net`)
     /// - `Some(true)`  — statically known to allow net (future use)
+    ///
+    /// Static capability flags for sub-world masking (ILO-392):
+    /// - `None`        — dynamic (constructed via `world` or passed as `w:W` param)
+    /// - `Some(false)` — statically known to deny that capability
+    /// - `Some(true)`  — statically known to allow that capability
     World {
         net_known: Option<bool>,
+        write_known: Option<bool>,
+        run_known: Option<bool>,
     },
     Unknown,
     /// 32-bit unsigned integer — stored as f64 in tree-walker; exact up to 2^32.
@@ -241,7 +248,11 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
                 resolved.clone()
             } else if name == "World" {
                 // `World` is the builtin capability token type (ILO-68).
-                Ty::World { net_known: None }
+                Ty::World {
+                    net_known: None,
+                    write_known: None,
+                    run_known: None,
+                }
             } else if name.len() == 1
                 && name.chars().next().is_some_and(|c| c.is_lowercase())
                 && !matches!(name.as_str(), "n" | "t" | "b")
@@ -799,6 +810,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("env-all", &[], "R (M t t) t"),
     ("world", &[], "World"),
     ("world-no-net", &[], "World"),
+    ("read-only", &["World"], "World"),
+    ("net-only", &["World"], "World"),
+    ("no-net", &["World"], "World"),
     ("jpth", &["t", "t"], "R ? t"),
     ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
@@ -4068,7 +4082,14 @@ fn builtin_check_args(
             // as booleans; functions that perform I/O accept it as an explicit
             // proof-of-authority parameter. net_known=None because the actual
             // net cap value is determined at runtime from CLI --allow-net flags.
-            (Ty::World { net_known: None }, errors)
+            (
+                Ty::World {
+                    net_known: None,
+                    write_known: None,
+                    run_known: None,
+                },
+                errors,
+            )
         }
         "world-no-net" => {
             // world-no-net > World — construct a World with net=false.
@@ -4077,6 +4098,44 @@ fn builtin_check_args(
             (
                 Ty::World {
                     net_known: Some(false),
+                    write_known: None,
+                    run_known: None,
+                },
+                errors,
+            )
+        }
+        "read-only" => {
+            // read-only w:W > W — derive a World with net=false, write=false, run=false.
+            // Read capability is inherited from the input (dynamic). ILO-392.
+            (
+                Ty::World {
+                    net_known: Some(false),
+                    write_known: Some(false),
+                    run_known: Some(false),
+                },
+                errors,
+            )
+        }
+        "net-only" => {
+            // net-only w:W > W — derive a World with read=false, write=false, run=false.
+            // Net capability is inherited from the input (dynamic). ILO-392.
+            (
+                Ty::World {
+                    net_known: None,
+                    write_known: Some(false),
+                    run_known: Some(false),
+                },
+                errors,
+            )
+        }
+        "no-net" => {
+            // no-net w:W > W — derive a World with net=false; read/write/run kept.
+            // Like world-no-net but operates on an existing World token. ILO-392.
+            (
+                Ty::World {
+                    net_known: Some(false),
+                    write_known: None,
+                    run_known: None,
                 },
                 errors,
             )
@@ -5804,6 +5863,12 @@ impl VerifyContext {
                     // access (net_known=Some(false)), reject at verify time.
                     // We only fire for syntactically known constructions (world-no-net);
                     // dynamic worlds (world builtin, function parameters) are skipped.
+                    // ILO-T044: static World capability enforcement (ILO-391/ILO-392).
+                    // When a net/write/run builtin is called and any variable in the
+                    // current scope is a World statically known to deny that capability,
+                    // reject at verify time.
+                    // We only fire for syntactically known constructions (world-no-net,
+                    // read-only, net-only, no-net); dynamic worlds are skipped.
                     if matches!(
                         callee.as_str(),
                         "get"
@@ -5824,7 +5889,8 @@ impl VerifyContext {
                                 if matches!(
                                     ty,
                                     Ty::World {
-                                        net_known: Some(false)
+                                        net_known: Some(false),
+                                        ..
                                     }
                                 ) {
                                     Some(name.clone())
@@ -5842,8 +5908,76 @@ impl VerifyContext {
                                     var
                                 ),
                                 Some(
-                                    "a World constructed with `world-no-net` denies network access; \
-                                     remove the net call or use a World with net=true"
+                                    "a World constructed with `world-no-net` or `read-only` denies \
+                                     network access; remove the net call or use a World with net=true"
+                                        .to_string(),
+                                ),
+                                Some(span),
+                            );
+                        }
+                    }
+                    // ILO-T044 write enforcement (ILO-392): wr/wra/wro/wrl builtins.
+                    if matches!(callee.as_str(), "wr" | "wra" | "wro" | "wrl") {
+                        let write_denied_var = scope.iter().rev().find_map(|frame| {
+                            frame.iter().find_map(|(name, ty)| {
+                                if matches!(
+                                    ty,
+                                    Ty::World {
+                                        write_known: Some(false),
+                                        ..
+                                    }
+                                ) {
+                                    Some(name.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        if let Some(var) = write_denied_var {
+                            self.err(
+                                "ILO-T044",
+                                func,
+                                format!(
+                                    "write builtin '{callee}' called but '{}' is a World with write=false",
+                                    var
+                                ),
+                                Some(
+                                    "a World constructed with `read-only` or `net-only` denies \
+                                     write access; remove the write call or use a World with write=true"
+                                        .to_string(),
+                                ),
+                                Some(span),
+                            );
+                        }
+                    }
+                    // ILO-T044 run enforcement (ILO-392): run builtin.
+                    if callee.as_str() == "run" {
+                        let run_denied_var = scope.iter().rev().find_map(|frame| {
+                            frame.iter().find_map(|(name, ty)| {
+                                if matches!(
+                                    ty,
+                                    Ty::World {
+                                        run_known: Some(false),
+                                        ..
+                                    }
+                                ) {
+                                    Some(name.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                        if let Some(var) = run_denied_var {
+                            self.err(
+                                "ILO-T044",
+                                func,
+                                format!(
+                                    "run builtin called but '{}' is a World with run=false",
+                                    var
+                                ),
+                                Some(
+                                    "a World constructed with `read-only` or `net-only` denies \
+                                     process spawning; remove the run call or use a World with run=true"
                                         .to_string(),
                                 ),
                                 Some(span),
