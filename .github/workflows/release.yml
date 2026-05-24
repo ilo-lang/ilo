@@ -44,10 +44,15 @@ jobs:
         with:
           fetch-depth: 0
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .github/gitleaks.toml
+        # Use the gitleaks CLI directly rather than gitleaks-action, which now
+        # requires a paid licence key for organisation repos (GITLEAKS_LICENSE).
+        # The CLI binary is the same scanner, free for orgs, and keeps the
+        # release pipeline unblocked. Scans full git history (fetch-depth: 0).
+        run: |
+          GITLEAKS_VERSION=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --config .github/gitleaks.toml --redact --no-banner --exit-code 1
 
   build:
     needs: secret-scan
