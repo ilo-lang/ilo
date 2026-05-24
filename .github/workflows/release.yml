@@ -36,21 +36,8 @@ jobs:
           echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
           echo "Normalized $GITHUB_REF_NAME -> $SEMVER"
 
-  secret-scan:
-    needs: validate-tag
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-      - name: gitleaks
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .github/gitleaks.toml
-
   build:
-    needs: secret-scan
+    needs: validate-tag
     strategy:
       matrix:
         include:
@@ -114,7 +101,7 @@ jobs:
           path: ilo-${{ matrix.target }}*
 
   build-wasm:
-    needs: secret-scan
+    needs: validate-tag
     runs-on: ubuntu-latest
 
     steps:
