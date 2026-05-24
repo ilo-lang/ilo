@@ -1,0 +1,9 @@
+-- Single-line sibling fns where the non-last fn body contains a binding.
+-- ILO-500: this form was incorrectly rejected with ILO-P024 when a binding
+-- appeared before the sibling fn header. The binding in `f` (c = +x 2) must
+-- not cause `main` to be misread as a nested fn declaration.
+
+f x:n>n;c=+x 2;c;main>n;f 5
+
+-- run: main
+-- out: 7
