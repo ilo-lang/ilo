@@ -36,10 +36,7 @@ const BINDING_IN_NON_LAST_FN: &str = "f x:n>n;c=+x 2;c;main>n;f 5";
 
 fn check_binding_in_non_last_fn(engine: &str) {
     let (ok, stdout, stderr) = run(engine, BINDING_IN_NON_LAST_FN, "main");
-    assert!(
-        ok,
-        "engine={engine}: expected success, stderr={stderr}"
-    );
+    assert!(ok, "engine={engine}: expected success, stderr={stderr}");
     assert_eq!(stdout, "7", "engine={engine}");
 }
 
@@ -59,10 +56,7 @@ const THREE_FNS_MIDDLE_BINDING: &str = "add x:n>n;s=+x 1;s;dbl x:n>n;*x 2;main>n
 
 fn check_three_fns_middle_binding(engine: &str) {
     let (ok, stdout, stderr) = run(engine, THREE_FNS_MIDDLE_BINDING, "main");
-    assert!(
-        ok,
-        "engine={engine}: expected success, stderr={stderr}"
-    );
+    assert!(ok, "engine={engine}: expected success, stderr={stderr}");
     // dbl 3 = 6, add 6 = 7
     assert_eq!(stdout, "7", "engine={engine}");
 }
