@@ -200,7 +200,11 @@ jobs:
 
       - name: Set npm version from tag
         working-directory: npm
-        run: npm version ${{ needs.validate-tag.outputs.semver }} --no-git-tag-version
+        # --allow-same-version: the in-repo package.json is already bumped to the
+        # release version (e.g. 26.5.0), so a plain `npm version` aborts with
+        # "Version not changed" and blocks the publish. This makes the step a
+        # no-op when already at the target version rather than failing.
+        run: npm version ${{ needs.validate-tag.outputs.semver }} --no-git-tag-version --allow-same-version
 
       - name: Publish to npm
         working-directory: npm
@@ -237,7 +241,11 @@ jobs:
 
       - name: Set npm version from tag
         working-directory: pi
-        run: npm version ${{ needs.validate-tag.outputs.semver }} --no-git-tag-version
+        # --allow-same-version: the in-repo package.json is already bumped to the
+        # release version (e.g. 26.5.0), so a plain `npm version` aborts with
+        # "Version not changed" and blocks the publish. This makes the step a
+        # no-op when already at the target version rather than failing.
+        run: npm version ${{ needs.validate-tag.outputs.semver }} --no-git-tag-version --allow-same-version
 
       - name: Publish to npm
         working-directory: pi
