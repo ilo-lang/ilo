@@ -4,6 +4,11 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Fixed
+
+- **Skill token budget raised to unblock CI (ILO-499).** Aggregate cap raised 12500 -> 14000; per-module overrides for `ilo-language` (1550->1950), `ilo-builtins-text` (1300->1750), and `ilo-agent` (1600->1700) absorb cumulative diagnostic and hint growth across many merges. The real tiktoken-rs tokeniser (ILO-47) will allow tighter caps once landed.
+- **Sibling top-level fn after brace-block body parsed correctly (ILO-500).** The ILO-460 nested-fn rejection check (`ILO-P024`) incorrectly fired when a fn body containing a let binding also contained a brace-block statement (`wh{...}` / `?c{...}` / `@{...}`) and was followed by a sibling top-level fn in inline single-line source. Root cause: the `decl_boundary` check only covers newline-separated source; the has-binding heuristic added to tighten ILO-460 did not account for brace blocks as a structural boundary. Fix: when any brace-block statement appears in the body, the next fn-decl-start is always treated as a sibling, even without a newline marker. The genuine ILO-460 trap (let binding immediately followed by fn header, no intervening brace block) still fires.
+
 ### Added
 
 - **`ilo httpd` resolves `use` imports (ILO-481).** Handler files loaded by `ilo httpd` now have their `use` imports resolved at startup, relative to the handler's own directory, matching the existing `ilo run` / `ilo check` semantics. Previously `httpd` lexed, parsed, and verified only the single handler file and silently skipped import resolution, so a handler could not `use` a sibling module - `ilo-lang/crew`'s `crew-server` had to inline ~140 lines of store logic to work around it. A missing module now surfaces a real import diagnostic and the server refuses to start instead of failing later with a generic verifier error. See `docs/streaming.md`.
