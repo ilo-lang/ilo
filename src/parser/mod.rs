@@ -2217,15 +2217,22 @@ statement boundary; bind the chain to a local first. For example, split \
                 }
                 if top_level && self.is_fn_decl_start_strict(self.pos) {
                     // Distinguish a *sibling* top-level fn decl from a *nested*
-                    // one. Sibling signals:
+                    // one. Sibling signals (any one is sufficient to break out):
                     //   - an un-indented newline (decl_boundary marker), OR
                     //   - the enclosing body has no binding statements yet
                     //     (nothing for a nested fn to capture; this matches the
                     //     ;-separated single-line patterns used by inline test
-                    //     fixtures and tiny scripts).
-                    // The ILO-460 trap shape always has a body local that the
+                    //     fixtures and tiny scripts), OR
+                    //   - the previous statement was a brace-terminated block
+                    //     (wh{...} / ?c{...} / @{...}). After a self-closing
+                    //     brace block the body is structurally complete; a
+                    //     following fn-decl-shaped token is always a new sibling
+                    //     top-level fn, even in inline single-line source where
+                    //     there is no newline boundary marker (ILO-500).
+                    // The ILO-460 trap shape has a body local that the
                     // intended-nested fn means to capture, so requiring a
-                    // binding tightens the diagnostic to the real bug.
+                    // binding (and NOT a brace terminator) tightens the
+                    // diagnostic to the real bug.
                     let has_boundary = self
                         .decl_boundary
                         .get(self.pos)
@@ -2233,7 +2240,24 @@ statement boundary; bind the chain to a local first. For example, split \
                         .flatten()
                         .is_some();
                     let has_binding = stmts.iter().any(|s| matches!(s.node, Stmt::Let { .. }));
-                    if has_boundary || !has_binding {
+                    // A brace-block anywhere in the body (wh{...} / ?c{...} /
+                    // @{...}) is structural punctuation that delineates the end
+                    // of a logical clause. In inline single-line source (which
+                    // has no newline boundary marker), any fn-decl-shaped token
+                    // after such a block is always a new sibling top-level fn
+                    // (ILO-500). The genuine ILO-460 trap shape is a let binding
+                    // followed immediately by a fn-decl header, with NO
+                    // intervening brace-block.
+                    let has_brace_block = stmts.iter().any(|s| {
+                        matches!(
+                            s.node,
+                            Stmt::While { .. }
+                                | Stmt::Match { .. }
+                                | Stmt::ForEach { .. }
+                                | Stmt::ForRange { .. }
+                        )
+                    });
+                    if has_boundary || !has_binding || has_brace_block {
                         break;
                     }
                     // Nested fn declaration inside a function body. Earlier
