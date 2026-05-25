@@ -24,10 +24,18 @@ fn free_port() -> u16 {
     listener.local_addr().expect("local_addr").port()
 }
 
-/// Spawn `ilo httpd --port <port> <handler>` and wait until the port accepts
-/// connections (or time out). Returns the child so the caller can kill+wait it.
+/// Spawn `ilo httpd --port <port> <handler>` and wait until it logs that it is
+/// listening (or time out). Returns the child so the caller can kill+wait it.
+///
+/// Readiness is detected by reading the child's stderr for the
+/// `ilo httpd listening on` line, NOT by probing the port with a TCP connect.
+/// A raw connect probe is itself an accepted connection: httpd spawns a handler
+/// thread for it, and for a handler that proxies an upstream via `get-stream`
+/// that thread consumes the upstream's single `accept()` before the real test
+/// request ever arrives, so the test sees an empty body. Waiting on the log
+/// line avoids triggering the handler during startup.
 fn spawn_httpd(handler: &std::path::Path, port: u16) -> Child {
-    let child = ilo()
+    let mut child = ilo()
         .args([
             "httpd",
             "--port",
@@ -39,12 +47,19 @@ fn spawn_httpd(handler: &std::path::Path, port: u16) -> Child {
         .spawn()
         .expect("spawn ilo httpd");
 
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
+    // Read stderr until the server logs that it is listening. The pipe read
+    // blocks, so a server that never starts is bounded by the test runner's
+    // own timeout; we cap the line count as a belt-and-braces fallback.
+    let stderr = child.stderr.take().expect("piped stderr");
+    let mut reader = BufReader::new(stderr);
+    for _ in 0..100 {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break; // EOF: server exited before logging readiness
         }
-        std::thread::sleep(Duration::from_millis(50));
+        if line.contains("listening on") {
+            break;
+        }
     }
     child
 }
