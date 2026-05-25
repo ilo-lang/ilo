@@ -54,6 +54,46 @@ relative to the handler's own directory, exactly like `ilo run` and
 (`use "store.ilo"`) instead of inlining everything in one file. A missing
 import surfaces a real diagnostic and the server refuses to start.
 
+### Response body shapes
+
+The response `body` field takes one of three shapes:
+
+| Body value | Wire format | Buffering |
+|---|---|---|
+| `t` (string) | `Content-Length` | n/a (already a string) |
+| `L t` (list) | `Transfer-Encoding: chunked` | list materialised before first byte |
+| lazy iterator | `Transfer-Encoding: chunked` | **none** — streamed line by line |
+
+A lazy iterator body (ILO-482) is the SSE / long-poll / file-tail path:
+each line the iterator yields is written and flushed as its own chunk as
+soon as the handler produces it, so the connection can be held open
+indefinitely and the body is never fully buffered. Any value that drains
+lazily works as the body:
+
+```ilo
+type rsp{status:n;body:_}
+
+-- Proxy an upstream SSE / chunked source straight through, streaming.
+handler req:_>rsp
+  rsp status:200 body:(get-stream "http://localhost:7778/events/stream")
+```
+
+`for-line stdin` works the same way (tail stdin line by line). If the
+client disconnects mid-stream the connection thread drops the iterator
+(closing any upstream connection / open file) and exits cleanly with no
+panic. A zero-arg `body` function is called first and may itself return
+any of the three shapes.
+
+> **Note (`get-stream` granularity).** `get-stream`'s underlying reader
+> fills a 16 KiB backing buffer before yielding a line, so when proxying
+> an upstream whose total body is smaller than that, lines can arrive in
+> one batch rather than one at a time. The httpd plumbing itself streams
+> per line; the batching is a `get-stream` buffer-size artifact tracked
+> as a follow-up. A `tail-file` source (a lazy `tail -f` over a growing
+> file, which crew's `/events/stream` needs) is the other follow-up.
+
+Reference: `examples/httpd-stream.ilo`.
+
 ## Buffered HTTP (unchanged)
 
 For request/response patterns where the entire body is small and easy to
@@ -83,3 +123,4 @@ For stdin streaming, see `for-line stdin` (ILO-70).
 * ILO-379 — chunked transfer-encoding for `ilo httpd`
 * ILO-448 — client-side HTTP streaming builtins (`get-stream`, `pst-stream`, …)
 * ILO-481 — `ilo httpd` resolves `use` imports in handler files
+* ILO-482 — `ilo httpd` lazy streaming response body (handler-driven SSE)

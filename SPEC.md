@@ -2566,7 +2566,9 @@ Handler signature:
 --
 -- Response fields read by ilo httpd:
 --   status:n   HTTP status code (200, 404, 500, ...)
---   body:t     response body
+--   body       response body: t (buffered), L t (eager chunked),
+--              or a lazy iterator (get-stream / for-line stdin) for
+--              true incremental streaming
 --   headers:M t t  optional response headers
 
 type rsp{status:n;body:t}
@@ -2580,6 +2582,12 @@ handler req:_>rsp
 Use `req:_` (wildcard) for the request param type — the `Request` record is created by the ilo httpd runtime and its field types cannot be declared in the handler source without a `type` alias that re-exports them. The dot-access `req.path`, `req.method`, `req.body`, `req.headers` work because ilo resolves record field access by name at runtime. `Content-Type` defaults to `text/plain; charset=utf-8` when not set in the response headers map. Distinct from `ilo serv` (which speaks the agent-protocol JSON-RPC loop); `httpd` is for user-facing HTTP traffic.
 
 The handler file's `use` imports are resolved at startup, relative to the handler's own directory, matching `ilo run` / `ilo check` (ILO-481). A handler can split logic across sibling modules (`use "store.ilo"`) rather than inlining everything. A missing import surfaces a real diagnostic and the server refuses to start.
+
+The response `body` field may take three shapes (ILO-482):
+
+* `t` — a plain string, sent with `Content-Length` (the default).
+* `L t` — a list of strings, sent eagerly with `Transfer-Encoding: chunked`: each element becomes one chunk. The list is materialised before the first byte is written.
+* a lazy line iterator (`get-stream`/`pst-stream`, `for-line stdin`) — sent with `Transfer-Encoding: chunked` **lazily**: each line the iterator yields is written and flushed as its own chunk, so the handler can hold the connection open and emit chunks as they are produced (SSE, long-poll, tailing a growing source) without buffering the whole body first. If the client disconnects mid-stream the connection thread exits cleanly. A zero-arg `body` function (`FnRef`/closure) is called first and may itself return any of the three shapes.
 
 **`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
