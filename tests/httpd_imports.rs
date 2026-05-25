@@ -8,10 +8,9 @@
 //! reachable over HTTP, that a missing import surfaces a diagnostic, and that
 //! plain single-file handlers still work.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command};
-use std::time::{Duration, Instant};
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -23,10 +22,17 @@ fn free_port() -> u16 {
     listener.local_addr().expect("local_addr").port()
 }
 
-/// Spawn `ilo httpd --port <port> <handler>` and wait until the port accepts
-/// connections (or time out). Returns the child so the caller can kill it.
+/// Spawn `ilo httpd --port <port> <handler>` and wait until it logs that it is
+/// listening (or time out). Returns the child so the caller can kill it.
+///
+/// Readiness is detected by reading the child's stderr for the
+/// `ilo httpd listening on` line, NOT by probing the port with a TCP connect.
+/// A raw connect probe is itself an accepted connection that httpd dispatches
+/// to a handler thread; under load that spurious startup request races the
+/// real test request (ILO-505). Waiting on the log line avoids running the
+/// handler during startup at all.
 fn spawn_httpd(handler: &std::path::Path, port: u16) -> Child {
-    let child = ilo()
+    let mut child = ilo()
         .args([
             "httpd",
             "--port",
@@ -38,13 +44,18 @@ fn spawn_httpd(handler: &std::path::Path, port: u16) -> Child {
         .spawn()
         .expect("spawn ilo httpd");
 
-    // Poll the port until it's listening.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
+    // Read stderr until the server logs that it is listening, rather than
+    // probing the port (which would trigger a spurious startup handler call).
+    let stderr = child.stderr.take().expect("piped stderr");
+    let mut reader = BufReader::new(stderr);
+    for _ in 0..100 {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break; // EOF: server exited before logging readiness
         }
-        std::thread::sleep(Duration::from_millis(50));
+        if line.contains("listening on") {
+            break;
+        }
     }
     child
 }

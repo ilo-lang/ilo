@@ -1,0 +1,25 @@
+-- ilo httpd lazy streaming response body (ILO-482).
+--
+-- A handler whose `body` field is a lazy line iterator streams each line to
+-- the client as it is produced, instead of buffering the whole body first.
+-- This lets a handler hold the connection open for SSE / long-poll / a tail
+-- of a growing source. The eager `L t` body (a list of chunks) still works
+-- unchanged; the lazy body is an additive response shape.
+--
+-- Any value that drains lazily can be the body:
+--   * `get-stream url`    proxy an upstream chunked / SSE response (shown here)
+--   * `for-line stdin`    tail stdin line by line
+--
+-- Run it:
+--   ilo httpd examples/httpd-stream.ilo --port 7777
+--   curl -N http://localhost:7777/        # -N: no client-side buffering
+--
+-- Each upstream line is re-emitted as its own chunk and flushed immediately,
+-- so `curl -N` prints lines as the upstream produces them rather than all at
+-- once at the end. There is no `-- run:` assertion because it needs a live
+-- server; see tests/httpd_streaming.rs for runnable coverage.
+
+type rsp{status:n;body:_}
+
+handler req:_>rsp
+  rsp status:200 body:(get-stream "http://localhost:7778/events/stream")

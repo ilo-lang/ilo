@@ -1179,10 +1179,18 @@ fn handle_http_connection(
         other => other,
     };
 
-    // Body shape: either a plain string or a list of chunks for chunked transfer.
+    // Body shape: either a plain string, an eagerly-collected list of chunks,
+    // or a lazy line iterator whose chunks are pulled and written one at a
+    // time (true streaming / SSE, ILO-482).
     enum BodyShape {
         Plain(String),
         Chunked(Vec<String>),
+        /// A pull-based line iterator. Each `next_line()` is written as its
+        /// own chunk and flushed immediately, so a handler can hold the
+        /// connection open and emit chunks as they are produced (e.g. tailing
+        /// a growing file, proxying an upstream SSE source) without buffering
+        /// the whole body first.
+        Lazy(interpreter::LazyLines),
     }
 
     let (status, resp_headers, body_shape) = match &resp {
@@ -1197,6 +1205,16 @@ fn handle_http_connection(
             //   FnRef/Closure → call it (no args) expecting a List, then chunk
             let body_shape = match fields.get("body") {
                 Some(Value::Text(s)) => BodyShape::Plain((**s).clone()),
+                // Lazy line iterators (ILO-482): a handler returning
+                // `get-stream`/`for-line stdin` (or, once it lands, a
+                // file-tail iterator) gets each line written as its own chunk
+                // as the iterator yields, with no full-body buffering.
+                Some(Value::LazyHttpLines(h)) => {
+                    BodyShape::Lazy(interpreter::LazyLines::Http(h.clone()))
+                }
+                Some(Value::LazyStdinLines(h)) => {
+                    BodyShape::Lazy(interpreter::LazyLines::Stdin(h.clone()))
+                }
                 Some(Value::List(items)) => {
                     let chunks = items.iter().map(|v| v.to_string()).collect();
                     BodyShape::Chunked(chunks)
@@ -1207,6 +1225,12 @@ fn handle_http_connection(
                             let chunks = items.iter().map(|v| v.to_string()).collect();
                             BodyShape::Chunked(chunks)
                         }
+                        Ok(Value::LazyHttpLines(h)) => {
+                            BodyShape::Lazy(interpreter::LazyLines::Http(h))
+                        }
+                        Ok(Value::LazyStdinLines(h)) => {
+                            BodyShape::Lazy(interpreter::LazyLines::Stdin(h))
+                        }
                         Ok(other) => BodyShape::Plain(other.to_string()),
                         Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
                     }
@@ -1216,6 +1240,12 @@ fn handle_http_connection(
                         Ok(Value::List(items)) => {
                             let chunks = items.iter().map(|v| v.to_string()).collect();
                             BodyShape::Chunked(chunks)
+                        }
+                        Ok(Value::LazyHttpLines(h)) => {
+                            BodyShape::Lazy(interpreter::LazyLines::Http(h))
+                        }
+                        Ok(Value::LazyStdinLines(h)) => {
+                            BodyShape::Lazy(interpreter::LazyLines::Stdin(h))
                         }
                         Ok(other) => BodyShape::Plain(other.to_string()),
                         Err(e) => BodyShape::Plain(format!("chunk-fn error: {}", e)),
@@ -1302,6 +1332,66 @@ fn handle_http_connection(
             }
             // Terminating chunk
             writer.write_all(b"0\r\n\r\n")?;
+        }
+        BodyShape::Lazy(lines) => {
+            // Lazy streaming body (ILO-482): write the chunked header block,
+            // then pull each line from the iterator and flush it as its own
+            // chunk so the client sees data as soon as the handler produces
+            // it. The body is never fully buffered, so the connection can be
+            // held open indefinitely (SSE, long-poll, file tail).
+            let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+            if !has_content_type {
+                header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            for (k, v) in &resp_headers {
+                header_block.push_str(&format!("{}: {}\r\n", k, v));
+            }
+            header_block.push_str("Transfer-Encoding: chunked\r\n");
+            header_block.push_str("Connection: close\r\n");
+            header_block.push_str("\r\n");
+            writer.write_all(header_block.as_bytes())?;
+            writer.flush()?;
+
+            loop {
+                match lines.next_line() {
+                    Some(Ok(line)) => {
+                        // Re-attach the newline the line iterator strips, so a
+                        // client doing line-oriented reads (SSE) sees a record
+                        // boundary per chunk.
+                        let mut data = line.into_bytes();
+                        data.push(b'\n');
+                        // A failed write means the client hung up mid-stream.
+                        // Drop the iterator (closing any upstream connection /
+                        // file) and exit the thread cleanly rather than
+                        // panicking.
+                        if writer
+                            .write_all(format!("{:x}\r\n", data.len()).as_bytes())
+                            .and_then(|_| writer.write_all(&data))
+                            .and_then(|_| writer.write_all(b"\r\n"))
+                            .and_then(|_| writer.flush())
+                            .is_err()
+                        {
+                            eprintln!(
+                                "{} {} {} -> {} (client disconnected)",
+                                peer, method, path, status
+                            );
+                            return Ok(());
+                        }
+                    }
+                    Some(Err(e)) => {
+                        // Mid-stream read error from the source. Best effort:
+                        // close the chunked stream and stop.
+                        eprintln!("stream read error: {}", e);
+                        let _ = writer.write_all(b"0\r\n\r\n");
+                        let _ = writer.flush();
+                        return Ok(());
+                    }
+                    None => break,
+                }
+            }
+            // Terminating chunk.
+            let _ = writer.write_all(b"0\r\n\r\n");
+            let _ = writer.flush();
         }
     }
 
