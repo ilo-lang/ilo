@@ -372,6 +372,27 @@ impl HttpLinesHandle {
     }
 }
 
+/// A backend-agnostic lazy line source, pulled one line at a time.
+///
+/// Wraps the two existing pull-based iterators ([`StdinLinesHandle`],
+/// [`HttpLinesHandle`]) behind a single `next_line()` so callers outside the
+/// interpreter (e.g. `ilo httpd`'s streaming response body, ILO-482) can drain
+/// a handler-returned lazy body without caring which source produced it.
+pub enum LazyLines {
+    Stdin(StdinLinesHandle),
+    Http(HttpLinesHandle),
+}
+
+impl LazyLines {
+    /// Pull the next line from the underlying iterator, or `None` at end.
+    pub fn next_line(&self) -> Option<std::result::Result<String, std::io::Error>> {
+        match self {
+            LazyLines::Stdin(h) => h.next_line(),
+            LazyLines::Http(h) => h.next_line(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
