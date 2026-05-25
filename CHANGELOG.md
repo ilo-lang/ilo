@@ -4,6 +4,10 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Fixed
+
+- **`get-stream` yields lines on newline, not buffer-fill (ILO-489).** The client-side streaming builtins (`get-stream`, `get-stream-h`, `pst-stream`, `pst-stream-h`, ILO-448) wrapped minreq's `ResponseLazy` in `BufReader::lines()`, which blocks on a full ~8 KiB read-buffer fill before surfacing any line. So a slow SSE upstream that flushes one short event then idles had its lines batched until the buffer filled or the connection closed - functionally correct but latency was buffer-bound, not event-bound. The line splitter now consumes `ResponseLazy`'s byte iterator incrementally and emits each line the instant its `\n` arrives (trailing `\r` stripped for CRLF / chunked encoding), so each event surfaces promptly. EOF still yields a trailing newline-less partial line; mid-stream errors still surface as `ILO-R009 http-stream read error: ...`. Unblocks ILO-482's previously flaky end-to-end streaming test.
+
 ### Added
 
 - **`ilo httpd` resolves `use` imports (ILO-481).** Handler files loaded by `ilo httpd` now have their `use` imports resolved at startup, relative to the handler's own directory, matching the existing `ilo run` / `ilo check` semantics. Previously `httpd` lexed, parsed, and verified only the single handler file and silently skipped import resolution, so a handler could not `use` a sibling module - `ilo-lang/crew`'s `crew-server` had to inline ~140 lines of store logic to work around it. A missing module now surfaces a real import diagnostic and the server refuses to start instead of failing later with a generic verifier error. See `docs/streaming.md`.

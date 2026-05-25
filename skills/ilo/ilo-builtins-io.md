@@ -30,7 +30,7 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 
 **WASM targets**: `get` and `pst` work in WASM (`wasm32-wasi`, `wasm32-unknown-unknown`) via `fetch` host import (module `"ilo_http"`); host must export the import set — see `src/interpreter/http_wasm.rs`. `put`, `pat`, `del`, `hed`, `opt`, `get-to`, `pst-to`, `getx`, `pstx`, `get-many`, and `*-stream` are native-only. `--allow-net` enforced on WASM same as native.
 
-**Streaming (ILO-46)**: `get-stream url[+hs]`, `pst-stream url body[+hs]` → lazy `L t` line iter, drained via `@line (get-stream url){...}`. Body never buffered. SSE / log tails / NDJSON. Mid-stream → `ILO-R009`. Tree+VM.
+**Streaming (ILO-46)**: `get-stream url[+hs]`, `pst-stream url body[+hs]` → lazy `L t` line iter, drained via `@line (get-stream url){...}`. Body never buffered; each line yields the instant its newline arrives (event-bound, not buffer-bound), so a slow SSE upstream surfaces each event promptly. SSE / log tails / NDJSON. Mid-stream → `ILO-R009`. Tree+VM.
 
 `getx url` / `pstx url body` (rich response, `R (M t _) t`): Ok-map with `status` (n), `headers` (M t t), `body` (t). Non-2xx is still Ok with status surfaced on the map; only transport failure is Err. Optional trailing request-headers map (M t t), same as `get`/`pst`. Use these when you need conditional requests (304), status-code branching (429), response-header reads (ETag, Link, X-RateLimit-*), or redirect following. Body-only `get`/`pst` stay cheaper for fire-and-forget; `getx`/`pstx` are the heavier variant. Response header names are lowercased on the Ok-map.
 
