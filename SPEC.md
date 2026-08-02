@@ -538,7 +538,7 @@ There is no separate `push` builtin. `+=` covers every use case and is shorter; 
 | Op | Meaning | Types |
 |----|---------|-------|
 | `a??b` | nil-coalesce (if a is nil, return b) | any |
-| `a>>f` | pipe (desugar to `f(a)`) | any |
+| `a>>f` | pipe (Result-aware: desugar to `f(a)`, short-circuits on `^e`) | any |
 
 **`??` precedence.** Infix `??` is parsed by `maybe_nil_coalesce` after
 the primary expression — it binds **looser than every arithmetic,
@@ -1640,7 +1640,7 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | `wh cond{body}` | while loop |
 | `brk` / `brk expr` | exit enclosing loop (optional value) |
 | `cnt` | skip to next iteration of enclosing loop |
-| `expr>>func` | pipe: pass result as last arg to func |
+| `expr>>func` | pipe: pass result as last arg to func (Result-aware: `^e` short-circuits) |
 
 ---
 
@@ -1851,7 +1851,28 @@ add x 1>>add 2      -- desugars to: add 2 (add x 1)
 f x>>g>>h            -- desugars to: h (g (f x))
 ```
 
-Pipes desugar at parse time - no new AST node. Works with `!` for auto-unwrap: `f x>>g!>>h`.
+Pipes desugar at parse time - no new AST node. Works with `!` for explicit auto-unwrap: `f x>>g!>>h`.
+
+**Result-aware short-circuit (ILO-510).** When the left operand of `>>` is a call
+returning `R T E` or `O T`, the pipe auto-unwraps: `Ok(v)` passes `v` to the next
+stage; `Err(e)` short-circuits and propagates `^e` out of the enclosing function
+via early-return. Non-Result values pass through unchanged. This means you can
+chain Result-returning functions without explicit `!` on each stage:
+
+```
+fetch url>>jpar>>jpth "name"
+-- desugars to: jpth "name" (jpar (fetch url))
+-- if fetch returns ^e, jpar and jpth are skipped, ^e propagates
+-- if fetch returns ~v, v is unwrapped and passed to jpar
+```
+
+The enclosing function must return `R` (or `O`) for the short-circuit to
+type-check, same as `!`. Non-Result pipes (plain functions returning `n`, `t`,
+`L`, etc.) are unaffected — no unwrap, no error propagation. The parser injects
+`UnwrapMode::PipePropagate` on intermediate pipe-desugared calls; the verifier
+treats this leniently (non-Result returns pass through without `ILO-T025`),
+while the runtime checks the value's tag at each stage (`ISOK`/`ISERR`) so plain
+numbers/text/lists skip the unwrap entirely.
 
 ### Safe Field Navigation
 
