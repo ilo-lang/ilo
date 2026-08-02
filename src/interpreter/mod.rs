@@ -829,7 +829,8 @@ pub fn call_builtin_for_bridge_with_program(
             | Decl::Alias { .. }
             | Decl::Use { .. }
             | Decl::VersionPragma { .. }
-            | Decl::Error { .. } => {}
+            | Decl::Error { .. }
+            | Decl::Test { .. } => {}
         }
     }
     call_function(&mut env, name, args)
@@ -890,7 +891,8 @@ fn run_with_env(
             | Decl::Alias { .. }
             | Decl::Use { .. }
             | Decl::VersionPragma { .. }
-            | Decl::Error { .. } => {}
+            | Decl::Error { .. }
+            | Decl::Test { .. } => {}
         }
     }
 
@@ -9930,6 +9932,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         Decl::Error { .. } => Err(RuntimeError::new(
             "ILO-R002",
             format!("{} failed to parse", name),
+        )),
+        Decl::Test { .. } => Err(RuntimeError::new(
+            "ILO-R002",
+            format!("{} is a shadow test block, not a callable function", name),
         )),
         Decl::SumType { .. } => Err(RuntimeError::new(
             "ILO-R002",

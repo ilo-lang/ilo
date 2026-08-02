@@ -213,6 +213,7 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
             out.push('\n');
         }
         Decl::Error { .. } => {} // poison node — skip
+        Decl::Test { .. } => {} // shadow test block — not emitted as output code
     }
 }
 

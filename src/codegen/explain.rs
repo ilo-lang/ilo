@@ -27,7 +27,7 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
         // Compute the snippet to append for this declaration, or None to skip it.
         let snippet: Option<String> = match decl {
             // Resolved before codegen / poison nodes — skip silently
-            Decl::Use { .. } | Decl::Error { .. } | Decl::VersionPragma { .. } => None,
+            Decl::Use { .. } | Decl::Error { .. } | Decl::VersionPragma { .. } | Decl::Test { .. } => None,
 
             Decl::Function {
                 name,

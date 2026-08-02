@@ -285,10 +285,43 @@ pub enum Decl {
         span: Span,
     },
 
+    /// `test fn_name { ok fn args expected; err fn args expected_err }` —
+    /// shadow test block. Compiled alongside functions, evaluated at
+    /// `ilo check` time. Failures report ILO-T050; missing blocks warn
+    /// ILO-W020 under `--strict`.
+    Test {
+        fn_name: String,
+        assertions: Vec<TestAssertion>,
+        #[serde(skip)]
+        span: Span,
+    },
+
     /// Poison node inserted during parser error recovery.
     /// Suppressed by the verifier; omitted from JSON AST output
     /// (filtered by the custom serializer on Program.declarations).
     Error {
+        #[serde(skip)]
+        span: Span,
+    },
+}
+
+/// A single assertion inside a `test` block.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TestAssertion {
+    /// `ok fn args... expected` — call `fn(args...)` and assert result equals `expected`.
+    Ok {
+        fn_name: String,
+        args: Vec<Literal>,
+        expected: Literal,
+        #[serde(skip)]
+        span: Span,
+    },
+    /// `err fn args... expected_err` — call `fn(args...)` and assert it returns
+    /// `^expected_err`.
+    Err {
+        fn_name: String,
+        args: Vec<Literal>,
+        expected_err: Literal,
         #[serde(skip)]
         span: Span,
     },
@@ -608,7 +641,7 @@ fn serialize_decls<S: serde::Serializer>(decls: &[Decl], s: S) -> Result<S::Ok, 
     let mut seq = s.serialize_seq(None)?;
     for d in decls
         .iter()
-        .filter(|d| !matches!(d, Decl::Error { .. } | Decl::Use { .. }))
+        .filter(|d| !matches!(d, Decl::Error { .. } | Decl::Use { .. } | Decl::Test { .. }))
     {
         seq.serialize_element(d)?;
     }

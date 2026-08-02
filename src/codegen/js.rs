@@ -158,6 +158,7 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
         Decl::Use { .. } => {}
         Decl::VersionPragma { .. } => {}
         Decl::Error { .. } => {}
+        Decl::Test { .. } => {} // shadow test block — not emitted
         Decl::SumType { name, variants, .. } => {
             // Emit each variant as a tagged-tuple constructor function.
             // Payload-less variant `red` -> `const red = ["red", null];`
