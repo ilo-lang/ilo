@@ -2032,7 +2032,7 @@ These relaxations are scoped to post-dot position only - top-level identifiers s
 ## Tools (external calls)
 
 ```
-tool <name>"<description>" <params>><return-type> timeout:<n>,retry:<n>
+tool <name>"<description>" <params>><return-type> timeout:<n>,retry:<n> policy{domain:"...",tokens:<n>,rate:<n>}
 ```
 
 ```
@@ -2040,6 +2040,20 @@ tool get-user"Retrieve user by ID" uid:t>R profile t timeout:5,retry:2
 ```
 
 Tool declarations are verified statically like functions - call sites are type-checked and arity-checked. At runtime, tool calls dispatch through a provider configured via `--tools <config.json>`:
+
+**Tool policies.** An optional `policy{...}` block after `timeout`/`retry` sets runtime safety limits. All fields are optional; `policy{}` is valid (no restrictions). Violations return a `^"policy: ..."` Result error before the call proceeds.
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `domain` | text | URL must match this host. Supports `*.example.com` wildcard. Checked against the first text arg (conventionally the URL for HTTP tools). Mismatch: `^"policy: domain mismatch ..."` |
+| `tokens` | number | Max tokens consumed per call (for LLM tools). Exceeding: `^"policy: token budget exceeded"` |
+| `rate` | number | Max calls per minute. Exceeding: `^"policy: rate limit exceeded"` |
+
+```
+tool weather"Get weather" (city:t) > R _ t timeout:30,retry:2 policy{domain:"api.weather.com",tokens:500,rate:10}
+```
+
+Policy enforcement happens at dispatch time in every backend (tree interpreter, register VM). Without a `policy` block, tool calls behave as before (no restrictions).
 
 ```json
 {
@@ -2653,6 +2667,7 @@ Dense format is canonical - `dense(parse(dense(parse(src)))) == dense(parse(src)
 ```
 tool get-user"Retrieve user by ID" uid:t>R profile t timeout:5,retry:2
 tool send-email"Send an email" to:t subject:t body:t>R _ t timeout:10,retry:1
+tool weather"Get weather" (city:t) > R _ t timeout:30,retry:2 policy{domain:"api.weather.com"}
 type profile{id:t;name:t;email:t;verified:b}
 ntf uid:t msg:t>R _ t;get-user uid;?{^e:^+"Lookup failed: "e;~d:!d.verified{^"Email not verified"};send-email d.email "Notification" msg;?{^e:^+"Send failed: "e;~_:~_}}
 ```
