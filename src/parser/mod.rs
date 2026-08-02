@@ -1530,6 +1530,25 @@ statement boundary; bind the chain to a local first. For example, split \
         } else {
             None
         };
+
+        // Optional effect sigils: `/http /fs /io /net /ml /time /rand`
+        // after the return type (and optional `^effect_set`).
+        // Empty vec = pure (no side-effectful calls allowed).
+        // Non-empty = declared effects; verifier checks declared ⊇ actual.
+        let mut effect_sigils: Vec<crate::ast::Effect> = Vec::new();
+        while self.peek() == Some(&Token::Slash) {
+            // Peek ahead: the token after Slash must be a valid effect sigil name.
+            if let Some(Token::Ident(s)) = self.token_at(self.pos + 1) {
+                if let Some(eff) = crate::ast::Effect::from_sigil(s) {
+                    effect_sigils.push(eff);
+                    self.advance(); // consume Slash
+                    self.advance(); // consume ident
+                    continue;
+                }
+            }
+            // Not a known effect sigil — stop parsing sigils.
+            break;
+        }
         // The header/body boundary is normally a `;`, but a newline (filtered
         // out before parsing) leaves no separator. Accept either: consume a
         // `;` if present, otherwise fall straight into the body.
@@ -1563,6 +1582,7 @@ statement boundary; bind the chain to a local first. For example, split \
             params,
             return_type,
             effect_set,
+            effect_sigils,
             body,
             span: start.merge(end),
         })
@@ -5907,6 +5927,7 @@ For variable-position list indexing bind the head first: \
             params: lifted_params,
             return_type,
             effect_set: None,
+            effect_sigils: vec![],
             body,
             span,
         });
@@ -6057,6 +6078,7 @@ For variable-position list indexing bind the head first: \
             span,
             type_params: vec![],
             effect_set: None,
+            effect_sigils: vec![],
         });
         if free.is_empty() {
             Ok(Expr::Ref(fn_name))

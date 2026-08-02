@@ -4,6 +4,62 @@ use std::collections::{HashMap, HashSet};
 pub mod source_map;
 pub use source_map::SourceMap;
 
+// ---- Effect sigils ----
+
+/// Compile-time effect tags appended to function signatures.
+/// `/http` — HTTP builtins (get, pst, get-many, HTTP tools)
+/// `/fs` — Filesystem builtins (rd, wr, wrl, rdl, lsd, walk, glob)
+/// `/io` — Console/env I/O (prnt, env, env-all)
+/// `/net` — Network tools
+/// `/ml` — LLM inference tools
+/// `/time` — Time builtins (now, now-ms, sleep)
+/// `/rand` — Random builtins (rnd, rndn)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Effect {
+    Http,
+    Fs,
+    Io,
+    Net,
+    Ml,
+    Time,
+    Rand,
+}
+
+impl Effect {
+    /// Parse a sigil name (without the leading `/`) into an Effect.
+    pub fn from_sigil(s: &str) -> Option<Effect> {
+        match s {
+            "http" => Some(Effect::Http),
+            "fs" => Some(Effect::Fs),
+            "io" => Some(Effect::Io),
+            "net" => Some(Effect::Net),
+            "ml" => Some(Effect::Ml),
+            "time" => Some(Effect::Time),
+            "rand" => Some(Effect::Rand),
+            _ => None,
+        }
+    }
+
+    /// The sigil string (without the leading `/`).
+    pub fn sigil(self) -> &'static str {
+        match self {
+            Effect::Http => "http",
+            Effect::Fs => "fs",
+            Effect::Io => "io",
+            Effect::Net => "net",
+            Effect::Ml => "ml",
+            Effect::Time => "time",
+            Effect::Rand => "rand",
+        }
+    }
+}
+
+impl std::fmt::Display for Effect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "/{}", self.sigil())
+    }
+}
+
 // ---- Span infrastructure ----
 
 /// Byte range within source text.
@@ -185,6 +241,11 @@ pub enum Decl {
         /// `None` = unannotated (no enforcement); `Some(vec)` = declared set.
         #[serde(skip_serializing_if = "Option::is_none")]
         effect_set: Option<Vec<String>>,
+        /// Compile-time effect sigils: `/http /fs /io /net /ml /time /rand`.
+        /// Empty vec = pure (no side-effectful calls allowed).
+        /// Non-empty = declared effects; verifier checks declared ⊇ actual.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        effect_sigils: Vec<Effect>,
         body: Vec<Spanned<Stmt>>,
         #[serde(skip)]
         span: Span,
@@ -1415,7 +1476,7 @@ mod tests {
             name: "f".to_string(),
             params: vec![],
             return_type: Type::Number,
-            effect_set: None,
+            effect_set: None, effect_sigils: vec![],
             body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(
                 Literal::Number(1.0),
             )))],
@@ -1450,7 +1511,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::While {
                     condition: Expr::Call {
                         function: "length".to_string(),
@@ -1500,7 +1561,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Return(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
@@ -1532,7 +1593,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Destructure {
                     bindings: vec!["a".to_string(), "b".to_string()],
                     value: Expr::Call {
@@ -1571,7 +1632,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Break(Some(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
@@ -1603,7 +1664,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![
                     Spanned::unknown(Stmt::Break(None)),
                     Spanned::unknown(Stmt::Continue),
@@ -1628,7 +1689,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::NilCoalesce {
                     value: Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1674,7 +1735,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Record {
                     type_name: "point".to_string(),
                     fields: vec![(
@@ -1715,7 +1776,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
                     subject: Some(Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1767,7 +1828,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::With {
                     object: Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1819,7 +1880,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
                 span: Span { start: 0, end: 13 },
             }],
@@ -1845,7 +1906,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: None,
                     arms: vec![MatchArm {
@@ -1886,7 +1947,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
                     subject: None,
                     arms: vec![MatchArm {

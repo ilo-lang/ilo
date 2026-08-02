@@ -3371,6 +3371,7 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             span,
             type_params,
             effect_set,
+            effect_sigils,
         } => ast::Decl::Function {
             name: format!("{}-{}", alias, name),
             params,
@@ -3379,6 +3380,7 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             span,
             type_params,
             effect_set,
+            effect_sigils,
         },
         ast::Decl::Tool {
             name,
@@ -7332,7 +7334,7 @@ mod tests {
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
-            effect_set: None,
+            effect_set: None, effect_sigils: vec![],
             body: vec![],
             span: ast::Span { start: 0, end: 0 },
         };
@@ -7740,7 +7742,7 @@ mod tests {
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
-            effect_set: None,
+            effect_set: None, effect_sigils: vec![],
             body: vec![],
             span: ast::Span { start: 0, end: 0 },
         };
@@ -8288,7 +8290,7 @@ mod tests {
                 ast::Expr::Literal(ast::Literal::Number(42.0)),
             ))],
             span: ast::Span::UNKNOWN,
-            effect_set: None,
+            effect_set: None, effect_sigils: vec![],
         };
 
         let lazy_use = ast::Decl::Use {
@@ -8344,7 +8346,7 @@ mod tests {
                 unwrap: ast::UnwrapMode::None,
             }))],
             span: ast::Span::UNKNOWN,
-            effect_set: None,
+            effect_set: None, effect_sigils: vec![],
         };
 
         let lazy_use = ast::Decl::Use {
@@ -9678,7 +9680,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![],
                 span: Span::UNKNOWN,
             },
