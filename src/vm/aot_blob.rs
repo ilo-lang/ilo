@@ -265,6 +265,7 @@ pub fn deserialize_program(bytes: &[u8]) -> Result<CompiledProgram, String> {
         is_defer_fn,
         ast: Some(Arc::new(ast)),
         defer_fns: std::collections::HashSet::new(),
+        tool_policies: Vec::new(),
     })
 }
 
@@ -357,6 +358,7 @@ mod tests {
             is_defer_fn: vec![],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         let bytes = serialize_program(&prog).expect("serialize");
         let r = deserialize_program(&bytes).expect("deserialize");

@@ -121,6 +121,7 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
             return_type,
             timeout,
             retry,
+            policy,
             ..
         } => {
             let params_str = fmt_params(params);
@@ -149,6 +150,10 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
                         out.push(' ');
                         out.push_str(&opts.join(","));
                     }
+                    if let Some(p) = policy {
+                        out.push(' ');
+                        out.push_str(&fmt_policy_dense(p));
+                    }
                 }
                 FmtMode::Expanded => {
                     out.push_str("tool ");
@@ -175,6 +180,11 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
                         out.push('\n');
                         out.push_str(INDENT);
                         out.push_str(&opts.join(", "));
+                    }
+                    if let Some(p) = policy {
+                        out.push('\n');
+                        out.push_str(INDENT);
+                        out.push_str(&fmt_policy_expanded(p));
                     }
                 }
             }
@@ -742,6 +752,44 @@ fn fmt_num(n: f64) -> String {
         format!("{}", n as i64)
     } else {
         format!("{}", n)
+    }
+}
+
+/// Format a `ToolPolicy` in dense mode: `policy{domain:"api.example.com",tokens:500,rate:10}`
+fn fmt_policy_dense(p: &crate::ast::ToolPolicy) -> String {
+    let mut fields: Vec<String> = Vec::new();
+    if let Some(d) = &p.domain {
+        fields.push(format!("domain:\"{}\"", escape_text(d)));
+    }
+    if let Some(t) = p.tokens {
+        fields.push(format!("tokens:{}", fmt_num(t)));
+    }
+    if let Some(r) = p.rate {
+        fields.push(format!("rate:{}", fmt_num(r)));
+    }
+    if fields.is_empty() {
+        String::new()
+    } else {
+        format!("policy{{{}}}", fields.join(","))
+    }
+}
+
+/// Format a `ToolPolicy` in expanded mode: `policy{domain: "...", tokens: ..., rate: ...}`
+fn fmt_policy_expanded(p: &crate::ast::ToolPolicy) -> String {
+    let mut fields: Vec<String> = Vec::new();
+    if let Some(d) = &p.domain {
+        fields.push(format!("domain: \"{}\"", escape_text(d)));
+    }
+    if let Some(t) = p.tokens {
+        fields.push(format!("tokens: {}", fmt_num(t)));
+    }
+    if let Some(r) = p.rate {
+        fields.push(format!("rate: {}", fmt_num(r)));
+    }
+    if fields.is_empty() {
+        String::new()
+    } else {
+        format!("policy{{{}}}", fields.join(", "))
     }
 }
 

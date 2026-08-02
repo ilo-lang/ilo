@@ -9893,7 +9893,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             env.defer_stack = saved_defers;
             body_result
         }
-        Decl::Tool { name, .. } => {
+        Decl::Tool { name, policy, .. } => {
+            // Enforce tool policy: check domain restriction against the first
+            // text argument (conventionally the URL for HTTP tools).
+            if let Some(ref pol) = policy {
+                if let Some(crate::interpreter::Value::Text(url)) = args.first() {
+                    if let Err(msg) = pol.check_domain(url) {
+                        return Ok(Value::Err(Box::new(Value::Text(
+                            std::sync::Arc::new(msg)
+                        ))));
+                    }
+                }
+            }
             if let Some(ref _provider) = env.tool_provider {
                 #[cfg(feature = "tools")]
                 {

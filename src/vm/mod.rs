@@ -1209,6 +1209,8 @@ pub struct CompiledProgram {
     pub type_registry: TypeRegistry,
     /// Parallel to `func_names`/`chunks`: true if the function slot is a `tool` declaration.
     pub is_tool: Vec<bool>,
+    /// Parallel to `func_names`/`chunks`: tool policy if the slot is a tool, else None.
+    pub tool_policies: Vec<Option<crate::ast::ToolPolicy>>,
     /// Parallel to `func_names`/`chunks`: true if the function contains `defer`/`errdefer`
     /// and must be delegated to the tree-walker at runtime (OP_CALL bridge for internal calls).
     pub is_defer_fn: Vec<bool>,
@@ -2488,6 +2490,7 @@ impl RegCompiler {
 
         // Track which function indices are tool declarations or defer-containing functions.
         let mut is_tool: Vec<bool> = Vec::new();
+        let mut tool_policies: Vec<Option<crate::ast::ToolPolicy>> = Vec::new();
         let mut is_defer_fn: Vec<bool> = Vec::new();
 
         for decl in &program.declarations {
@@ -2504,11 +2507,12 @@ impl RegCompiler {
                     is_defer_fn.push(body_has_defer(body));
                 }
                 Decl::Tool {
-                    name, return_type, ..
+                    name, return_type, policy, ..
                 } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
                     is_tool.push(true);
+                    tool_policies.push(policy.clone());
                     is_defer_fn.push(false);
                 }
                 Decl::TypeDef { .. }
@@ -2669,6 +2673,7 @@ impl RegCompiler {
             nan_constants: Vec::new(),
             type_registry: self.type_registry,
             is_tool,
+            tool_policies,
             is_defer_fn,
             ast: None,
             defer_fns,
@@ -10932,6 +10937,20 @@ impl<'a> VM<'a> {
                         let mut value_args = Vec::with_capacity(n_args);
                         for i in 0..n_args {
                             value_args.push(reg!(base + a as usize + 1 + i).to_value());
+                        }
+
+                        // Enforce tool policy: domain check against first text arg.
+                        if let Some(Some(pol)) = self.program.tool_policies.get(func_idx as usize) {
+                            if let Some(Value::Text(url)) = value_args.first() {
+                                if let Err(msg) = pol.check_domain(url) {
+                                    let result = Value::Err(Box::new(Value::Text(
+                                        std::sync::Arc::new(msg)
+                                    )));
+                                    let nan_result = NanVal::from_value(&result);
+                                    reg_set!(base + a as usize, nan_result);
+                                    continue;
+                                }
+                            }
                         }
 
                         let result: Value = {
@@ -30501,6 +30520,7 @@ mod tests {
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("fallthrough should succeed");
         assert_eq!(result, Value::Nil);
@@ -30528,6 +30548,7 @@ mod tests {
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         let err = run(&program, Some("f"), vec![]).unwrap_err();
         // Error kind should be UnknownOpcode and span should be captured.
@@ -35627,6 +35648,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -35683,6 +35705,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -35735,6 +35758,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
 
         // Pass a number as the collection arg → triggers "foreach requires a list"
@@ -35843,6 +35867,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false, false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
 
         // g falls through with no RET → returns nil; f returns that nil
@@ -35986,6 +36011,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
@@ -36066,6 +36092,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
 
         // Pass a string as the collection → is_heap()=true but not a list → error
@@ -36146,6 +36173,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("sqrt nil should not error");
         match result {
@@ -36177,6 +36205,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("pow nil should not error");
         match result {
@@ -36209,6 +36238,7 @@ f>n;r=mk 10 20;+r.x r.y";
                 is_defer_fn: vec![false],
                 ast: None,
                 defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
             };
             let result = run(&program, Some("f"), vec![]).expect("math op on nil should not error");
             match result {
@@ -36252,6 +36282,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         match run(&program, Some("f"), vec![]).expect("unary math op should not error") {
             Value::Number(n) => n,
@@ -36293,6 +36324,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         match run(&program, Some("f"), vec![]).expect("pow should not error") {
             Value::Number(n) => assert!((n - 1024.0).abs() < 1e-10, "got {n}"),
@@ -36436,6 +36468,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         match run(&program, Some("f"), vec![]).expect("atan2 should not error") {
             Value::Number(n) => {
@@ -36478,6 +36511,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         match run(&program, Some("f"), vec![]).expect("atan2 nan path") {
             Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
@@ -36863,6 +36897,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
             Value::Number(n) => assert_eq!(n, 5.0),
@@ -36903,6 +36938,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         crate::rng::seed(7);
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
@@ -36944,6 +36980,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_defer_fn: vec![false],
             ast: None,
             defer_fns: std::collections::HashSet::new(),
+            tool_policies: Vec::new(),
         };
         let res = run(&program, Some("f"), vec![]);
         assert!(res.is_err(), "expected type error, got {res:?}");

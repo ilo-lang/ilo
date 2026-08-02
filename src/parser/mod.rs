@@ -1398,6 +1398,14 @@ statement boundary; bind the chain to a local first. For example, split \
             }
         }
 
+        // Parse optional policy block: policy{domain:"...",tokens:n,rate:n}
+        let policy = if self.peek() == Some(&Token::Policy) {
+            self.advance();
+            self.parse_tool_policy()?
+        } else {
+            None
+        };
+
         // End span: last consumed token
         let end_span = self.prev_span();
 
@@ -1408,8 +1416,73 @@ statement boundary; bind the chain to a local first. For example, split \
             return_type,
             timeout,
             retry,
+            policy,
             span: start.merge(end_span),
         })
+    }
+
+    /// Parse a `policy{domain:"...",tokens:n,rate:n}` block.
+    /// All fields optional; at least one field must be present.
+    fn parse_tool_policy(&mut self) -> Result<Option<crate::ast::ToolPolicy>> {
+        self.expect(&Token::LBrace)?;
+        let mut domain = None;
+        let mut tokens = None;
+        let mut rate = None;
+
+        loop {
+            let key = match self.peek() {
+                Some(Token::Ident(name)) => {
+                    let n = name.clone();
+                    self.advance();
+                    n
+                }
+                Some(Token::RBrace) => break,
+                _ => return Err(self.error(
+                    "ILO-P016",
+                    "expected policy field name (domain, tokens, or rate)".into(),
+                )),
+            };
+            self.expect(&Token::Colon)?;
+            match key.as_str() {
+                "domain" => {
+                    match self.peek() {
+                        Some(Token::Text(s)) => {
+                            domain = Some(s.clone());
+                            self.advance();
+                        }
+                        _ => return Err(self.error(
+                            "ILO-P016",
+                            "policy domain must be a text string".into(),
+                        )),
+                    }
+                }
+                "tokens" => {
+                    tokens = Some(self.parse_number()?);
+                }
+                "rate" => {
+                    rate = Some(self.parse_number()?);
+                }
+                _ => return Err(self.error(
+                    "ILO-P016",
+                    format!("unknown policy field '{key}' (expected domain, tokens, or rate)"),
+                )),
+            }
+            if self.peek() == Some(&Token::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(&Token::RBrace)?;
+
+        if domain.is_none() && tokens.is_none() && rate.is_none() {
+            // Empty policy{} — no restrictions
+            return Ok(None);
+        }
+
+        Ok(Some(crate::ast::ToolPolicy {
+            domain,
+            tokens,
+            rate,
+        }))
     }
 
     /// `alias name type`

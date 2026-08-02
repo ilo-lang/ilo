@@ -535,6 +535,7 @@ fn tools_cmd(args: &[String]) -> i32 {
                     description,
                     params,
                     return_type,
+                    policy,
                     ..
                 } = decl
                 {
@@ -547,12 +548,22 @@ fn tools_cmd(args: &[String]) -> i32 {
                             })
                         })
                         .collect();
+                    let policy_json = if let Some(p) = policy {
+                        serde_json::json!({
+                            "domain": p.domain,
+                            "tokens": p.tokens,
+                            "rate": p.rate,
+                        })
+                    } else {
+                        serde_json::Value::Null
+                    };
                     items.push(serde_json::json!({
                         "name": name,
                         "source": "mcp",
                         "description": description,
                         "params": params_json,
-                        "return": codegen::fmt::type_str(return_type)
+                        "return": codegen::fmt::type_str(return_type),
+                        "policy": policy_json,
                     }));
                 }
             }
@@ -3387,6 +3398,7 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             return_type,
             timeout,
             retry,
+            policy,
             span,
         } => ast::Decl::Tool {
             name: format!("{}-{}", alias, name),
@@ -3395,6 +3407,7 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             return_type,
             timeout,
             retry,
+            policy,
             span,
         },
         ast::Decl::TypeDef { name, fields, span } => ast::Decl::TypeDef {
@@ -8435,6 +8448,7 @@ mod tests {
             return_type: ast::Type::Text,
             timeout: None,
             retry: None,
+            policy: None,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), Some("my_tool"));
@@ -8836,6 +8850,7 @@ mod tests {
             return_type: ast::Type::Result(Box::new(ast::Type::Text), Box::new(ast::Type::Text)),
             timeout: None,
             retry: None,
+            policy: None,
             span: ast::Span { start: 0, end: 0 },
         };
 
@@ -9401,6 +9416,7 @@ mod tests {
                 return_type: Type::Result(Box::new(Type::Text), Box::new(Type::Text)),
                 timeout: None,
                 retry: None,
+                policy: None,
                 span: ast::Span::UNKNOWN,
             },
             Decl::Tool {
@@ -9413,6 +9429,7 @@ mod tests {
                 return_type: Type::Text,
                 timeout: None,
                 retry: None,
+                policy: None,
                 span: ast::Span::UNKNOWN,
             },
         ];
@@ -9692,6 +9709,7 @@ mod tests {
                 return_type: Type::Result(Box::new(Type::Text), Box::new(Type::Text)),
                 timeout: None,
                 retry: None,
+                policy: None,
                 span: Span::UNKNOWN,
             },
         ];
@@ -9754,6 +9772,7 @@ mod tests {
             return_type: Type::Result(Box::new(Type::Text), Box::new(Type::Text)),
             timeout: None,
             retry: None,
+            policy: None,
             span: ast::Span::UNKNOWN,
         }];
         // sig = "url:t query:t page:n limit:n size:n>R t t" (42 chars) > 36 → truncation path

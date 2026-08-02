@@ -17,6 +17,8 @@ pub enum Token {
     Timeout,
     #[token("retry")]
     Retry,
+    #[token("policy")]
+    Policy,
 
     // Type constructors (uppercase)
     #[token("L")]
@@ -270,6 +272,7 @@ impl Token {
             Token::With => "`with`".into(),
             Token::Timeout => "`timeout`".into(),
             Token::Retry => "`retry`".into(),
+            Token::Policy => "`policy`".into(),
 
             // Type constructors
             Token::ListType => "`L`".into(),

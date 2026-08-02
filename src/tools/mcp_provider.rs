@@ -184,6 +184,7 @@ impl McpProvider {
                 return_type: return_type.clone(),
                 timeout: None,
                 retry: None,
+                policy: None,
                 span: Span::UNKNOWN,
             })
             .collect()
