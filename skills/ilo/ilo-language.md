@@ -80,6 +80,20 @@ Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no
 
 Tail calls do not consume host-stack frames. A function that recurses in tail position runs to arbitrary depth — use tail-recursive accumulators for iteration beyond what `@` covers. No `loop` keyword by design. Tail position = last stmt of body, `ret` expr, an arm of a tail-position `?` match, body of a braceless guard. Peephole fires on direct user-fn name calls with no `!`/`!!`. Tree + VM trampoline today; JIT/AOT pending. Example: `count-down n:n>n;=n 0 0;count-down -n 1`.
 
+## effects
+
+Optional sigils after return type track side effects at verify time. No runtime cost.
+
+`/http /fs /io /net /ml /time /rand` after the return type (and after `^effect_set` if present):
+
+```
+fetch url:t>R t t /http
+save path:t data:t>R _ t /fs /http
+pure-sum xs:L n>n;sum xs
+```
+
+No sigils = pure. Verifier rejects side-effectful calls in pure fns (ILO-W051, warning; `--strict` to fail). Declared must cover actual (transitive: calling a `/http` fn makes caller `/http`). Over-declaring safe. Tools (external calls) count as `/http`.
+
 ## pipes
 
 `xs >> flt pos >> map sq` desugars left-to-right. Wrap `()` for non-last fns.
