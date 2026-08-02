@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::builtins::Builtin;
@@ -173,6 +173,182 @@ fn scope_lookup<'a>(scope: &'a Scope, name: &str) -> Option<&'a Ty> {
 fn scope_insert(scope: &mut Scope, name: String, ty: Ty) {
     if let Some(frame) = scope.last_mut() {
         frame.insert(name, ty);
+    }
+}
+
+/// Recursively collect side-effect [`Effect`]s from a function body.
+///
+/// Walks every statement and sub-expression, finding all `Expr::Call` nodes.
+/// For each call:
+/// - If it's a builtin with an effect, add that effect.
+/// - If it's a user function with declared sigils (in `fn_effects`), add those (transitive).
+/// - If it's a known function (in `functions`) but NOT in `fn_effects`, it's a tool —
+///   assign `Effect::Http` since tools are external (HTTP/MCP) calls.
+fn collect_body_effects(
+    stmts: &[Spanned<Stmt>],
+    fn_effects: &HashMap<String, HashSet<crate::ast::Effect>>,
+    functions: &HashMap<String, FuncSig>,
+    out: &mut HashSet<crate::ast::Effect>,
+) {
+    for spanned in stmts {
+        collect_stmt_effects(&spanned.node, fn_effects, functions, out);
+    }
+}
+
+fn collect_stmt_effects(
+    stmt: &Stmt,
+    fn_effects: &HashMap<String, HashSet<crate::ast::Effect>>,
+    functions: &HashMap<String, FuncSig>,
+    out: &mut HashSet<crate::ast::Effect>,
+) {
+    match stmt {
+        Stmt::Let { value, .. } => {
+            collect_expr_effects(value, fn_effects, functions, out);
+        }
+        Stmt::Expr(expr) => {
+            collect_expr_effects(expr, fn_effects, functions, out);
+        }
+        Stmt::Return(expr) => {
+            collect_expr_effects(expr, fn_effects, functions, out);
+        }
+        Stmt::Guard { condition, body, else_body, .. } => {
+            collect_expr_effects(condition, fn_effects, functions, out);
+            for s in body {
+                collect_stmt_effects(&s.node, fn_effects, functions, out);
+            }
+            if let Some(eb) = else_body {
+                for s in eb {
+                    collect_stmt_effects(&s.node, fn_effects, functions, out);
+                }
+            }
+        }
+        Stmt::Match { subject, arms } => {
+            if let Some(s) = subject {
+                collect_expr_effects(s, fn_effects, functions, out);
+            }
+            for arm in arms {
+                for s in &arm.body {
+                    collect_stmt_effects(&s.node, fn_effects, functions, out);
+                }
+            }
+        }
+        Stmt::ForEach { collection, body, .. } => {
+            collect_expr_effects(collection, fn_effects, functions, out);
+            for s in body {
+                collect_stmt_effects(&s.node, fn_effects, functions, out);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_expr_effects(condition, fn_effects, functions, out);
+            for s in body {
+                collect_stmt_effects(&s.node, fn_effects, functions, out);
+            }
+        }
+        Stmt::Destructure { value, .. } => {
+            collect_expr_effects(value, fn_effects, functions, out);
+        }
+        Stmt::ForRange { start, end, step, body, .. } => {
+            collect_expr_effects(start, fn_effects, functions, out);
+            collect_expr_effects(end, fn_effects, functions, out);
+            if let Some(s) = step {
+                collect_expr_effects(s, fn_effects, functions, out);
+            }
+            for s in body {
+                collect_stmt_effects(&s.node, fn_effects, functions, out);
+            }
+        }
+        Stmt::Break(Some(expr)) => {
+            collect_expr_effects(expr, fn_effects, functions, out);
+        }
+        Stmt::Break(None) | Stmt::Continue => {}
+        Stmt::Defer { expr, .. } => {
+            collect_expr_effects(expr, fn_effects, functions, out);
+        }
+    }
+}
+
+fn collect_expr_effects(
+    expr: &Expr,
+    fn_effects: &HashMap<String, HashSet<crate::ast::Effect>>,
+    functions: &HashMap<String, FuncSig>,
+    out: &mut HashSet<crate::ast::Effect>,
+) {
+    use crate::ast::Effect;
+    match expr {
+        Expr::Call { function, args, .. } => {
+            // Check if it's a builtin with an effect.
+            if let Some(b) = crate::builtins::Builtin::from_name(function) {
+                if let Some(eff) = b.effect() {
+                    out.insert(eff);
+                }
+            } else if let Some(effs) = fn_effects.get(function) {
+                // User function with declared effects (transitive).
+                for e in effs {
+                    out.insert(*e);
+                }
+            } else if functions.contains_key(function) {
+                // Not a builtin, not in fn_effects, but in functions → it's a tool.
+                out.insert(Effect::Http);
+            }
+            // Recurse into args.
+            for a in args {
+                collect_expr_effects(a, fn_effects, functions, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_expr_effects(left, fn_effects, functions, out);
+            collect_expr_effects(right, fn_effects, functions, out);
+        }
+        Expr::UnaryOp { operand, .. } => {
+            collect_expr_effects(operand, fn_effects, functions, out);
+        }
+        Expr::Field { object, .. } | Expr::Index { object, .. } => {
+            collect_expr_effects(object, fn_effects, functions, out);
+        }
+        Expr::Ok(e) | Expr::Err(e) | Expr::Todo(e) | Expr::Panic(e) => {
+            collect_expr_effects(e, fn_effects, functions, out);
+        }
+        Expr::List(items) => {
+            for i in items {
+                collect_expr_effects(i, fn_effects, functions, out);
+            }
+        }
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            for (_, v) in fields {
+                collect_expr_effects(v, fn_effects, functions, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            if let Some(s) = subject {
+                collect_expr_effects(s, fn_effects, functions, out);
+            }
+            for arm in arms {
+                for s in &arm.body {
+                    collect_stmt_effects(&s.node, fn_effects, functions, out);
+                }
+            }
+        }
+        Expr::NilCoalesce { value, default } => {
+            collect_expr_effects(value, fn_effects, functions, out);
+            collect_expr_effects(default, fn_effects, functions, out);
+        }
+        Expr::With { object, updates } => {
+            collect_expr_effects(object, fn_effects, functions, out);
+            for (_, v) in updates {
+                collect_expr_effects(v, fn_effects, functions, out);
+            }
+        }
+        Expr::Ternary { condition, then_expr, else_expr } => {
+            collect_expr_effects(condition, fn_effects, functions, out);
+            collect_expr_effects(then_expr, fn_effects, functions, out);
+            collect_expr_effects(else_expr, fn_effects, functions, out);
+        }
+        Expr::MakeClosure { captures, .. } => {
+            for c in captures {
+                collect_expr_effects(c, fn_effects, functions, out);
+            }
+        }
+        Expr::Literal(_) | Expr::Ref(_) => {}
     }
 }
 
@@ -4964,6 +5140,91 @@ impl VerifyContext {
                 }
             }
         }
+
+        // Effect-sigil check: verify that functions declaring `/http /fs /io` etc.
+        // cover all side-effectful builtins/tools they call, and that pure
+        // functions (no sigils) don't call side-effectful builtins/tools.
+        self.verify_effect_sigils(program);
+    }
+
+    /// Check effect sigils (`/http /fs /io /net /ml /time /rand`) declared on
+    /// function signatures against the actual effects in the body.
+    ///
+    /// Rules:
+    /// - No sigils = pure: cannot call side-effectful builtins or tools.
+    /// - Declared sigils must cover all effects in the body (declared ⊇ actual).
+    /// - Calling a function with `/http` requires the caller to also have `/http`.
+    /// - Over-declaring is safe (having `/http` but not using HTTP is fine).
+    fn verify_effect_sigils(&mut self, program: &Program) {
+        use crate::ast::Effect;
+
+        // Build a map of function name -> declared effect sigils for transitive checks.
+        let mut fn_effects: HashMap<String, HashSet<Effect>> = HashMap::new();
+        for decl in &program.declarations {
+            if let Decl::Function { name, effect_sigils, .. } = decl {
+                fn_effects.insert(name.clone(), effect_sigils.iter().copied().collect());
+            }
+        }
+
+        for decl in &program.declarations {
+            let Decl::Function { name, body, effect_sigils, span, .. } = decl else {
+                continue;
+            };
+            if self.parse_failed_fns.contains_key(name) {
+                continue;
+            }
+            let declared: HashSet<Effect> = effect_sigils.iter().copied().collect();
+            // Collect effects actually used in the body.
+            let mut actual: HashSet<Effect> = HashSet::new();
+            collect_body_effects(body, &fn_effects, &self.functions, &mut actual);
+
+            // Find undeclared effects.
+            let undeclared: Vec<Effect> = {
+                let mut u: Vec<Effect> = actual.difference(&declared).copied().collect();
+                u.sort_by_key(|e| e.sigil());
+                u
+            };
+
+            if !undeclared.is_empty() {
+                let declared_str = if declared.is_empty() {
+                    "pure".to_string()
+                } else {
+                    declared
+                        .iter()
+                        .map(|e| format!("/{}", e.sigil()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                let undeclared_str = undeclared
+                    .iter()
+                    .map(|e| format!("/{}", e.sigil()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let hint = if declared.is_empty() {
+                    format!(
+                        "add the effect sigil(s) to the signature: `{}` or remove the side-effectful call",
+                        undeclared_str
+                    )
+                } else {
+                    format!(
+                        "add `{}` to the effect sigils: `{} {}`",
+                        undeclared_str, declared_str, undeclared_str
+                    )
+                };
+                self.warn(
+                    "ILO-W051",
+                    name,
+                    format!(
+                        "undeclared effect{}: function declared `{}` but body uses `{}`",
+                        if undeclared.len() > 1 { "s" } else { "" },
+                        declared_str,
+                        undeclared_str
+                    ),
+                    Some(hint),
+                    Some(*span),
+                );
+            }
+        }
     }
 
     fn verify_body(&mut self, func: &str, scope: &mut Scope, stmts: &[Spanned<Stmt>]) -> Ty {
@@ -9132,7 +9393,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
-                    effect_set: None,
+                    effect_set: None, effect_sigils: vec![],
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
                         "x".to_string(),
                     )))))],
@@ -9146,7 +9407,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
-                    effect_set: None,
+                    effect_set: None, effect_sigils: vec![],
                     body: vec![
                         Spanned::unknown(Stmt::Let {
                             name: "d".to_string(),
@@ -9190,7 +9451,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Number,
-                    effect_set: None,
+                    effect_set: None, effect_sigils: vec![],
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
                     span: Span::UNKNOWN,
                 },
@@ -9202,7 +9463,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
-                    effect_set: None,
+                    effect_set: None, effect_sigils: vec![],
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
@@ -9239,7 +9500,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
-                    effect_set: None,
+                    effect_set: None, effect_sigils: vec![],
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
                         "x".to_string(),
                     )))))],
@@ -9253,7 +9514,7 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Number,
-                    effect_set: None,
+                    effect_set: None, effect_sigils: vec![],
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
@@ -11638,7 +11899,7 @@ mod tests {
                     ty: Type::List(Box::new(Type::Text)),
                 }],
                 return_type: Type::Text,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: Some(Expr::Ref("x".to_string())),
                     arms: vec![arm_list, arm_wild],
@@ -11874,7 +12135,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: Some(Expr::Ref("x".to_string())),
                     arms: vec![
@@ -11919,7 +12180,7 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Any,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Nil)))],
                 span: Span::UNKNOWN,
             }],
@@ -11952,7 +12213,7 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Text,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ternary {
                     condition: Box::new(Expr::BinOp {
                         op: BinOp::Equals,

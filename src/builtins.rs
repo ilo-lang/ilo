@@ -1083,6 +1083,40 @@ impl Builtin {
         Self::from_name(name).is_some()
     }
 
+    /// Return the compile-time effect of this builtin, if any.
+    /// Pure builtins return `None` (no side effect).
+    /// Side-effectful builtins return `Some(Effect::...)` for effect-sigil checking.
+    pub fn effect(self) -> Option<crate::ast::Effect> {
+        use crate::ast::Effect;
+        match self {
+            // HTTP builtins
+            Builtin::Get | Builtin::Post | Builtin::GetMany | Builtin::GetTo
+            | Builtin::Getx | Builtin::GetStream | Builtin::GetStreamH
+            | Builtin::PostStream | Builtin::PostStreamH
+            | Builtin::Del | Builtin::Hed | Builtin::Opt | Builtin::Pstx
+            | Builtin::Put | Builtin::Pat => Some(Effect::Http),
+            // Filesystem builtins
+            Builtin::Rd | Builtin::RdJson | Builtin::Rdl | Builtin::Rdjl | Builtin::Rdb
+            | Builtin::Wr | Builtin::Wrl | Builtin::Ls | Builtin::Walk | Builtin::Glob
+            | Builtin::Isfile | Builtin::Isdir => Some(Effect::Fs),
+            // Console / env I/O
+            Builtin::Prnt | Builtin::Env | Builtin::EnvAll => Some(Effect::Io),
+            // Time builtins
+            Builtin::Now | Builtin::NowMs | Builtin::Sleep => Some(Effect::Time),
+            // Random builtins
+            Builtin::Rnd | Builtin::Rndn => Some(Effect::Rand),
+            // Process / external execution
+            Builtin::Run | Builtin::Run2 | Builtin::RunFullEnv | Builtin::Run2FullEnv => Some(Effect::Net),
+            // Everything else is pure
+            _ => None,
+        }
+    }
+
+    /// Check if a builtin name has a side effect (convenience wrapper).
+    pub fn has_effect(name: &str) -> Option<crate::ast::Effect> {
+        Self::from_name(name).and_then(|b| b.effect())
+    }
+
     /// Stable list of every `Builtin` variant, in canonical order.
     ///
     /// The position of each variant in this slice is its on-wire tag

@@ -2281,6 +2281,55 @@ Use `!` when the caller wants to react to the Err (compensate, retry, log). Use 
 
 ---
 
+## Effects (compile-time side-effect sigils)
+
+Optional effect sigils appended to a function signature, after the return type (and after any `^effect_set`):
+
+```
+fetch url:t>R t t /http
+save path:t data:t>R _ t /fs
+log msg:t>R _ t /io
+analyze data:t>R t t /http /ml
+pure-sum xs:L n>n;sum xs
+```
+
+| Sigil | Covers |
+|-------|--------|
+| `/http` | HTTP builtins (`get`, `post`, `get-many`, `get-stream`, `pst-stream`, `del`, `put`, `pat`, `opt`, `hed`, `pstx`, `getx`, `get-to`) and all external tools (MCP / HTTP providers) |
+| `/fs` | Filesystem builtins (`rd`, `rdb`, `rdl`, `rdjl`, `wr`, `wrl`, `ls`, `walk`, `glob`, `isfile`, `isdir`) |
+| `/io` | Console / environment (`prnt`, `env`, `env-all`) |
+| `/net` | Subprocess execution (`run`, `run2`, `run-full-env`, `run2-full-env`) |
+| `/ml` | LLM inference (reserved; no builtins tagged yet) |
+| `/time` | Time builtins (`now`, `now-ms`, `sleep`) |
+| `/rand` | Random builtins (`rnd`, `rndn`) |
+
+### Rules
+
+- **No sigils = pure.** The verifier rejects calls to side-effectful builtins or tools in a function with no effect sigils (ILO-W051, warning by default; `--strict` promotes to exit-code failure).
+- **Declared sigils must cover actual effects.** If the body calls a builtin or function with effect `/http`, the signature must declare `/http`. Over-declaring is safe: declaring `/http` but never calling HTTP is fine.
+- **Transitive propagation.** Calling a function declared `/http` makes the caller require `/http` too. The verifier walks every call site and collects effects transitively.
+- **External tools are `/http`.** Tool declarations (`tool name ...`) are not builtins; the verifier assigns `Effect::Http` to any tool call site.
+- **Warning-only by default.** ILO-W051 is advisory. CI harnesses should use `ilo check --strict` to fail on undeclared effects.
+
+### Example
+
+```
+-- Pure: no side-effectful calls allowed.
+add a:n b:n>n;+a b
+
+-- Declares /http: may call get, post, and HTTP tools.
+fetch-and-save url:t path:t>R _ t /http /fs
+  r=get! url;wr path r
+
+-- Forgot /fs: fires ILO-W051.
+broken url:t path:t>R _ t /http
+  r=get! url;wr path r   -- wr requires /fs
+```
+
+Effect sigils are compile-time annotations only. They do not affect runtime behaviour, execution engine selection, or output. They make side effects visible in the type signature and enable static capability checking.
+
+---
+
 ## Patterns (for LLM generators)
 
 ### Bind-first pattern
@@ -2698,7 +2747,7 @@ The response `body` field may take three shapes (ILO-482):
 * `L t` — a list of strings, sent eagerly with `Transfer-Encoding: chunked`: each element becomes one chunk. The list is materialised before the first byte is written.
 * a lazy line iterator (`get-stream`/`pst-stream`, `for-line stdin`) — sent with `Transfer-Encoding: chunked` **lazily**: each line the iterator yields is written and flushed as its own chunk, so the handler can hold the connection open and emit chunks as they are produced (SSE, long-poll, tailing a growing source) without buffering the whole body first. If the client disconnects mid-stream the connection thread exits cleanly. A zero-arg `body` function (`FnRef`/closure) is called first and may itself return any of the three shapes.
 
-**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, **ILO-W020** function missing a shadow test block, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
+**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, **ILO-W020** function missing a shadow test block, ILO-W051 undeclared effect sigils, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 

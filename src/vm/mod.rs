@@ -24277,7 +24277,7 @@ mod tests {
                 params,
                 body: vec![],
                 return_type: Type::Number,
-                effect_set: None,
+                effect_set: None, effect_sigils: vec![],
                 span: Span::UNKNOWN,
             }],
             source: None,
