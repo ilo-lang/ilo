@@ -6477,14 +6477,21 @@ impl VerifyContext {
                         }
                         Ty::Unknown => Ty::Unknown,
                         other => {
-                            self.err(
-                                "ILO-T025",
-                                func,
-                                format!("'{op_str}' used on call to '{callee}' which returns {other}, not a Result or Optional"),
-                                Some(op_desc),
-                                Some(span),
-                            );
-                            Ty::Unknown
+                            // PipePropagate is lenient: non-Result/non-Optional
+                            // returns pass through without error (the pipe
+                            // works for both Result-returning and plain calls).
+                            if matches!(unwrap, UnwrapMode::PipePropagate) {
+                                other.clone()
+                            } else {
+                                self.err(
+                                    "ILO-T025",
+                                    func,
+                                    format!("'{op_str}' used on call to '{callee}' which returns {other}, not a Result or Optional"),
+                                    Some(op_desc),
+                                    Some(span),
+                                );
+                                Ty::Unknown
+                            }
                         }
                     }
                 } else {

@@ -3599,6 +3599,16 @@ statement boundary; bind the chain to a local first. For example, split \
     /// `expr >> func a b` desugars to `func(a, b, expr)` — piped value becomes last arg.
     fn maybe_pipe(&mut self, mut expr: Expr) -> Result<Expr> {
         while matches!(self.peek(), Some(Token::PipeOp)) {
+            // If the source expression is a Call without an explicit `!` or
+            // `!!`, inject PipePropagate so the piped value is unwrapped when
+            // it's a Result (Ok→inner, Err→short-circuit) and passed through
+            // unchanged when it's not. Non-Call sources (refs, literals) are
+            // left alone — there's no return value to unwrap.
+            if let Expr::Call { unwrap, .. } = &mut expr {
+                if matches!(*unwrap, UnwrapMode::None) {
+                    *unwrap = UnwrapMode::PipePropagate;
+                }
+            }
             self.advance(); // consume >>
             let func_name = self.expect_ident()?;
             let unwrap = self.maybe_postfix_unwrap();
