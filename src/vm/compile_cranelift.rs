@@ -794,7 +794,14 @@ pub fn compile_to_binary(
         format!("failed to run cc: {}", e)
     })?;
 
-    cleanup(&obj_path);
+    // Preserve the Cranelift-emitted `.o` for test harnesses when
+    // `ILO_KEEP_OBJ=1`. The linked binary contains `libilo.a` content which
+    // changes with every Rust code addition, so byte-identical regression
+    // tests need to compare at the object level instead. Production runs
+    // (the env var unset) keep the existing cleanup behaviour.
+    if std::env::var("ILO_KEEP_OBJ").as_deref() != Ok("1") {
+        cleanup(&obj_path);
+    }
 
     if !status.success() {
         return Err(format!("linker failed with exit code: {}", status));

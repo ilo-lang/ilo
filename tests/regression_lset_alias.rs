@@ -251,7 +251,7 @@ fn lset_preserves_original_cranelift() {
 
 // Histogram pattern (the use-case the gis-analyst rerun needed). Uses lset
 // in a foreach loop to in-place-rebuild bins. This is the example program
-// shipped in examples/lset-alias.ilo, exercised here at the harness level
+// shipped in examples/lset-alias.@, exercised here at the harness level
 // across all three engines.
 const HIST_SRC: &str = "bin-count samples:L n bins:L n>L n;@s samples{c=at bins s;bins=lset bins s +c 1};bins;\
      main>L n;bin-count [0,2,1,2,3,1,2,0] [0,0,0,0]";

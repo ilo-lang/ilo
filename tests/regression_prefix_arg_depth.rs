@@ -99,7 +99,7 @@ fn check_infix_on_call(engine: &str) {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "ilo_prefix_arg_t3_{}_{}.ilo",
+        "ilo_prefix_arg_t3_{}_{}.@",
         std::process::id(),
         seq
     ));
@@ -197,7 +197,7 @@ fn check_single_atom_after_op(engine: &str) {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "ilo_prefix_arg_single_{}_{}.ilo",
+        "ilo_prefix_arg_single_{}_{}.@",
         std::process::id(),
         seq
     ));

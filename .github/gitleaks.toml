@@ -1,0 +1,39 @@
+# gitleaks config for ilo-lang.
+#
+# Extends the default ruleset (which covers AWS, GCP, Azure, GitHub, OpenAI,
+# Anthropic, Stripe, Slack, JWT, generic high-entropy strings, etc.) and adds
+# an allowlist for the placeholder strings that ship in examples/ so the
+# release-gate scanner does not false-positive on demo code.
+#
+# For the full release-gate runbook (when to run, incident procedure, why
+# release-only) see docs/release-secret-scan.md.
+#
+# Run locally:
+#   gitleaks detect --source . --no-git --redact --verbose
+#   gitleaks detect --source . --redact --verbose   # includes git history
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "ilo example placeholders and docs"
+
+# Regex matches against any string the scanner flags. Anything here is
+# explicitly NOT a real secret.
+regexes = [
+  # ScrapingBee example placeholder used in examples/apps/*.
+  '''SCRAPINGBEE_KEY_PLACEHOLDER_set_via_env_in_real_use''',
+  # OpenAI-style placeholder keys used in LLM-client examples.
+  '''sk-PLACEHOLDER[-_A-Za-z0-9]*''',
+  # Generic "REPLACE_ME" / "YOUR_*_HERE" placeholders sometimes embedded in
+  # docs to show the shape of a credential.
+  '''(?i)(REPLACE_ME|YOUR_[A-Z_]+_HERE|EXAMPLE_[A-Z_]+_KEY)''',
+]
+
+# Paths that are docs / examples / fixtures by design. We still scan them
+# (so an actual leak would surface) but tolerate the placeholder shapes
+# above and never treat the canonical demo files as authoritative secrets.
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''CHANGELOG\.md$''',
+]

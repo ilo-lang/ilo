@@ -1,6 +1,6 @@
 ---
 name: ilo-language
-description: Use this when writing or reviewing .ilo source. Prefix notation, type sigils, guards, match, pipes, Results, loops, lambdas.
+description: Use this when writing or reviewing .@ source (canonical extension; .ilo also accepted with deprecation warning). Prefix notation, type sigils, guards, match, pipes, records, Result.
 ---
 
 # ilo language

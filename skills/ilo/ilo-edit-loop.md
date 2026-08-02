@@ -9,15 +9,15 @@ ilo verifies before it runs, every error carries a stable `ILO-XXXX` code, and d
 
 ## Loop
 
-1. `ilo check file.ilo --json` - verify without running. Exit 0 means valid.
+1. `ilo check file.@ --json` - verify without running. Exit 0 means valid.
 2. Exit 1: read the first diagnostic, route on `code`, edit at `span`. Re-check.
 3. Bound retries at 3 per code. Same code three times: stop and dump.
-4. Exit 0: `ilo run file.ilo`. `^e` on stdout is a runtime error; otherwise consume the value.
+4. Exit 0: `ilo run file.@`. `^e` on stdout is a runtime error; otherwise consume the value.
 
 ## Diagnostic shape
 
 ```json
-{"code":"ILO-T004","message":"...","span":{"file":"x.ilo","line":3,"col":12,"len":5},"hint":"..."}
+{"code":"ILO-T004","message":"...","span":{"file":"x.@","line":3,"col":12,"len":5},"hint":"..."}
 ```
 
 `code` prefix `L`/`P`/`T`/`R`. `span` 1-based. `hint` is usually the fix verbatim; apply it before guessing. Long form: `ilo explain ILO-XXXX`. Full code list: load `ilo-errors`.

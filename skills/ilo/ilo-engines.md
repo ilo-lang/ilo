@@ -5,7 +5,7 @@ description: Use this when choosing between VM, JIT, or AOT execution. Covers th
 
 # ilo execution engines
 
-Three public backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs at strong speed. Pick another only with a reason.
+Three public backends. Default (`ilo file.@`) is the register VM; covers ~all programs at strong speed. Pick another only with a reason.
 
 ## Engines
 
@@ -30,8 +30,8 @@ All three public backends support core ops, lists/maps/records/sums, HOFs, lambd
 
 ## Benchmarking
 
-`ilo file.ilo --bench main args` runs VM and JIT, reports per-engine `perCallNs`. `--json` for one envelope per engine. AOT timed via `ilo compile ... && ./prog args`.
+`ilo file.@ --bench main args` runs VM and JIT, reports per-engine `perCallNs`. `--json` for one envelope per engine. AOT timed via `ilo compile ... && ./prog args`.
 
 ## AOT
 
-`ilo compile prog.ilo [-o out] [main] [--bench]`. Output ~9 MB, host-arch native. Top-level Result contract matches source byte-for-byte.
+`ilo compile prog.@ [-o out] [main] [--bench]`. Output ~9 MB, host-arch native. Top-level Result contract matches source byte-for-byte.

@@ -109,7 +109,7 @@ fn op_index_oob_span_matches_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn op_index_oob_default_engine_has_label() {
-    // The exact shape from `spanrt.ilo` in the db-analyst rerun6 entry.
+    // The exact shape from `spanrt.@` in the db-analyst rerun6 entry.
     assert_default_engine_has_label("f>n;xs=[1,2,3];xs.99", "f");
 }
 

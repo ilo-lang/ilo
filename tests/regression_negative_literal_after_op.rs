@@ -89,7 +89,7 @@ fn check_id(engine: &str) {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path = std::env::temp_dir().join(format!(
-        "ilo_neg_after_op_{}_{}_{}.ilo",
+        "ilo_neg_after_op_{}_{}_{}.@",
         std::process::id(),
         seq,
         engine.trim_start_matches("--"),

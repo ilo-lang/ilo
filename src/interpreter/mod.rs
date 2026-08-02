@@ -12911,7 +12911,7 @@ mod tests {
     #[test]
     fn interpret_tot() {
         // tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
-        let source = std::fs::read_to_string("examples/01-simple-function.ilo").unwrap();
+        let source = std::fs::read_to_string("examples/01-simple-function.@").unwrap();
         let result = run_str(
             &source,
             Some("tot"),
@@ -17153,7 +17153,7 @@ mod tests {
         env.functions.insert(
             "fake_use".to_string(),
             Decl::Use {
-                path: "x.ilo".to_string(),
+                path: "x.@".to_string(),
                 only: None,
                 alias: None,
                 predicate: None,

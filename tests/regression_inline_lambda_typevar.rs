@@ -31,7 +31,7 @@ fn write_src(name: &str, src: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "ilo_lambda_typevar_{name}_{}_{n}.ilo",
+        "ilo_lambda_typevar_{name}_{}_{n}.@",
         std::process::id()
     ));
     std::fs::write(&path, src).expect("write src");
@@ -136,7 +136,7 @@ fn lambda_typevar_two_lambdas_same_typevar_same_fn() {
 
 #[test]
 fn lambda_typevar_two_list_a_lambdas_same_fn() {
-    // The nlp-engineer mi.ilo shape: two `rsrt (r:L a>n; ...)` calls
+    // The nlp-engineer mi.@ shape: two `rsrt (r:L a>n; ...)` calls
     // in the same function body, different bodies. Cannot collide.
     // Sort by col 0 desc → [[3,4],[2,5],[1,2]], then by col 1 desc →
     // [[2,5],[3,4],[1,2]]. The important property is that two same-shape

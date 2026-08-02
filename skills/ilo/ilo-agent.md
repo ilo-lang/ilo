@@ -31,6 +31,10 @@ ilo 'f x:n>n;+x 1' 5               inline source
 ilo --jit file.ilo --bench main    JIT + bench
 ilo file.ilo --bench main --json   bench output as NDJSON
 ilo file.ilo --bench main --json --silent  suppress program stdout
+ilo file.@                         auto-pick main
+ilo file.@ func a b                call named fn
+ilo 'f x:n>n;+x 1' 5              inline source
+ilo --jit file.@ --bench main     JIT + bench
 ```
 
 `--silent` / `-s` mutes program-level `prnt` (and `prnv` / `jprn` / JIT prints) for the run. Paired with `--bench --json` it gives agent harnesses (e.g. persona cost rollup) a clean JSON stream on stdout instead of 10k+ lines of benchmarked output. Stderr is never silenced.

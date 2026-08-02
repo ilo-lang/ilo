@@ -1,5 +1,5 @@
 -- Tool declarations: external HTTP calls, verified statically like functions.
--- Run with: ilo examples/tools.ilo --tools examples/tools.json notify user123 "Hello"
+-- Run with: ilo examples/tools.@ --tools examples/tools.json notify user123 "Hello"
 
 -- Tool: fetch a user profile by ID. Returns Ok(profile) or Err(message).
 tool get-user"Retrieve user by ID" uid:t>R profile t timeout:5,retry:2

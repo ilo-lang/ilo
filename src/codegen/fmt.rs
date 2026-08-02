@@ -1057,27 +1057,27 @@ mod tests {
 
     #[test]
     fn round_trip_example_01() {
-        assert_round_trip(&std::fs::read_to_string("examples/01-simple-function.ilo").unwrap());
+        assert_round_trip(&std::fs::read_to_string("examples/01-simple-function.@").unwrap());
     }
 
     #[test]
     fn round_trip_example_02() {
-        assert_round_trip(&std::fs::read_to_string("examples/02-with-dependencies.ilo").unwrap());
+        assert_round_trip(&std::fs::read_to_string("examples/02-with-dependencies.@").unwrap());
     }
 
     #[test]
     fn round_trip_example_03() {
-        assert_round_trip(&std::fs::read_to_string("examples/03-data-transform.ilo").unwrap());
+        assert_round_trip(&std::fs::read_to_string("examples/03-data-transform.@").unwrap());
     }
 
     #[test]
     fn round_trip_example_04() {
-        assert_round_trip(&std::fs::read_to_string("examples/04-tool-interaction.ilo").unwrap());
+        assert_round_trip(&std::fs::read_to_string("examples/04-tool-interaction.@").unwrap());
     }
 
     #[test]
     fn round_trip_example_05() {
-        assert_round_trip(&std::fs::read_to_string("examples/05-workflow.ilo").unwrap());
+        assert_round_trip(&std::fs::read_to_string("examples/05-workflow.@").unwrap());
     }
 
     // ---- Idempotency tests ----
@@ -1094,12 +1094,12 @@ mod tests {
 
     #[test]
     fn idempotent_example_04() {
-        assert_idempotent(&std::fs::read_to_string("examples/04-tool-interaction.ilo").unwrap());
+        assert_idempotent(&std::fs::read_to_string("examples/04-tool-interaction.@").unwrap());
     }
 
     #[test]
     fn idempotent_example_05() {
-        assert_idempotent(&std::fs::read_to_string("examples/05-workflow.ilo").unwrap());
+        assert_idempotent(&std::fs::read_to_string("examples/05-workflow.@").unwrap());
     }
 
     // ---- Expanded format structure tests ----
@@ -1159,7 +1159,7 @@ mod tests {
 
     #[test]
     fn expanded_multiple_decls_separated_by_blank_line() {
-        let s = expanded(&std::fs::read_to_string("examples/03-data-transform.ilo").unwrap());
+        let s = expanded(&std::fs::read_to_string("examples/03-data-transform.@").unwrap());
         // Two declarations should be separated by a blank line in expanded mode.
         assert!(
             s.contains("\n\n"),
@@ -1175,7 +1175,7 @@ mod tests {
 
     #[test]
     fn expanded_workflow() {
-        let s = expanded(&std::fs::read_to_string("examples/05-workflow.ilo").unwrap());
+        let s = expanded(&std::fs::read_to_string("examples/05-workflow.@").unwrap());
         assert!(s.contains("chk"), "got: {s}");
         assert!(
             s.contains("  ? {\n"),
@@ -1402,7 +1402,7 @@ mod tests {
     fn format_decl_skips_use_node() {
         use crate::ast::{Decl, Span};
         let use_decl = Decl::Use {
-            path: "x.ilo".into(),
+            path: "x.@".into(),
             only: None,
             alias: None,
             predicate: None,

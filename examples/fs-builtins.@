@@ -23,9 +23,9 @@ walk-has-entries dir:t>R b t;ps=walk! dir;~>len ps 5
 --   [abc] / [a-z]   a char class; leading `!` or `^` negates
 --   **    any number of nested segments (recursive)
 --
--- `**/*.ilo` matches every .ilo file in the tree, including ones in the
+-- `**/*.@` matches every .@ source file in the tree, including ones in the
 -- immediate dir (the `**` matches zero segments too).
-glob-ilo-count dir:t>R b t;ps=glob! dir "**/*.ilo";~>len ps 0
+glob-ilo-count dir:t>R b t;ps=glob! dir "**/*.@";~>len ps 0
 
 -- Missing directory surfaces as Err. The agent can pattern-match the
 -- Result or use `?ok` to branch instead of carrying a sentinel value.

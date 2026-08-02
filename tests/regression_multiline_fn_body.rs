@@ -27,11 +27,8 @@ fn ilo() -> Command {
 fn run_file(engine: &str, src: &str, entry: &str) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "ilo_multiline_fn_{}_{}.ilo",
-        std::process::id(),
-        seq
-    ));
+    let path =
+        std::env::temp_dir().join(format!("ilo_multiline_fn_{}_{}.@", std::process::id(), seq));
     std::fs::write(&path, src).unwrap();
     // `entry` may be a bare function name (`f`) or a function name plus
     // whitespace-separated CLI args (`gp 5`). Split on whitespace so the

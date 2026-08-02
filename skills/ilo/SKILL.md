@@ -1,6 +1,6 @@
 ---
 name: ilo
-description: "Write, run, debug, and explain programs in ilo, a token-optimised programming language for AI agents. Use when the user asks to write ilo code, mentions .ilo files, asks about ilo syntax, wants to create token-optimised programs, or wants to convert code from other languages to ilo."
+description: "Write, run, debug, and explain programs in ilo, a token-optimised programming language for AI agents. Use when the user asks to write ilo code, mentions .@ or .ilo files, asks about ilo syntax, wants to create token-optimised programs, or wants to convert code from other languages to ilo."
 license: MIT
 compatibility: Requires the ilo binary (auto-installed by scripts/ensure-ilo.sh via GitHub releases or npm).
 allowed-tools: Bash Read Write Edit
@@ -34,7 +34,7 @@ Every skill subcommand accepts `--json` (short alias `-j`, ILO-442). The envelop
 
 Twelve task-focused skills cover the surface. Load only the slices the current task needs (typical: 1-2 modules):
 
-- `ilo-language` writing or reviewing .ilo source: syntax, types, guards, match, pipes, Results, loops, lambdas.
+- `ilo-language` writing or reviewing .@ source: syntax, types, guards, match, pipes, records, Results.
 - `ilo-language-records` writing ilo code with record types: declarations, construction, field access, destructuring, update syntax, safe navigation. Load alongside `ilo-language` when your code uses `type`.
 - `ilo-builtins-core` core builtins: type coercions (`len str num trm`), list ops, HOFs, map ops.
 - `ilo-builtins-math` math builtins: arithmetic, trig, constants (`pi tau e`), random, statistics.
@@ -44,7 +44,7 @@ Twelve task-focused skills cover the surface. Load only the slices the current t
 - `ilo-tools` declaring and using external tools: MCP servers and HTTP providers.
 - `ilo-engines` picking an execution backend: tree, VM, JIT, AOT.
 - `ilo-agent` integrating ilo into an agent loop: discovery, running, output contract.
-- `ilo-examples` finding a runnable pattern: curated index of `examples/*.ilo` by task shape.
+- `ilo-examples` finding a runnable pattern: curated index of `examples/*.@` by task shape.
 - `ilo-edit-loop` recovering from failures: the repair cycle, JSON diagnostics, common fixes.
 
 The content lives in `skills/ilo/<name>.md`. The installed binary serves the same files via `include_str!`, so the bundled copy and the served copy cannot drift.

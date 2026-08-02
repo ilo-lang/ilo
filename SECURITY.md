@@ -1,9 +1,6 @@
-# Release security
+# Security policy
 
-This page documents the security gates that run before an ilo release tag is
-cut. The goal is simple: a leaked credential, API key, private key, or other
-secret should never make it onto a published artifact, a published crate, a
-published npm package, or a GitHub release.
+Found a vulnerability in ilo? Please do not open a public issue.
 
 ## Secret-scan posture
 
@@ -47,3 +44,6 @@ the happy, tamper, and missing-asset code paths.
    doc).
 2. Once rotated, scrub the secret from history (`git filter-repo` or
    BFG), force-push the cleaned history, and re-cut the tag.
+Report it privately via [GitHub's private vulnerability reporting](https://github.com/ilo-lang/ilo/security/advisories/new).
+
+We aim to acknowledge reports within 72 hours.

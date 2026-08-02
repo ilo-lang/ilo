@@ -933,7 +933,7 @@ mod tests {
 
     #[test]
     fn emit_js_fac() {
-        let js = parse_file_and_emit("examples/recursion.ilo");
+        let js = parse_file_and_emit("examples/recursion.@");
         assert!(js.contains("const fac = ("), "got: {}", js);
         assert!(js.contains("const fib = ("), "got: {}", js);
         // Recursive calls

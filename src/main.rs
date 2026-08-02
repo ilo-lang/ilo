@@ -50,7 +50,7 @@ struct Skill {
 const SKILLS: &[Skill] = &[
     Skill {
         name: "ilo-language",
-        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, Results, loops, and lambdas.",
+        description: "Use this when writing or reviewing .@ source (canonical; .ilo accepted with deprecation warning). Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.",
         path: "skills/ilo/ilo-language.md",
         content: include_str!("../skills/ilo/ilo-language.md"),
     },
@@ -110,7 +110,7 @@ const SKILLS: &[Skill] = &[
     },
     Skill {
         name: "ilo-examples",
-        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.ilo` grouped by what each one demonstrates.",
+        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.@` grouped by what each one demonstrates.",
         path: "skills/ilo/ilo-examples.md",
         content: include_str!("../skills/ilo/ilo-examples.md"),
     },
@@ -281,6 +281,18 @@ fn skill_show_cmd(name: &str, as_json: bool) -> i32 {
 
 /// `ilo version` — plain prints `ilo X.Y.Z`, `--json` emits a structured
 /// envelope so agent tooling can route on the version without parsing.
+/// Emit a deprecation hint when the user loads a `.ilo` file.
+/// `.@` is the canonical extension from 0.13.0 onwards; `.ilo` is retained
+/// for backward compatibility but nudges users toward the shorter form.
+fn maybe_warn_ilo_ext(source_arg: &str) {
+    if source_arg.ends_with(".ilo") {
+        eprintln!(
+            "hint: .ilo extension is deprecated; rename to .@ \
+             (saves 1 token/filename on LLM tokenisers)"
+        );
+    }
+}
+
 fn version_cmd(as_json: bool) -> i32 {
     if as_json {
         let v = serde_json::json!({
@@ -1714,7 +1726,7 @@ fn repl_cmd() {
                     if defs.is_empty() {
                         eprintln!("no definitions to save");
                     } else {
-                        eprintln!("usage: :w <file.ilo>");
+                        eprintln!("usage: :w <file.@>");
                     }
                     continue;
                 }
@@ -1723,7 +1735,7 @@ fn repl_cmd() {
                     let path = match input.split_once(' ') {
                         Some((_, p)) => p.trim(),
                         None => {
-                            eprintln!("usage: :w <file.ilo>");
+                            eprintln!("usage: :w <file.@>");
                             continue;
                         }
                     };
@@ -1910,8 +1922,13 @@ fn repl_cmd() {
 #[cfg(feature = "cranelift")]
 fn compile_cmd(args: &[String]) -> i32 {
     if args.is_empty() {
-        eprintln!("Usage: ilo compile <file-or-code> [-o output] [func]");
+        print_build_help();
         return 1;
+    }
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_build_help();
+        return 0;
     }
 
     let mut output_path: Option<String> = None;
@@ -1919,6 +1936,11 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut func_name: Option<&str> = None;
     let mut bench_mode = false;
     let mut as_json = false;
+    let mut python_mode = false;
+    let mut wasm_mode = false;
+    let mut wasm_target_arg: Option<String> = None;
+    let mut zero_mode = false;
+    let mut zero_bin_mode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1936,6 +1958,26 @@ fn compile_cmd(args: &[String]) -> i32 {
             "--json" | "-j" => {
                 as_json = true;
             }
+            "--py" => {
+                python_mode = true;
+            }
+            "--wasm" => {
+                wasm_mode = true;
+            }
+            "--0" => {
+                zero_mode = true;
+            }
+            "--0bin" => {
+                zero_bin_mode = true;
+            }
+            "--target" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --target requires a target name (e.g. wasm32-component)");
+                    return 1;
+                }
+                wasm_target_arg = Some(args[i].clone());
+            }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
             }
@@ -1944,6 +1986,27 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
         }
         i += 1;
+    }
+
+    if python_mode && bench_mode {
+        eprintln!("Error: --py and --bench are mutually exclusive");
+        return 1;
+    }
+    if wasm_mode && (python_mode || bench_mode) {
+        eprintln!("Error: --wasm is mutually exclusive with --py / --bench");
+        return 1;
+    }
+    if wasm_target_arg.is_some() && !wasm_mode {
+        eprintln!("Error: --target only applies to --wasm builds");
+        return 1;
+    }
+    if zero_mode && zero_bin_mode {
+        eprintln!("Error: --0 and --0bin are mutually exclusive (--0bin already emits the source)");
+        return 1;
+    }
+    if (zero_mode || zero_bin_mode) && (python_mode || wasm_mode || bench_mode) {
+        eprintln!("Error: --0/--0bin is mutually exclusive with --py / --wasm / --bench");
+        return 1;
     }
 
     let source_arg = match source_arg {
@@ -1956,6 +2019,7 @@ fn compile_cmd(args: &[String]) -> i32 {
 
     // Read source from file or treat as inline code
     let source = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         match std::fs::read_to_string(source_arg) {
             Ok(s) => s,
             Err(e) => {
@@ -1967,10 +2031,38 @@ fn compile_cmd(args: &[String]) -> i32 {
         source_arg.to_string()
     };
 
-    // Default output path: strip .ilo extension or use "a.out"
+    // Default output path: strip .ilo extension or use "a.out". With `--py`,
+    // the default is `<basename>.py` so `ilo build foo.ilo --py` writes
+    // `foo.py` next to the source.
     let output = output_path.unwrap_or_else(|| {
-        if source_arg.ends_with(".ilo") {
+        if python_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.py", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.py".to_string()
+            }
+        } else if wasm_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.wasm", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.wasm".to_string()
+            }
+        } else if zero_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.0", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.0".to_string()
+            }
+        } else if zero_bin_mode {
+            if source_arg.ends_with(".ilo") {
+                source_arg.trim_end_matches(".ilo").to_string()
+            } else {
+                "a.out".to_string()
+            }
+        } else if source_arg.ends_with(".ilo") {
             source_arg.trim_end_matches(".ilo").to_string()
+        } else if source_arg.ends_with(".@") {
+            source_arg.trim_end_matches(".@").to_string()
         } else {
             "a.out".to_string()
         }
@@ -2057,6 +2149,121 @@ fn compile_cmd(args: &[String]) -> i32 {
         return 1;
     }
 
+    // `--py`: transpile to Python via the PythonBackend and short-circuit
+    // before the bytecode/Cranelift pipeline runs.
+    //
+    // NOTE: like the Cranelift dispatch below, Python is a HIR-trait-surface
+    // call with a side channel. The `_hir` argument is threaded for
+    // signature parity, but the actual transpile reads `config.program`
+    // (the verified AST) because the current HIR doesn't carry the full
+    // expression-level surface Python emit needs (sum types, full match
+    // shapes, etc.). See `backend/python/mod.rs` module doc and the
+    // Backend trait doc for the wider story. The side channel is
+    // documented and intentional in 0.13.0; it disappears once HIR grows.
+    if python_mode {
+        // Lower to HIR so the trait surface is HIR-first even if the Python
+        // backend currently ignores it. Keeps the dispatch site uniform with
+        // the Cranelift path.
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let config = ilo::backend::python::PythonConfig {
+            program: &program,
+            output_path: std::path::PathBuf::from(&output),
+        };
+        return match ilo::backend::python::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("Python transpile error: {}", e);
+                1
+            }
+        };
+    }
+
+    // `--wasm`: emit a WebAssembly module via the WasmBackend. The default
+    // target is wasm32-component (Component Model wrapper); `--target` lets
+    // the user pick wasm32-wasip1, wasm32-wasip2, or wasm32-unknown-unknown.
+    // See `backend/wasm/mod.rs` and `docs/wasm-capabilities.md` for the
+    // per-target capability matrix.
+    if wasm_mode {
+        let target = match wasm_target_arg.as_deref() {
+            None => ilo::backend::wasm::WasmTarget::Component,
+            Some(s) => match ilo::backend::wasm::WasmTarget::parse(s) {
+                Some(t) => t,
+                None => {
+                    eprintln!(
+                        "Error: unknown --target `{}`. Supported: wasm32-wasip1, wasm32-wasip2, wasm32-component, wasm32-unknown-unknown (alias wasm32-web)",
+                        s
+                    );
+                    return 1;
+                }
+            },
+        };
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let config = ilo::backend::wasm::WasmConfig {
+            target,
+            output_path: std::path::PathBuf::from(&output),
+            entry: func_name.map(|s| s.to_string()),
+        };
+        return match ilo::backend::wasm::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("WASM compile error: {}", e);
+                1
+            }
+        };
+    }
+
+    // `--0` / `--0bin`: emit Zero source (`.0`) via the ZeroBackend.
+    // `--0bin` chains through the pinned `zero` compiler (0.1.2) to produce
+    // a native binary. See `backend/zero/mod.rs` and
+    // `docs/zero-transpile-capabilities.md` for the capability matrix.
+    if zero_mode || zero_bin_mode {
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let mode = if zero_bin_mode {
+            ilo::backend::zero::ZeroMode::Binary
+        } else {
+            ilo::backend::zero::ZeroMode::Source
+        };
+        let config = ilo::backend::zero::ZeroConfig {
+            output_path: std::path::PathBuf::from(&output),
+            mode,
+            entry: func_name.map(|s| s.to_string()),
+        };
+        return match ilo::backend::zero::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("Zero transpile error: {}", e);
+                1
+            }
+        };
+    }
+
     // Compile to bytecode
     let compiled = match vm::compile(&program) {
         Ok(c) => c,
@@ -2123,16 +2330,30 @@ fn compile_cmd(args: &[String]) -> i32 {
         return 1;
     };
 
-    // AOT compile
-    let start = std::time::Instant::now();
-    let result = if bench_mode {
-        vm::compile_cranelift::compile_to_bench_binary(&compiled, entry, &output)
-    } else {
-        vm::compile_cranelift::compile_to_binary(&compiled, entry, &output)
+    // Lower verified AST to HIR. The Cranelift backend ignores it today
+    // (Stage 5b uses bytecode via the config side-channel) but the dispatch
+    // surface is HIR-first so subsequent stages can swap backends without
+    // touching `main.rs`.
+    let hir = match ilo::hir::lower(&program, &verify_result) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("HIR lowering error: {}", e);
+            return 1;
+        }
     };
+
+    // AOT compile via the backend trait surface.
+    let start = std::time::Instant::now();
+    let config = ilo::backend::cranelift::CraneliftConfig {
+        program: &compiled,
+        entry,
+        output_path: &output,
+        bench: bench_mode,
+    };
+    let result = ilo::backend::cranelift::emit(&hir, config);
     let duration_ms = start.elapsed().as_millis();
     match result {
-        Ok(()) => {
+        Ok(_artefact) => {
             if as_json {
                 let size_bytes = std::fs::metadata(&output).map(|m| m.len()).ok();
                 let v = serde_json::json!({
@@ -2170,9 +2391,33 @@ fn compile_cmd(args: &[String]) -> i32 {
 }
 
 #[cfg(not(feature = "cranelift"))]
-fn compile_cmd(_args: &[String]) -> i32 {
+fn compile_cmd(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_build_help();
+        return 0;
+    }
     eprintln!("Error: AOT compilation requires the cranelift feature (--features cranelift)");
     1
+}
+
+/// Manifesto-strict `ilo build` help. Exactly five forms.
+///
+/// Emitted on stderr so it composes with the friendly-usage handlers in
+/// `main()` (which also use stderr) and matches the wider unix-y convention
+/// of usage/help being a diagnostic rather than program output.
+fn print_build_help() {
+    eprintln!("ilo build — compile an ilo program\n");
+    eprintln!("Usage:");
+    eprintln!("  ilo build <file.ilo>              Native binary (default; Cranelift)");
+    eprintln!("  ilo build <file.ilo> --wasm       WebAssembly Component Model binary");
+    eprintln!("  ilo build <file.ilo> --0          Zero source (.0)");
+    eprintln!("  ilo build <file.ilo> --0bin       Native binary via the Zero compiler");
+    eprintln!("  ilo build <file.ilo> --py         Python source (.py)\n");
+    eprintln!("Options:");
+    eprintln!("  -o <path>          Output path (default: alongside the source)");
+    eprintln!("  --target <name>    For --wasm: wasm32-component (default),");
+    eprintln!("                     wasm32-wasip1, wasm32-wasip2, wasm32-unknown-unknown");
+    eprintln!("  --help / -h        Show this help");
 }
 
 /// Stdio-based agent serve loop.
@@ -3618,6 +3863,15 @@ fn main() {
         std::process::exit(0);
     }
 
+    // `ilo build --help` / `ilo build -h`: print the manifesto-strict build
+    // help and exit 0 before clap or the unknown-flag guard sees it.
+    if raw_args.get(1).map(|s| s.as_str()) == Some("build")
+        && raw_args.iter().skip(2).any(|a| a == "--help" || a == "-h")
+    {
+        print_build_help();
+        std::process::exit(0);
+    }
+
     // Friendly usage for `ilo run` / `ilo check` / `ilo build` with no
     // source argument. Without this, clap rejects the missing-positional
     // and we fall through to dispatch_bare_args, which then tries to lex
@@ -3628,18 +3882,18 @@ fn main() {
     if raw_args.len() == 2 {
         match raw_args[1].as_str() {
             "run" => {
-                eprintln!("Usage: ilo run <file.ilo> [func] [args...]");
+                eprintln!("Usage: ilo run <file.@> [func] [args...]");
                 eprintln!("       ilo run <inline-code> [func] [args...]");
                 std::process::exit(1);
             }
             "check" => {
-                eprintln!("Usage: ilo check <file.ilo>");
+                eprintln!("Usage: ilo check <file.@>");
                 eprintln!("       ilo check <inline-code>");
-                eprintln!("       ilo check <file.ilo> --json   (machine-readable diagnostics)");
+                eprintln!("       ilo check <file.@> --json   (machine-readable diagnostics)");
                 std::process::exit(1);
             }
             "build" => {
-                eprintln!("Usage: ilo build <file.ilo> [-o out] [func]");
+                print_build_help();
                 std::process::exit(1);
             }
             "trace" => {
@@ -3778,9 +4032,21 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             if cli.global.explicit_json() {
                 args.push("--json".into());
             }
+            if c.py {
+                args.push("--py".into());
+            }
+            if c.wasm {
+                args.push("--wasm".into());
+            }
             if let Some(ref t) = c.target {
                 args.push("--target".into());
                 args.push(t.clone());
+            }
+            if c.zero {
+                args.push("--0".into());
+            }
+            if c.zero_bin {
+                args.push("--0bin".into());
             }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
@@ -3951,7 +4217,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
 
     if args.len() < 2 {
         eprintln!(
-            "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]"
+            "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args...]"
         );
         eprintln!("       ilo run <file> [args...]                  Run (verb form)");
         eprintln!("       ilo check <file> [--json]                 Verify without running");
@@ -4033,7 +4299,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         (args[1].clone(), 2)
     } else if args[1] == "-e" {
         if args.len() < 3 || args[2].is_empty() {
-            eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --emit python]");
+            eprintln!("Usage: ilo <file-or-code> [args... | --run func args...]");
             return 1;
         }
         (args[2].clone(), 3)
@@ -4363,6 +4629,7 @@ fn check_cmd(
 ) -> i32 {
     // Read source from file or treat as inline code.
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         match std::fs::read_to_string(source_arg) {
             Ok(s) => (s, true),
             Err(e) => {
@@ -4581,6 +4848,7 @@ fn dispatch_run(
 
     // Read source from file or treat as inline code
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         let s = match std::fs::read_to_string(source_arg) {
             Ok(s) => s,
             Err(e) => {
@@ -4786,16 +5054,16 @@ fn dispatch_run(
         0
     } else if let Some(ref target) = r.emit {
         if target == "python" {
-            println!("{}", codegen::python::emit(&program));
-            0
-        } else if target == "js" {
-            println!("{}", codegen::js::emit(&program));
-            0
+            eprintln!(
+                "error: `--emit python` has been removed. Use `ilo build <file.@> --py` instead."
+            );
         } else {
-            eprintln!("Unknown emit target. Supported: python, js");
-            1
+            eprintln!(
+                "error: `--emit {target}` is not a supported form. The canonical CLI is `ilo build <file.@> --py` (Python). See `ilo build --help`."
+            );
         }
-    } else if r.dense {
+        2
+        } else if r.dense {
         println!(
             "{}",
             codegen::fmt::format(&program, codegen::fmt::FmtMode::Dense)
@@ -5245,14 +5513,18 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
-    println!("  ilo run <file.ilo> [args...]      Run (verb form; alias for positional)");
-    println!("  ilo check <file.ilo>              Verify without running (exit 0 = clean)");
-    println!("  ilo build <file.ilo> -o <out>     AOT compile (alias for `compile`)");
+    println!("  ilo run <file.@> [args...]        Run (verb form; alias for positional)");
+    println!("  ilo check <file.@>               Verify without running (exit 0 = clean)");
+    println!("  ilo build <file.@>               Native binary (Cranelift; default)");
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
-    println!("  ilo <file.ilo> [args...]          Run from file");
+    println!("  ilo <file.@> [args...]           Run from file (.ilo also accepted)");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
     println!("  ilo <code> --emit js              Transpile to JavaScript (ES modules)");
+    println!("  ilo build <file.ilo> --py         Transpile to Python source");
+    println!("  ilo build <file.ilo> --wasm       Compile to WASM (Component Model by default)");
+    println!("  ilo build <file.ilo> --0          Transpile to Zero source (.0)");
+    println!("  ilo build <file.ilo> --0bin       Transpile to Zero and build native binary");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
@@ -5292,22 +5564,21 @@ fn print_help() {
     println!("  ilo graph <file> --subgraph         Transitive dependencies");
     println!("  ilo graph <file> --budget N         Limit to N tokens of source");
     println!("  ilo graph <file> --dot              Output as DOT (Graphviz)\n");
-    println!("AOT compilation:");
-    println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
-    println!("Backends:");
-    println!("  (default)        Register VM (closure-aware, all opcodes supported)");
-    println!(
-        "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
-    );
-    println!(
-        "  --vm             Register VM (canonical form, symmetric with --jit; --run-vm is a deprecated alias)\n"
-    );
+    println!("Compilation (`ilo build`):");
+    println!("  ilo build <file.ilo>              Native binary (Cranelift; default)");
+    println!("  ilo build <file.ilo> --wasm       WebAssembly Component Model");
+    println!("  ilo build <file.ilo> --0          Zero source (.0)");
+    println!("  ilo build <file.ilo> --0bin       Native binary via Zero");
+    println!("  ilo build <file.ilo> --py         Python source");
+    println!("  See `ilo build --help` for all options.\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
     println!("  ilo program.ilo 10 20             Run file with arguments");
     println!("  ilo 'f x:n>n;*x 2' --emit python Transpile to Python");
     println!("  ilo 'f x:n>n;*x 2' --emit js     Transpile to JavaScript");
+    println!("  ilo program.@ 10 20              Run file with arguments");
+    println!("  ilo build foo.@ --py             Transpile to Python source");
 }
 
 /// Dispatch --run-vm, routing to MCP / HTTP / plain run based on available providers.
@@ -6225,7 +6496,7 @@ fn run_bench(
     if json {
         return;
     }
-    let py_code = codegen::python::emit(program);
+    let py_code = ilo::backend::python::emit_to_string(program);
     let call_func = func_name.unwrap_or("main").replace('-', "_");
     let call_args: Vec<String> = args
         .iter()
@@ -7404,7 +7675,7 @@ mod tests {
     #[test]
     fn decl_name_use_returns_none() {
         let d = ast::Decl::Use {
-            path: "lib.ilo".into(),
+            path: "lib.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7439,14 +7710,14 @@ mod tests {
     #[test]
     fn resolve_imports_only_filter_keeps_named_decl() {
         use std::io::Write;
-        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.ilo";
+        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.@";
         let mut f = std::fs::File::create(lib_path).unwrap();
         writeln!(f, "dbl n:n>n;*n 2").unwrap();
         writeln!(f, "half n:n>n;/n 2").unwrap();
         drop(f);
 
         let use_decl = ast::Decl::Use {
-            path: "ilo_test_resolve_only_F2G7.ilo".into(),
+            path: "ilo_test_resolve_only_F2G7.@".into(),
             only: Some(vec!["dbl".into()]),
             alias: None,
             predicate: None,
@@ -7479,13 +7750,13 @@ mod tests {
     #[test]
     fn resolve_imports_only_filter_warns_missing_name() {
         use std::io::Write;
-        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.ilo";
+        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.@";
         let mut f = std::fs::File::create(lib_path).unwrap();
         writeln!(f, "dbl n:n>n;*n 2").unwrap();
         drop(f);
 
         let use_decl = ast::Decl::Use {
-            path: "ilo_test_resolve_missing_H4K9.ilo".into(),
+            path: "ilo_test_resolve_missing_H4K9.@".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
             alias: None,
             predicate: None,
@@ -7743,7 +8014,7 @@ mod tests {
     #[test]
     fn resolve_imports_inline_code_emits_p017() {
         let use_decl = ast::Decl::Use {
-            path: "something.ilo".into(),
+            path: "something.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7769,7 +8040,7 @@ mod tests {
     #[test]
     fn resolve_imports_file_not_found_emits_p017() {
         let use_decl = ast::Decl::Use {
-            path: "nonexistent_xyz_99999.ilo".into(),
+            path: "nonexistent_xyz_99999.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7895,11 +8166,11 @@ mod tests {
 
     #[test]
     fn resolve_imports_parse_error_in_imported_file() {
-        let bad_path = "/tmp/ilo_unit_bad_parse_imports.ilo";
+        let bad_path = "/tmp/ilo_unit_bad_parse_imports.@";
         std::fs::write(bad_path, "f x:>n;x").expect("write bad file");
 
         let decls = vec![ast::Decl::Use {
-            path: "ilo_unit_bad_parse_imports.ilo".into(),
+            path: "ilo_unit_bad_parse_imports.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -7929,18 +8200,18 @@ mod tests {
 
     #[test]
     fn resolve_imports_transitive() {
-        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.ilo";
-        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.ilo";
+        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.@";
+        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.@";
 
         std::fs::write(file_b, "triple x:n>n;*x 3").expect("write B");
         std::fs::write(
             file_a,
-            "use \"ilo_unit_trans_b_Q3R8.ilo\"\nsextuple x:n>n;t=triple x;*t 2",
+            "use \"ilo_unit_trans_b_Q3R8.@\"\nsextuple x:n>n;t=triple x;*t 2",
         )
         .expect("write A");
 
         let decls = vec![ast::Decl::Use {
-            path: "ilo_unit_trans_a_Q3R8.ilo".into(),
+            path: "ilo_unit_trans_a_Q3R8.@".into(),
             only: None,
             alias: None,
             predicate: None,
@@ -9247,21 +9518,23 @@ mod tests {
     // ── subprocess: --emit unknown target ─────────────────────────────────────
 
     #[test]
-    fn cli_emit_unknown_target_exits_nonzero() {
+    fn cli_emit_legacy_form_exits_with_migration_hint() {
+        // Stage 5c: `--emit <target>` is removed. Invoking it surfaces a
+        // migration hint pointing at the canonical `ilo build <file> --py`
+        // form, and exits with code 2 so scripts notice the breakage.
         let out = std::process::Command::new(ilo_bin())
             .args(["f>n;1", "--emit", "rust"])
             .output()
             .expect("failed to run ilo --emit rust");
-        assert!(
-            !out.status.success(),
-            "expected non-zero exit for unknown emit target"
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "expected exit code 2 for legacy --emit form"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains("Unknown emit")
-                || stderr.contains("Supported")
-                || stderr.contains("python"),
-            "expected unknown-emit error in stderr, got: {stderr}"
+            stderr.contains("ilo build") && stderr.contains("--py"),
+            "expected migration hint in stderr, got: {stderr}"
         );
     }
 
@@ -9540,7 +9813,7 @@ mod tests {
     #[test]
     fn resolve_imports_no_base_dir_emits_error() {
         // `use` without a file context → ILO-P017 error (lines 699-703)
-        let decls = vec![make_use_decl("math.ilo")];
+        let decls = vec![make_use_decl("math.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let result = resolve_imports(
@@ -9558,7 +9831,7 @@ mod tests {
     #[test]
     fn resolve_imports_file_not_found_emits_error() {
         // Import a non-existent file → ILO-P017 (lines 711-716)
-        let decls = vec![make_use_decl("nonexistent_file_xyz.ilo")];
+        let decls = vec![make_use_decl("nonexistent_file_xyz.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -9571,17 +9844,17 @@ mod tests {
         );
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
-        assert!(diagnostics[0].message.contains("nonexistent_file_xyz.ilo"));
+        assert!(diagnostics[0].message.contains("nonexistent_file_xyz.@"));
     }
 
     #[test]
     fn resolve_imports_circular_emits_error() {
         // Pre-populate visited with a file that we then try to import → ILO-P018 (lines 721-726)
-        let path = "/tmp/ilo_circ_test.ilo";
+        let path = "/tmp/ilo_circ_test.@";
         std::fs::write(path, "f>n;1").unwrap();
         let canonical = std::fs::canonicalize(path).unwrap();
 
-        let decls = vec![make_use_decl("ilo_circ_test.ilo")];
+        let decls = vec![make_use_decl("ilo_circ_test.@")];
         let mut visited = std::collections::HashSet::new();
         visited.insert(canonical);
         let mut diagnostics = Vec::new();
@@ -9602,9 +9875,9 @@ mod tests {
     #[test]
     fn resolve_imports_lex_error_in_imported_file() {
         // Import a file with invalid syntax → lex error pushed to diagnostics (lines 743-745)
-        let path = "/tmp/ilo_lex_err_test.ilo";
+        let path = "/tmp/ilo_lex_err_test.@";
         std::fs::write(path, "MyFunc invalid_UpperCase").unwrap();
-        let decls = vec![make_use_decl("ilo_lex_err_test.ilo")];
+        let decls = vec![make_use_decl("ilo_lex_err_test.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -9623,16 +9896,16 @@ mod tests {
     fn resolve_imports_read_error_after_canonicalize() {
         // Create a real file, canonicalize it, then delete it — when resolve_imports
         // tries to read_to_string after canonicalize, it gets Err → lines 731-737.
-        let path = "/tmp/ilo_read_err_test.ilo";
+        let path = "/tmp/ilo_read_err_test.@";
         std::fs::write(path, "f>n;1").unwrap();
-        // Create a symlink-like path that canonicalizes to /tmp/ilo_read_err_test_gone.ilo
+        // Create a symlink-like path that canonicalizes to /tmp/ilo_read_err_test_gone.@
         // Instead: just test file-not-found by giving a path whose parent exists but file doesn't.
         // Use a path that doesn't exist at all — canonicalize will Err → covers lines 711-716 again.
         // To hit the read_to_string Err path (731-737), we'd need canonicalize to succeed but
         // read to fail — which requires platform tricks. Skip that specific sub-path.
         std::fs::remove_file(path).ok();
         // Simple verification: non-existent path hits the canonical error (711-716)
-        let decls = vec![make_use_decl("ilo_read_err_test.ilo")];
+        let decls = vec![make_use_decl("ilo_read_err_test.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -9842,7 +10115,7 @@ mod tests {
     fn resolve_imports_directory_triggers_read_error() {
         // Importing a path that resolves to a directory: canonicalize succeeds,
         // but read_to_string fails ("Is a directory") → covers lines 731-737.
-        let dir_name = "ilo_test_dir_import_Z9.ilo";
+        let dir_name = "ilo_test_dir_import_Z9.@";
         let dir_path = format!("/tmp/{dir_name}");
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -10396,7 +10669,9 @@ mod tests {
     // ── dispatch_bare_args: --emit flag ───────────────────────────────────────
 
     #[test]
-    fn dispatch_bare_args_emit_python_exits_zero() {
+    fn dispatch_bare_args_emit_python_migration_error() {
+        // Stage 5c removed `--emit python`. The legacy form now exits 2 with
+        // a migration hint pointing at `ilo build <file> --py`.
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -10416,11 +10691,11 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 0);
+        assert_eq!(code, 2);
     }
 
     #[test]
-    fn dispatch_bare_args_emit_unknown_target_exits_one() {
+    fn dispatch_bare_args_emit_unknown_target_migration_error() {
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -10440,7 +10715,8 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 1);
+        // Stage 5c: any `--emit <target>` form exits 2 with a migration hint.
+        assert_eq!(code, 2);
     }
 
     #[test]
@@ -11169,7 +11445,7 @@ mod tests {
     #[test]
     fn graph_cmd_fn_flag_missing_name_returns_one() {
         // Create a temp file for graph_cmd to parse
-        let path = "/tmp/ilo_graph_test_fn_missing.ilo";
+        let path = "/tmp/ilo_graph_test_fn_missing.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--fn".to_string()]);
         assert_eq!(code, 1);
@@ -11178,7 +11454,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_budget_flag_missing_number_returns_one() {
-        let path = "/tmp/ilo_graph_test_budget_missing.ilo";
+        let path = "/tmp/ilo_graph_test_budget_missing.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--budget".to_string()]);
         assert_eq!(code, 1);
@@ -11187,7 +11463,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_budget_invalid_value_returns_one() {
-        let path = "/tmp/ilo_graph_test_budget_invalid.ilo";
+        let path = "/tmp/ilo_graph_test_budget_invalid.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11200,7 +11476,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_unknown_flag_returns_one() {
-        let path = "/tmp/ilo_graph_test_unknown_flag.ilo";
+        let path = "/tmp/ilo_graph_test_unknown_flag.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--nonexistent-flag".to_string()]);
         assert_eq!(code, 1);
@@ -11209,13 +11485,13 @@ mod tests {
 
     #[test]
     fn graph_cmd_file_not_found_returns_one() {
-        let code = graph_cmd(&["/tmp/ilo_no_such_file_99999.ilo".to_string()]);
+        let code = graph_cmd(&["/tmp/ilo_no_such_file_99999.@".to_string()]);
         assert_eq!(code, 1);
     }
 
     #[test]
     fn graph_cmd_fn_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_fn_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_fn_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11228,7 +11504,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_reverse_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_rev_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_rev_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11242,7 +11518,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_subgraph_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_sub_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_sub_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11256,7 +11532,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_budget_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_bud_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_bud_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11615,7 +11891,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_dot_output_exits_zero() {
-        let path = "/tmp/ilo_graph_dot_test_unit.ilo";
+        let path = "/tmp/ilo_graph_dot_test_unit.@";
         std::fs::write(path, "f x:n>n;+x 1 g x:n>n;f x").unwrap();
         let code = graph_cmd(&[path.to_string(), "--dot".to_string()]);
         assert_eq!(code, 0);
@@ -11624,7 +11900,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_success_exits_zero() {
-        let path = "/tmp/ilo_graph_fn_success.ilo";
+        let path = "/tmp/ilo_graph_fn_success.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--fn".to_string(), "f".to_string()]);
         assert_eq!(code, 0);
@@ -11633,7 +11909,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_reverse_success_exits_zero() {
-        let path = "/tmp/ilo_graph_rev_success.ilo";
+        let path = "/tmp/ilo_graph_rev_success.@";
         std::fs::write(path, "helper x:n>n;*x 2 main x:n>n;helper x").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11647,7 +11923,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_subgraph_success_exits_zero() {
-        let path = "/tmp/ilo_graph_sub_success.ilo";
+        let path = "/tmp/ilo_graph_sub_success.@";
         std::fs::write(path, "helper x:n>n;*x 2 main x:n>n;helper x").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11661,7 +11937,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_budget_success_exits_zero() {
-        let path = "/tmp/ilo_graph_bud_success.ilo";
+        let path = "/tmp/ilo_graph_bud_success.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -11676,7 +11952,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_full_json_success_exits_zero() {
-        let path = "/tmp/ilo_graph_full_json.ilo";
+        let path = "/tmp/ilo_graph_full_json.@";
         std::fs::write(path, "f x:n>n;+x 1 g x:n>n;f x").unwrap();
         let code = graph_cmd(&[path.to_string()]);
         assert_eq!(code, 0);

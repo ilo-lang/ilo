@@ -6,7 +6,7 @@
 // PR #275 split top-level Result handling for the in-process runners
 // (tree, VM, Cranelift JIT) so that `~v` returned from main prints `v`
 // bare on stdout (exit 0) and `^e` prints `^e` on stderr (exit 1). The
-// AOT path (`ilo compile main.ilo -o ./main && ./main`) was left calling
+// AOT path (`ilo compile main.@ -o ./main && ./main`) was left calling
 // the `jit_prt` helper directly from `generate_main`, so AOT binaries
 // kept printing the visible wrapper and always exited 0 — even for `^e`.
 //
@@ -40,7 +40,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn tmp_paths(tag: &str) -> (PathBuf, PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let src = std::env::temp_dir().join(format!("ilo-aot-{tag}-{pid}-{n}.ilo"));
+    let src = std::env::temp_dir().join(format!("ilo-aot-{tag}-{pid}-{n}.@"));
     let bin = std::env::temp_dir().join(format!("ilo-aot-{tag}-{pid}-{n}.bin"));
     (src, bin)
 }

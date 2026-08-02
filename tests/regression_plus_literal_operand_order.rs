@@ -11,7 +11,7 @@
 //
 // Covers `+`, `*`, `&`, `|` - the four commutative prefix operators where
 // the user-facing claim is that operand order doesn't matter. The
-// matching example file `examples/plus-literal-operand-order.ilo` exercises
+// matching example file `examples/plus-literal-operand-order.@` exercises
 // the same shapes via the `tests/examples_engines.rs` harness; this file
 // adds the directly-asserted forms the persona reported plus harder
 // shapes (let-RHS, foreach body, ternary RHS) that the example format
@@ -27,11 +27,8 @@ fn ilo() -> Command {
 fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "ilo_plus_literal_{}_{}.ilo",
-        std::process::id(),
-        seq
-    ));
+    let path =
+        std::env::temp_dir().join(format!("ilo_plus_literal_{}_{}.@", std::process::id(), seq));
     std::fs::write(&path, src).unwrap();
     let mut cmd_args: Vec<&str> = vec![path.to_str().unwrap(), engine, entry];
     cmd_args.extend_from_slice(args);

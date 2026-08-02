@@ -2,6 +2,8 @@
 
 Thanks for your interest in contributing to ilo!
 
+For the release secret-scan gate (gitleaks, allowlist, incident procedure) see [docs/release-secret-scan.md](docs/release-secret-scan.md).
+
 ## Getting Started
 
 ```bash

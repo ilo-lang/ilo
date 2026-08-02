@@ -104,20 +104,21 @@ Uses the [skills](https://www.npmjs.com/package/skills) npm package (396K+ insta
 # Inline
 ilo 'dbl x:n>n;*x 2' 5                    # → 10
 
-# From file
-ilo program.ilo functionName arg1 arg2
+# From file (.@ and .ilo are both accepted; .@ saves one token per filename on LLM tokenizers)
+ilo program.@ functionName arg1 arg2
+ilo program.ilo functionName arg1 arg2   # .ilo works too
 
 # Verb form (cargo / go / zero style; bare positional still works)
-ilo run program.ilo arg1 arg2             # run
-ilo check program.ilo                     # verify only - exit 0 if clean
-ilo build program.ilo -o ./bin            # AOT compile
+ilo run program.@ arg1 arg2              # run
+ilo check program.@                      # verify only - exit 0 if clean
+ilo build program.@ -o ./bin             # AOT compile
 ```
 
 **[Tutorial: Write your first program →](https://ilo-lang.ai/docs/first-program/)**
 
 ## Editor support
 
-Syntax highlighting, snippets, and `--` comment handling for `.ilo` files ships in [`extensions/vscode/`](./extensions/vscode/). Install into Cursor with `cd extensions/vscode && npm run install:cursor`. VS Code marketplace publish is tracked separately.
+Syntax highlighting, snippets, and `--` comment handling for `.ilo` and `.@` files ships in [`extensions/vscode/`](./extensions/vscode/). Install into Cursor with `cd extensions/vscode && npm run install:cursor`. VS Code marketplace publish is tracked separately.
 
 ## Versioning
 

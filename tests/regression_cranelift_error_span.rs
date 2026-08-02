@@ -126,7 +126,7 @@ fn at_oob_text_span_matches_vm() {
 }
 
 // Fractional indices used to error here; auto-floor turned that into a
-// successful element fetch (see examples/at-float-index.ilo). The jit_at
+// successful element fetch (see examples/at-float-index.@). The jit_at
 // runtime error path is still covered above by `at_oob_*_span_matches_vm`.
 
 // ── Sanity: a span must actually be present (not None) ────────────────

@@ -3,7 +3,7 @@
 -- stdout (exit 0); one that returns `^e` prints `^e` on stderr (exit 1).
 --
 -- Before PR #281 the in-process runners (tree, VM, Cranelift JIT) split
--- top-level Result output as above, but `ilo compile main.ilo` still
+-- top-level Result output as above, but `ilo compile main.@` still
 -- routed the result through the in-program `jit_prt` helper, so AOT
 -- binaries kept printing the wrapper and always exited 0 — even for `^e`.
 -- generate_main now uses a dedicated `jit_prt_main_result` helper that
@@ -14,7 +14,7 @@
 -- tests/regression_aot_wrapper_strip.rs, which compiles each case to a
 -- real binary and compares byte-for-byte against all three in-process
 -- runners. (The example harness only drives the in-process runners, not
--- AOT, so this `.ilo` file is the in-context learning artefact for the
+-- AOT, so this `.@` file is the in-context learning artefact for the
 -- happy path; the regression test is the AOT contract.)
 
 m>R t t;~"hello"

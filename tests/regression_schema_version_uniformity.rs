@@ -47,7 +47,7 @@ fn write_temp(name: &str, body: &str) -> (tempfile::TempDir, std::path::PathBuf)
 
 #[test]
 fn run_success_envelope_has_schema_version() {
-    let (_d, path) = write_temp("r.ilo", "main >n;42\n");
+    let (_d, path) = write_temp("r.@", "main >n;42\n");
     let (ok, v, stdout, stderr) = parse_stdout(&["run", path.to_str().unwrap(), "--json"]);
     assert!(ok, "run should succeed\nstdout: {stdout}\nstderr: {stderr}");
     assert_eq!(
@@ -61,7 +61,7 @@ fn run_success_envelope_has_schema_version() {
 
 #[test]
 fn bare_file_run_success_envelope_has_schema_version() {
-    let (_d, path) = write_temp("b.ilo", "main >n;7\n");
+    let (_d, path) = write_temp("b.@", "main >n;7\n");
     let (ok, v, stdout, stderr) = parse_stdout(&[path.to_str().unwrap(), "main", "--json"]);
     assert!(
         ok,
@@ -78,7 +78,7 @@ fn run_error_envelope_has_schema_version() {
     // Function returns `Value::Err` — should land in the `program` phase
     // error envelope, which is the legacy `--json` shape we lifted to
     // schemaVersion: 1 in 0.12.1.
-    let (_d, path) = write_temp("e.ilo", "main >R n t;^\"bad\"\n");
+    let (_d, path) = write_temp("e.@", "main >R n t;^\"bad\"\n");
     let (_ok, v, stdout, stderr) = parse_stdout(&["run", path.to_str().unwrap(), "--json"]);
     assert_eq!(
         v["schemaVersion"], 1,
@@ -91,7 +91,7 @@ fn run_error_envelope_has_schema_version() {
 
 #[test]
 fn graph_envelope_has_schema_version() {
-    let (_d, path) = write_temp("g.ilo", "main >n;42\n");
+    let (_d, path) = write_temp("g.@", "main >n;42\n");
     let (ok, v, _stdout, _stderr) = parse_stdout(&["graph", path.to_str().unwrap()]);
     assert!(ok, "graph should succeed");
     assert_eq!(v["schemaVersion"], 1);
@@ -101,7 +101,7 @@ fn graph_envelope_has_schema_version() {
 
 #[test]
 fn graph_fn_query_has_schema_version() {
-    let (_d, path) = write_temp("gf.ilo", "main >n;42\n");
+    let (_d, path) = write_temp("gf.@", "main >n;42\n");
     let (ok, v, stdout, stderr) = parse_stdout(&["graph", path.to_str().unwrap(), "--fn", "main"]);
     assert!(
         ok,
@@ -114,7 +114,7 @@ fn graph_fn_query_has_schema_version() {
 
 #[test]
 fn ast_envelope_has_schema_version() {
-    let (_d, path) = write_temp("a.ilo", "main >n;42\n");
+    let (_d, path) = write_temp("a.@", "main >n;42\n");
     // Bare-file mode with --ast.
     let (ok, v, stdout, stderr) = parse_stdout(&[path.to_str().unwrap(), "--ast"]);
     assert!(

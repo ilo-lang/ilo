@@ -2167,6 +2167,24 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 
 ---
 
+## Source File Extension
+
+The canonical source file extension is `.@`. `foo.@` tokenises as `['foo', '.@']` on both cl100k and o200k - one token fewer per filename vs `.ilo`. The saving compounds: a typical agent session with 30 filename mentions saves ~30 tokens, and the gain is proportional to how often the agent reads error messages, imports, and CLI invocations that include the filename.
+
+`.ilo` is still accepted for backward compatibility and emits a deprecation hint on stderr at load time:
+
+```
+hint: .ilo extension is deprecated; rename to .@
+```
+
+Rename your files with:
+
+```bash
+find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;
+```
+
+---
+
 ## Imports
 
 Split programs across files with `use`:
@@ -2176,6 +2194,8 @@ use "path/to/file.ilo"               -- flat import: all declarations (including
 use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
 use alias:"path/to/file.ilo"         -- named-module import: public declarations prefixed with alias-
 use re:"path/to/file.ilo" [name1 name2] -- re-export: import AND expose those names to consumers
+use "path/to/file.@"           -- import all declarations
+use "path/to/file.@" [name1 name2]  -- import only named declarations
 ```
 
 **Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
@@ -2203,6 +2223,13 @@ extra n:n>n; +n 100
 
 -- consumer.ilo
 use "facade.ilo" [dbl extra]    -- dbl came from math-lib but is visible via re-export
+-- math.@
+dbl n:n>n; *n 2
+half n:n>n; /n 2
+
+-- main.@
+use "math.@"
+run n:n>n; dbl! half n
 ```
 
 ### Module privacy
@@ -2218,7 +2245,7 @@ Declaring a private function: `_helper-name params:type > return-type; body`
 ### Rules
 
 - Path is relative to the importing file's directory
-- Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
+- Transitive: if `a.@` uses `b.@`, `b.@`'s declarations are visible to `main.@` when it uses `a.@`
 - Circular imports are an error (`ILO-P018`)
 - Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
 - Re-export form (`re:"path"`) requires a `[...]` list
@@ -2703,7 +2730,7 @@ In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / 
 
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) - only the top-level program-return print path is split.
 
-The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
+The contract applies uniformly to in-process runners (`ilo prog.@`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
 
 **Auto-echo suppression for `prnt` + status sentinel.** When the entry function has at least one *unconditional top-level* `prnt` call AND the tail expression is a bare wrapped string literal (`~"text"` or `^"text"`), the top-level auto-echo is suppressed. The wrapped literal is treated as a status sentinel rather than a value the caller wants captured. Without this rule, a function shaped like `m>R t t;prnt "report";~"ok"` emits `report\nok\n` on stdout and shell callers piping the output have to strip the trailing `ok`. The rule does NOT fire when (a) there is no `prnt` in the body — `m>R t t;~"ok"` still prints `ok` because the wrapped literal IS the program's output (the `cli-tasks-save-ok.ilo` pattern); (b) the `prnt` is nested inside a guard, loop, or match arm — those are conditional and the `prnt` may never run; (c) the tail is `~v` where `v` is a binding or call — that's a real return value. `^"text"` errors still go to stderr with exit 1; the suppression rule never silently swallows an Err. Pinned by `tests/regression_tilde_str_noecho.rs` and `examples/tilde-str-noecho.ilo`.
 
@@ -2722,7 +2749,7 @@ Builtin alias hints appear at most once per program (the first long-form name fo
 
 ```
 ilo 'code' [args...]            -- inline program; default-runs the entry function
-ilo program.ilo [func] [args]   -- if `func` is omitted and the file declares exactly
+ilo program.@ [func] [args]     -- if `func` is omitted and the file declares exactly
                                    one function, that function runs automatically
 ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positional
 ilo check program.ilo [--json|-j] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
@@ -2731,6 +2758,10 @@ ilo build program.ilo -o out     -- AOT compile to a standalone binary (alias fo
 ilo run program.ilo --emit js    -- transpile to JavaScript and print to stdout (PR #713, ILO-73)
 ilo run program.ilo --emit python -- transpile to Python and print to stdout
 ilo program.ilo --ast            -- print parsed AST as JSON and exit
+ilo run program.@ [func] [a]    -- verb form; same dispatch as the bare positional
+ilo check program.@ [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
+ilo build program.@ -o out      -- AOT compile to a standalone binary (alias for `compile`)
+ilo program.@ --ast              -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
 ilo serv                          -- long-lived JSON request/response loop
@@ -2810,15 +2841,15 @@ The response `body` field may take three shapes (ILO-482):
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
-**AOT entry-pick.** `ilo compile file.ilo -o out` (alias `ilo build`) follows the same entry-pick rules as the in-process engines: a single user-defined function is used directly; on multi-function files the entry is `main` if defined, otherwise the explicit positional `func` arg (`ilo compile file.ilo -o out run`); otherwise the compile fails with `ILO-E801` and exits 1 without writing a binary. AOT does not fall back to "first declared function" - that historical default produced binaries that called the wrong entry symbol and SIGSEGV'd at runtime.
+**AOT entry-pick.** `ilo compile file.@ -o out` (alias `ilo build`) follows the same entry-pick rules as the in-process engines: a single user-defined function is used directly; on multi-function files the entry is `main` if defined, otherwise the explicit positional `func` arg (`ilo compile file.@ -o out run`); otherwise the compile fails with `ILO-E801` and exits 1 without writing a binary. AOT does not fall back to "first declared function" - that historical default produced binaries that called the wrong entry symbol and SIGSEGV'd at runtime.
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures with Phase 2 capture, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. Phase 2 captures run natively on every public backend - VM, JIT, and AOT (`ilo compile`); AOT embeds the postcard `CompiledProgram` blob into the binary's `.rodata` so dispatch helpers can re-enter the VM on user-fn callbacks the same way the in-process runners do. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
 **Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `for-line`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `fsize`, `mtime`, `isfile`, `isdir`, `run`, `env-all`, `jkeys`, `tz-offset`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
 
-**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
+**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.@ list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 
-**Unknown `--flag` guard.** Any token in the positional tail matching the clean long-flag shape `--word` or `--word-with-dashes` that isn't a recognised flag is rejected upfront with `error: unrecognised flag '--<name>'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first.` and exit 1. This prevents `ilo main.ilo --engine tree` from silently consuming `--engine` as a positional arg (which used to surface as misleading `ILO-R012 no functions defined` or `ILO-R004 main: expected N args, got N+1`). To pass a hyphen-prefixed token through as literal data, place the `--` separator first: `ilo main.ilo -- --foo`. Anything after the first `--` is data. Tokens with `=` (`--key=val`), trailing or doubled dashes (`--foo-`, `--foo--bar`), and negative numbers (`-1`) are not clean flag shapes and pass through unchanged.
+**Unknown `--flag` guard.** Any token in the positional tail matching the clean long-flag shape `--word` or `--word-with-dashes` that isn't a recognised flag is rejected upfront with `error: unrecognised flag '--<name>'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first.` and exit 1. This prevents `ilo main.@ --engine tree` from silently consuming `--engine` as a positional arg (which used to surface as misleading `ILO-R012 no functions defined` or `ILO-R004 main: expected N args, got N+1`). To pass a hyphen-prefixed token through as literal data, place the `--` separator first: `ilo main.@ -- --foo`. Anything after the first `--` is data. Tokens with `=` (`--key=val`), trailing or doubled dashes (`--foo-`, `--foo--bar`), and negative numbers (`-1`) are not clean flag shapes and pass through unchanged.
 
 **Text-typed params.** When the entry function declares a parameter of type `t`, the CLI passes the raw arg through without numeric coercion. `ilo 'f x:t>t;x' 42` returns the string `"42"`, not the number 42.
 
