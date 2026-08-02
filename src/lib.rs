@@ -6,6 +6,7 @@ pub mod builtins;
 pub mod caps;
 pub mod cli_parse;
 pub mod codegen;
+pub mod constrain;
 pub mod diagnostic;
 pub mod graph;
 pub mod rng;

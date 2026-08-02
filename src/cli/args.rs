@@ -129,6 +129,8 @@ pub enum Cmd {
     Update(UpdateArgs),
     /// Trace program execution, emitting one JSON line per statement.
     Trace(TraceArgs),
+    /// Export grammar state machine for LLM constrained decoding.
+    Constrain(ConstrainArgs),
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -524,6 +526,43 @@ pub struct TraceArgs {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 }
+
+// ── Constrain ─────────────────────────────────────────────────────────────────
+
+/// Output mode for `ilo constrain`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstrainMode {
+    /// Grammar state machine (default).
+    States,
+    /// Per-state binary masks over the token vocabulary.
+    Masks,
+    /// Parser state + valid next tokens at a cursor position.
+    Completions,
+}
+
+#[derive(Args, Debug)]
+pub struct ConstrainArgs {
+    /// Output mode: `states` (default), `masks`, or `completions`.
+    #[arg(long, value_enum, default_value = "states")]
+    pub mode: ConstrainMode,
+
+    /// Source file for `--mode completions` (tokenise up to cursor).
+    #[arg(long, value_name = "FILE")]
+    pub file: Option<String>,
+
+    /// Cursor line (1-based) for `--mode completions`.
+    #[arg(long, value_name = "LINE")]
+    pub line: Option<usize>,
+
+    /// Cursor column (1-based) for `--mode completions`.
+    #[arg(long, value_name = "COL")]
+    pub col: Option<usize>,
+
+    /// Emit pretty-printed JSON (always pretty for constrain output).
+    #[arg(long, short = 'j')]
+    pub json: bool,
+}
+
 // ── OutputMode resolution ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
