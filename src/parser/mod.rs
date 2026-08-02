@@ -1530,6 +1530,21 @@ statement boundary; bind the chain to a local first. For example, split \
         } else {
             None
         };
+        // Optional contract clauses: `req <condition>` and `ens <condition>`
+        // after the return type (and optional effect set), before `;`/body.
+        // Prototype: parsed and stored, precondition checked via pattern matching.
+        let precondition = if matches!(self.peek(), Some(Token::Ident(s)) if s == "req") {
+            self.advance();
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+        let postcondition = if matches!(self.peek(), Some(Token::Ident(s)) if s == "ens") {
+            self.advance();
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         // The header/body boundary is normally a `;`, but a newline (filtered
         // out before parsing) leaves no separator. Accept either: consume a
         // `;` if present, otherwise fall straight into the body.
@@ -1563,6 +1578,8 @@ statement boundary; bind the chain to a local first. For example, split \
             params,
             return_type,
             effect_set,
+            precondition,
+            postcondition,
             body,
             span: start.merge(end),
         })
@@ -5907,6 +5924,8 @@ For variable-position list indexing bind the head first: \
             params: lifted_params,
             return_type,
             effect_set: None,
+            precondition: None,
+            postcondition: None,
             body,
             span,
         });
@@ -6057,6 +6076,8 @@ For variable-position list indexing bind the head first: \
             span,
             type_params: vec![],
             effect_set: None,
+            precondition: None,
+            postcondition: None,
         });
         if free.is_empty() {
             Ok(Expr::Ref(fn_name))
