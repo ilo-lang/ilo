@@ -2119,6 +2119,26 @@ the outer-loop variable from within an inner loop is fine — that's a
 different scope.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-W030",
+        phase: Phase::Verify,
+        short: "call may violate precondition — add a guard or match",
+        long: r#"## ILO-W030: call may violate precondition
+
+A function declared an optional `req` clause (precondition), and the
+verifier could not find a preceding guard that implies the precondition
+at this call site.
+
+**Fix:** add a guard before the call that satisfies the precondition.
+For example, if the function declares `req b!=0`, guard with `=b 0 ^"divide by zero"`
+before the call, or wrap the call in a `?r{^e:e;~v:v}` match.
+
+This is a WARNING, not an error — the program still compiles and runs.
+The precondition checker uses simple pattern matching, not a full SMT
+solver, so it may emit false positives when the guard logic is too complex
+to match structurally.
+"#,
+    },
 ];
 
 /// Look up an error entry by code (e.g. `"ILO-T005"`).

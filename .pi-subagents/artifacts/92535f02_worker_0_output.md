@@ -1,0 +1,1 @@
+Now let me understand what `OP_ISOK` does at runtime — this is critical for the VM path:

@@ -2241,6 +2241,8 @@ mod tests {
                 }],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                     function: "num".into(),
                     args: vec![Expr::Ref("s".into())],

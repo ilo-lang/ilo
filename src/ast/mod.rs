@@ -308,6 +308,14 @@ pub enum Decl {
         /// Non-empty = declared effects; verifier checks declared ⊇ actual.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effect_sigils: Vec<Effect>,
+        /// Optional precondition clause: `req b!=0`
+        /// Checked at call sites via pattern-based guard matching.
+        #[serde(skip)]
+        precondition: Option<Expr>,
+        /// Optional postcondition clause: `ens result>=0`
+        /// Stored for `ilo explain`; not verified in this prototype.
+        #[serde(skip)]
+        postcondition: Option<Expr>,
         body: Vec<Spanned<Stmt>>,
         #[serde(skip)]
         span: Span,
@@ -1584,6 +1592,8 @@ mod tests {
             params: vec![],
             return_type: Type::Number,
             effect_set: None, effect_sigils: vec![],
+            precondition: None,
+            postcondition: None,
             body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(
                 Literal::Number(1.0),
             )))],
@@ -1619,6 +1629,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::While {
                     condition: Expr::Call {
                         function: "length".to_string(),
@@ -1669,6 +1681,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Return(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
@@ -1701,6 +1715,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Destructure {
                     bindings: vec!["a".to_string(), "b".to_string()],
                     value: Expr::Call {
@@ -1740,6 +1756,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Break(Some(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
@@ -1772,6 +1790,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![
                     Spanned::unknown(Stmt::Break(None)),
                     Spanned::unknown(Stmt::Continue),
@@ -1797,6 +1817,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::NilCoalesce {
                     value: Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1843,6 +1865,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Record {
                     type_name: "point".to_string(),
                     fields: vec![(
@@ -1884,6 +1908,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
                     subject: Some(Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1936,6 +1962,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::With {
                     object: Box::new(Expr::Call {
                         function: "length".to_string(),
@@ -1988,6 +2016,8 @@ mod tests {
                 }],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
                 span: Span { start: 0, end: 13 },
             }],
@@ -2014,6 +2044,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: None,
                     arms: vec![MatchArm {
@@ -2055,6 +2087,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
                     subject: None,
                     arms: vec![MatchArm {

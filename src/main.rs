@@ -3423,6 +3423,8 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             type_params,
             effect_set,
             effect_sigils,
+            precondition,
+            postcondition,
         } => ast::Decl::Function {
             name: format!("{}-{}", alias, name),
             params,
@@ -3432,6 +3434,8 @@ fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
             type_params,
             effect_set,
             effect_sigils,
+            precondition,
+            postcondition,
         },
         ast::Decl::Tool {
             name,
@@ -7389,6 +7393,8 @@ mod tests {
             params: vec![],
             return_type: ast::Type::Number,
             effect_set: None, effect_sigils: vec![],
+            precondition: None,
+            postcondition: None,
             body: vec![],
             span: ast::Span { start: 0, end: 0 },
         };
@@ -7797,6 +7803,8 @@ mod tests {
             params: vec![],
             return_type: ast::Type::Number,
             effect_set: None, effect_sigils: vec![],
+            precondition: None,
+            postcondition: None,
             body: vec![],
             span: ast::Span { start: 0, end: 0 },
         };
@@ -8345,6 +8353,8 @@ mod tests {
             ))],
             span: ast::Span::UNKNOWN,
             effect_set: None, effect_sigils: vec![],
+            precondition: None,
+            postcondition: None,
         };
 
         let lazy_use = ast::Decl::Use {
@@ -8401,6 +8411,8 @@ mod tests {
             }))],
             span: ast::Span::UNKNOWN,
             effect_set: None, effect_sigils: vec![],
+            precondition: None,
+            postcondition: None,
         };
 
         let lazy_use = ast::Decl::Use {
@@ -9739,6 +9751,8 @@ mod tests {
                 }],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![],
                 span: Span::UNKNOWN,
             },

@@ -65,6 +65,10 @@ Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body
 
 `div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns. `!!` panics on `^e`/`nil`. `default-on-err r d` unwraps `R T E` to `T` with `d` on Err (Result `??`).
 
+## contracts (prototype)
+
+Optional `req` (precondition) and `ens` (postcondition) after return type, before `;`/body. `div a:n b:n>R n t req b!=0;=b 0 ^"divide by zero";~/a b`. `ens result>=0` stored, shown by `ilo explain`. Warning-only: ILO-W030 fires at call sites where the verifier can't find a matching preceding guard. Pattern-based (guards like `=b 0 ^"..."` satisfy `req b!=0`), not SMT.
+
 ## optional vs result
 
 Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no error payload; unwrap with `?? x d`. `R T E` = ok-or-err with payload; unwrap with `~`/`^` match arms, `!`, `!!`, or `default-on-err r d`. Using `??` on `R T E` is ILO-T041; using `default-on-err` on `O T` is ILO-T040.

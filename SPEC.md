@@ -1722,6 +1722,65 @@ f x:n>n;>x 0{ret x};-x   -- return x early if positive, else negate
 > f x:n>n;=x 1{ret 99};0      -- f 1 → 99 (explicit ret inside braces)
 > ```
 
+### Optional Contracts (req / ens) — Prototype, Warning-Only
+
+**Prototype.** Contracts are experimental: parsed and stored, but the precondition
+checker uses simple structural pattern matching, not a full SMT solver. They may
+emit false positives when guard logic is too complex to match structurally.
+
+`req` (precondition) and `ens` (postcondition) are optional clauses placed after
+the return type (and optional effect set), before the `;`/body:
+
+```
+f x:n>n req x>=0
+f x:n>n ens result>=0
+```
+
+Both may appear on the same function:
+
+```
+div a:n b:n>R n t req b!=0;=b 0 ^"divide by zero";~/a b
+```
+
+**Preconditions (`req`).** The verifier scans every call site of a function with
+a `req` clause. For each call site, it looks at preceding braceless guard
+statements for a pattern that implies the precondition. If no matching guard is
+found, the verifier emits **ILO-W030** (a warning, not an error). The program
+still compiles and runs.
+
+Pattern matching covers these guard shapes:
+
+| Precondition | Satisfying guard |
+|---|---|
+| `req b!=0` | `=b 0 ^"..."` (NotEqual) |
+| `req x>=0` | `>=x 0 ^"..."` or `>x 0 ^"..."` |
+| `req x>0` | `>x 0 ^"..."` |
+| `req x<=0` | `<=x 0 ^"..."` or `<x 0 ^"..."` |
+| `req x<0` | `<x 0 ^"..."` |
+
+**Postconditions (`ens`).** Stored on the declaration. `ilo explain` shows the
+contract. Not verified in this prototype; future work may add body-level checking.
+
+**Warning-only.** ILO-W030 is advisory. The program still compiles and runs with
+runtime guards intact. `ilo check --strict` elevates it to an exit-code failure.
+
+```
+-- div with precondition: caller must guard against b=0
+div a:n b:n>R n t req b!=0;=b 0 ^"divide by zero";~/a b
+
+-- caller WITHOUT guard fires ILO-W030
+calc x:n y:n>R n t;div x y
+
+-- caller WITH guard: no warning
+calc-safe x:n y:n>R n t;=y 0 ^"bad arg";div x y
+```
+
+**Example with postcondition:**
+
+```
+abs x:n>n ens result>=0;<x 0;-x x;x
+```
+
 ### Ternary (Guard-Else)
 
 A guard followed by a second brace block becomes a ternary - it produces a value without early return:
@@ -2747,7 +2806,7 @@ The response `body` field may take three shapes (ILO-482):
 * `L t` — a list of strings, sent eagerly with `Transfer-Encoding: chunked`: each element becomes one chunk. The list is materialised before the first byte is written.
 * a lazy line iterator (`get-stream`/`pst-stream`, `for-line stdin`) — sent with `Transfer-Encoding: chunked` **lazily**: each line the iterator yields is written and flushed as its own chunk, so the handler can hold the connection open and emit chunks as they are produced (SSE, long-poll, tailing a growing source) without buffering the whole body first. If the client disconnects mid-stream the connection thread exits cleanly. A zero-arg `body` function (`FnRef`/closure) is called first and may itself return any of the three shapes.
 
-**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, **ILO-W020** function missing a shadow test block, ILO-W051 undeclared effect sigils, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
+**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, **ILO-W020** function missing a shadow test block, ILO-W051 undeclared effect sigils, ILO-W030 unguarded precondition call, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 

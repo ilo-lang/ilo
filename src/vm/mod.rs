@@ -24278,6 +24278,8 @@ mod tests {
                 body: vec![],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 span: Span::UNKNOWN,
             }],
             source: None,

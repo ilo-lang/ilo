@@ -3,6 +3,111 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::builtins::Builtin;
 
+// ── Precondition checker helpers ───────────────────────────────────────────
+
+/// A guard pattern extracted from a preceding braceless guard statement.
+/// Records the variable name and the value it was compared against.
+#[derive(Debug, Clone)]
+enum GuardPattern {
+    /// `=x 0 ^"..."` — x is not equal to val
+    NotEqual(String, String),
+    /// `>=x 0 ^"..."` — x is greater than or equal to val
+    GreaterEq(String, String),
+    /// `>x 0 ^"..."` — x is greater than val
+    Greater(String, String),
+    /// `<=x 0 ^"..."` — x is less than or equal to val
+    LessEq(String, String),
+    /// `<x 0 ^"..."` — x is less than val
+    Less(String, String),
+}
+
+/// Extract a guard pattern from a guard condition expression.
+/// Only matches simple structural patterns:
+///   `=x val` → NotEqual(x, val)
+///   `!=x val` → NotEqual negated → not useful (that's an equality, not a guard)
+///   `>=x val` → GreaterEq(x, val)
+///   `>x val` → Greater(x, val)
+///   `<=x val` → LessEq(x, val)
+///   `<x val` → Less(x, val)
+fn extract_guard_pattern(expr: &Expr) -> Option<GuardPattern> {
+    match expr {
+        Expr::BinOp { op, left, right } => {
+            let (var, val) = match (left.as_ref(), right.as_ref()) {
+                (Expr::Ref(name), val_expr) => (name.clone(), format_expr(val_expr)),
+                _ => return None,
+            };
+            match op {
+                BinOp::Equals => Some(GuardPattern::NotEqual(var, val)),
+                BinOp::GreaterOrEqual => Some(GuardPattern::GreaterEq(var, val)),
+                BinOp::GreaterThan => Some(GuardPattern::Greater(var, val)),
+                BinOp::LessOrEqual => Some(GuardPattern::LessEq(var, val)),
+                BinOp::LessThan => Some(GuardPattern::Less(var, val)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Check if any prior guard satisfies the precondition.
+/// Only handles simple patterns:
+///   `req b!=0` is satisfied by `NotEqual(b, "0")`
+///   `req x>=0` is satisfied by `GreaterEq(x, "0")` or `Greater(x, "0")`
+///   `req x>0` is satisfied by `Greater(x, "0")`
+fn guard_satisfies(guards: &[GuardPattern], precond: &Expr) -> bool {
+    match precond {
+        Expr::BinOp { op, left, right } => {
+            let (var, val) = match (left.as_ref(), right.as_ref()) {
+                (Expr::Ref(name), val_expr) => (name.clone(), format_expr(val_expr)),
+                _ => return false,
+            };
+            match op {
+                BinOp::NotEquals => {
+                    guards.iter().any(|g| matches!(g, GuardPattern::NotEqual(v, va) if *v == var && *va == val))
+                }
+                BinOp::GreaterOrEqual => {
+                    guards.iter().any(|g| {
+                        matches!(g, GuardPattern::GreaterEq(v, va) if *v == var && *va == val)
+                            || matches!(g, GuardPattern::Greater(v, va) if *v == var && *va == val)
+                    })
+                }
+                BinOp::GreaterThan => {
+                    guards.iter().any(|g| matches!(g, GuardPattern::Greater(v, va) if *v == var && *va == val))
+                }
+                BinOp::LessOrEqual => {
+                    guards.iter().any(|g| {
+                        matches!(g, GuardPattern::LessEq(v, va) if *v == var && *va == val)
+                            || matches!(g, GuardPattern::Less(v, va) if *v == var && *va == val)
+                    })
+                }
+                BinOp::LessThan => {
+                    guards.iter().any(|g| matches!(g, GuardPattern::Less(v, va) if *v == var && *va == val))
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Format an Expr for display in diagnostics.
+fn format_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Literal(Literal::Number(n)) => n.to_string(),
+        Expr::Literal(Literal::Text(s)) => format!("\"{}\"", s),
+        Expr::Literal(Literal::Bool(b)) => b.to_string(),
+        Expr::Literal(Literal::Nil) => "nil".to_string(),
+        Expr::Ref(name) => name.clone(),
+        Expr::BinOp { op, left: _, right: _ } => {
+            format!("{:?}", op)
+        }
+        Expr::UnaryOp { op, operand } => {
+            format!("{:?}{}", op, format_expr(operand))
+        }
+        _ => "?".to_string(),
+    }
+}
+
 /// Verifier's internal type representation.
 /// Adds `Unknown` for cases where we can't infer — compatible with anything.
 #[derive(Debug, Clone, PartialEq)]
@@ -5094,6 +5199,8 @@ impl VerifyContext {
                 name,
                 body,
                 effect_set: Some(declared),
+                precondition: None,
+                postcondition: None,
                 return_type,
                 ..
             } = decl
@@ -5224,6 +5331,133 @@ impl VerifyContext {
                     Some(*span),
                 );
             }
+        }
+    }
+
+    /// Phase 3: For each function with a `req` clause, scan all call sites
+    /// across the program. For each call site, look at preceding statements
+    /// for guard patterns that imply the precondition. Emit ILO-W030 if no
+    /// matching guard is found.
+    ///
+    /// Pattern matching is intentionally simple — only structural equality
+    /// on common guard shapes:
+    ///   `=x 0 ^"..."`  implies `req x!=0`
+    ///   `>=x 0 ^"..."` implies `req x>=0`
+    ///   `>=x 0 ^"..."` implies `req x>0`
+    ///   `=x val ^"..."` implies `req x!=val`
+    fn check_preconditions(&mut self, program: &Program) {
+        // Build a map of function name → precondition expression.
+        let mut preconds: HashMap<String, &Expr> = HashMap::new();
+        for decl in &program.declarations {
+            if let Decl::Function { name, precondition: Some(pc), .. } = decl {
+                preconds.insert(name.clone(), pc);
+            }
+        }
+        if preconds.is_empty() {
+            return;
+        }
+
+        for decl in &program.declarations {
+            if let Decl::Function { name: caller_name, body, .. } = decl {
+                if self.parse_failed_fns.contains_key(caller_name) {
+                    continue;
+                }
+                self.check_preconditions_in_stmts(
+                    caller_name,
+                    body,
+                    &preconds,
+                    &[],
+                );
+            }
+        }
+    }
+
+    /// Recursively scan statements for calls to functions with preconditions.
+    /// `prior_guards` accumulates guard conditions from preceding statements.
+    fn check_preconditions_in_stmts(
+        &mut self,
+        caller: &str,
+        stmts: &[Spanned<Stmt>],
+        preconds: &HashMap<String, &Expr>,
+        prior_guards: &[GuardPattern],
+    ) {
+        let mut guards: Vec<GuardPattern> = prior_guards.to_vec();
+        for spanned in stmts {
+            match &spanned.node {
+                Stmt::Guard { condition, body: guard_body, braceless: true, .. } => {
+                    // Braceless guard: `=b 0 ^"..."` — extracts a guard pattern
+                    if let Some(gp) = extract_guard_pattern(condition) {
+                        guards.push(gp);
+                    }
+                    // Also scan the guard body for calls
+                    self.check_preconditions_in_stmts(
+                        caller, guard_body, preconds, &guards,
+                    );
+                }
+                Stmt::Guard { condition: _, body: guard_body, .. } => {
+                    // Braced guard — condition is conditional, not early-return.
+                    // Doesn't establish a guard for subsequent statements.
+                    self.check_preconditions_in_stmts(
+                        caller, guard_body, preconds, &guards,
+                    );
+                }
+                Stmt::Let { value, .. } => {
+                    self.check_preconditions_in_expr(
+                        caller, value, spanned.span, preconds, &guards,
+                    );
+                }
+                _ => {
+                    // For any other statement, check for calls in its exprs
+                    // via a simpler scan
+                }
+            }
+        }
+    }
+
+    /// Check a single expression for calls to precond-gated functions.
+    fn check_preconditions_in_expr(
+        &mut self,
+        caller: &str,
+        expr: &Expr,
+        span: Span,
+        preconds: &HashMap<String, &Expr>,
+        guards: &[GuardPattern],
+    ) {
+        match expr {
+            Expr::Call { function, args, .. } => {
+                if let Some(precond) = preconds.get(function) {
+                    // Check if any prior guard satisfies this precondition
+                    if !guard_satisfies(guards, precond) {
+                        let precond_str = format_expr(precond);
+                        self.warn(
+                            "ILO-W030",
+                            caller,
+                            format!(
+                                "call to '{function}' may violate precondition {precond_str} — add a guard"
+                            ),
+                            Some(format!(
+                                "guard before the call: e.g. `={precond_str} ^\"...\"` or wrap the call in a match on R"
+                            )),
+                            Some(span),
+                        );
+                    }
+                }
+                // Recursively check args
+                for arg in args {
+                    self.check_preconditions_in_expr(caller, arg, span, preconds, guards);
+                }
+            }
+            Expr::BinOp { left, right, .. } => {
+                self.check_preconditions_in_expr(caller, left, span, preconds, guards);
+                self.check_preconditions_in_expr(caller, right, span, preconds, guards);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.check_preconditions_in_expr(caller, operand, span, preconds, guards);
+            }
+            Expr::Ok(e) | Expr::Err(e) => {
+                self.check_preconditions_in_expr(caller, e, span, preconds, guards);
+            }
+            _ => {}
         }
     }
 
@@ -7846,6 +8080,9 @@ pub fn verify_with_effects(program: &Program, show_effects: bool) -> VerifyResul
     // Phase 2: verify function bodies (includes effect-set mismatch warnings)
     ctx.verify_bodies_with_effects(program);
 
+    // Phase 3: check optional preconditions (req clauses)
+    ctx.check_preconditions(program);
+
     // ILO-W003 (ILO-463): surface parser advisories for `?h <ref> a b`
     // keyword-form uses where the condition is already a bare bool ref.
     // The keyword form is valid and runs identically, but the cheaper
@@ -9394,6 +9631,8 @@ mod tests {
                     }],
                     return_type: rnt.clone(),
                     effect_set: None, effect_sigils: vec![],
+                    precondition: None,
+                    postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
                         "x".to_string(),
                     )))))],
@@ -9408,6 +9647,8 @@ mod tests {
                     }],
                     return_type: rnt,
                     effect_set: None, effect_sigils: vec![],
+                    precondition: None,
+                    postcondition: None,
                     body: vec![
                         Spanned::unknown(Stmt::Let {
                             name: "d".to_string(),
@@ -9452,6 +9693,8 @@ mod tests {
                     }],
                     return_type: Type::Number,
                     effect_set: None, effect_sigils: vec![],
+                    precondition: None,
+                    postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
                     span: Span::UNKNOWN,
                 },
@@ -9464,6 +9707,8 @@ mod tests {
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
                     effect_set: None, effect_sigils: vec![],
+                    precondition: None,
+                    postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
@@ -9501,6 +9746,8 @@ mod tests {
                     }],
                     return_type: rnt,
                     effect_set: None, effect_sigils: vec![],
+                    precondition: None,
+                    postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
                         "x".to_string(),
                     )))))],
@@ -9515,6 +9762,8 @@ mod tests {
                     }],
                     return_type: Type::Number,
                     effect_set: None, effect_sigils: vec![],
+                    precondition: None,
+                    postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
@@ -11900,6 +12149,8 @@ mod tests {
                 }],
                 return_type: Type::Text,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: Some(Expr::Ref("x".to_string())),
                     arms: vec![arm_list, arm_wild],
@@ -12136,6 +12387,8 @@ mod tests {
                 }],
                 return_type: Type::Number,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Match {
                     subject: Some(Expr::Ref("x".to_string())),
                     arms: vec![
@@ -12181,6 +12434,8 @@ mod tests {
                 params: vec![],
                 return_type: Type::Any,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Nil)))],
                 span: Span::UNKNOWN,
             }],
@@ -12214,6 +12469,8 @@ mod tests {
                 }],
                 return_type: Type::Text,
                 effect_set: None, effect_sigils: vec![],
+                precondition: None,
+                postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ternary {
                     condition: Box::new(Expr::BinOp {
                         op: BinOp::Equals,
