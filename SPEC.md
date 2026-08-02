@@ -2391,6 +2391,71 @@ inc-sq x:n>n;x>>inc>>sq       -- last function - no parens needed
 
 ---
 
+## Shadow Test Blocks
+
+Functions may carry inline `test` blocks that document expected
+behaviour. A test block is declared with the `test` keyword, the
+function name it targets, and a brace-delimited body of `ok` and `err`
+assertions:
+
+```
+fn add a:n b:n>n;+a b
+test add { ok add 2 3 5; ok add 0 0 0; ok add -1 1 0 }
+
+fn div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b
+test div { ok div 10 2 5; err div 10 0 "divide by zero" }
+```
+
+### Syntax
+
+| Element | Form |
+|---------|------|
+| Block header | `test <fn-name> {` |
+| Ok assertion | `ok <fn-name> <arg>... <expected> ;` |
+| Err assertion | `err <fn-name> <arg>... <expected-err> ;` |
+| Block end | `}` |
+
+- **`ok`** calls `fn-name` with the given literal args and asserts the
+  return value equals `expected`. For Result-returning functions, this
+  asserts the `~v` (Ok) path.
+- **`err`** calls `fn-name` and asserts it returns `^expected-err` (the
+  Err payload). The expected error text is a string literal.
+- **Literal args only.** Assertions accept number, text, boolean, and
+  nil literals, not arbitrary expressions.
+- **Last literal is the expected value.** All preceding literals are
+  call arguments. So `ok add 2 3 5` means `add(2, 3)` should return `5`.
+- **`;`-separated.** Assertions may be separated by `;` inside the
+  braces. A trailing `;` is optional.
+- **Multiple test blocks.** Each function may have at most one `test`
+  block. A `test` block for a non-existent function is a parse error
+  (`ILO-P003`).
+
+### Evaluation
+
+Test blocks are parsed and stored in the AST alongside the functions
+they target. Assertions evaluate at `ilo check` time, extending ilo's
+verify-before-run philosophy from type-checking to behaviour-checking.
+
+- A failing `ok` assertion emits **`ILO-T050`** with the actual vs.
+  expected value.
+- A failing `err` assertion emits **`ILO-T050`** with the actual error
+  or a type mismatch if the function returned `~v` instead of `^e`.
+- Under `ilo check --strict`, a function without a `test` block emits
+  **`ILO-W020`** (advisory warning; does not fail the build unless
+  `--strict` is set).
+
+### What test blocks are not
+
+Test blocks are **not** runtime assertions or `assert` statements. They
+are compile-time self-verification: the function runs normally when
+`ilo run` is invoked; the test block only fires during `ilo check`.
+They complement the existing `-- run:` / `-- out:` / `-- err:`
+annotation format used by `ilo test` — shadow tests live **inside** the
+language (in the source AST), while `-- run:` annotations live **above**
+the language (in comments that the test harness reads).
+
+---
+
 ## Error Diagnostics
 
 ilo verifies programs before execution and reports errors with stable codes, source context, and suggestions.
@@ -2589,7 +2654,7 @@ The response `body` field may take three shapes (ILO-482):
 * `L t` — a list of strings, sent eagerly with `Transfer-Encoding: chunked`: each element becomes one chunk. The list is materialised before the first byte is written.
 * a lazy line iterator (`get-stream`/`pst-stream`, `for-line stdin`) — sent with `Transfer-Encoding: chunked` **lazily**: each line the iterator yields is written and flushed as its own chunk, so the handler can hold the connection open and emit chunks as they are produced (SSE, long-poll, tailing a growing source) without buffering the whole body first. If the client disconnects mid-stream the connection thread exits cleanly. A zero-arg `body` function (`FnRef`/closure) is called first and may itself return any of the three shapes.
 
-**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
+**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, **ILO-W020** function missing a shadow test block, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 

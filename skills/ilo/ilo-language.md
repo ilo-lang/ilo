@@ -96,6 +96,10 @@ Non-last fns end with safe expr (op, index, match, literal, parens); last fn: an
 
 `"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"hi {name}"` => `fmt "hi {}" name`. Single-ident slots only. `{{`/`}}` escape inside interpolated strings. Bare `{}` still positional; don't mix `{ident}` + `{}` in one string.
 
+## shadow tests
+
+`test fn-name { ok fn-name arg... expected; err fn-name arg... expected-err }`. `ok` asserts return equals expected; `err` asserts `^expected-err`. Literal args only. Runs at `ilo check` time. Failure = `ILO-T050`; missing under `--strict` = `ILO-W020`. Complements `-- run:` / `-- out:` annotation tests.
+
 ## reserved names
 
 Fn/binding shadowing builtin/alias fires `ILO-P011`. 2-char safe; 4+ safe except `take drop mget mset flat range`; 3-char safe.
