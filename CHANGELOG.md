@@ -2,6 +2,24 @@
 
 For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
+## 26.8 — 2026-08 (local, unreleased)
+
+Six agent-authoring features designed to reduce retries-per-correct-program across four layers of the edit loop. Independently assessed by Codex CLI and Claude Code against the ilo manifesto.
+
+### Added
+
+- **Pipeline error short-circuit (ILO-510).** The pipe operator `>>` is now Result-aware: when the left operand returns `R T E` or `O T`, `Ok(v)` is unwrapped and `v` passes to the next stage; `Err(e)` short-circuits and propagates `^e` out of the enclosing function. Non-Result values pass through unchanged. `fetch url>>jpar>>jpth "name"` now works without explicit `!` on each stage. The enclosing function must return `R` or `O` for the short-circuit to type-check. (Lowest effort, highest leverage per both assessments.)
+
+- **Shadow test blocks (ILO-511, ILO-T050, ILO-W020).** Functions may carry an inline `test` block: `fn add a:n b:n>n;+a b` followed by `test add { ok add 2 3 5; err div 10 0 "divide by zero" }`. `ilo check` evaluates these at verify time. Missing blocks emit ILO-W020 (warning, not error). Designed so agents self-verify behavior before spending a runtime.
+
+- **Constrained decoding (ILO-512).** Three new CLI exports for LLM constrained decoding: `ilo --constrain` emits the grammar as a JSON state machine; `ilo --logit-masks` emits per-state binary masks over the ilo token vocabulary; `ilo --completions` returns parser state and valid next tokens at a cursor. A host harness applies the masks to make syntactic invalidity unreachable at generation time. Most impactful single feature for small models (1B-7B).
+
+- **Effect sigils (ILO-513, ILO-W051).** Optional compile-time effect tags in function signatures: `/http`, `/fs`, `/io`, `/net`, `/ml`, `/time`, `/rand`. The verifier checks that functions only call builtins/tools matching their declared effects and propagates effects through call chains. No sigil means pure. Warning-only by default; `--strict-effects` promotes to error. No runtime overhead, no `perform`/`handle` machinery.
+
+- **Tool policies (ILO-514).** Tool declarations accept `policy{domain:..., tokens:..., rate:...}` alongside existing `timeout:`/`retry:`. The runtime enforces domain allow-listing, token budgets, and rate limits at the tool-call dispatch site. Violations become `^e` Results. Makes autonomous ilo runs safe to leave unattended.
+
+- **Optional contracts (ILO-515, ILO-W030) [prototype].** Functions may declare `req <condition>` (precondition) clauses: `fn div a:n b:n>R n t req b!=0;...`. The verifier pattern-matches the condition against known simple shapes at call sites. ILO-W030 warns on calls where the precondition cannot be statically confirmed. Strictly optional, per-function; no function is forced to have contracts. Prototype scope: pattern-based checking, no SMT dependency.
+
 ## Unreleased
 
 ### Fixed

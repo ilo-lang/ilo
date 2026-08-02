@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "ilo"
-version = "26.5.0"
+version = "26.8.0"
 dependencies = [
  "base64",
  "chrono",

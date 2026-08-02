@@ -1,6 +1,6 @@
 [package]
 name = "ilo"
-version = "26.5.0"
+version = "26.8.0"
 edition = "2024"
 rust-version = "1.85"
 description = "ilo - the token-minimal programming language AI agents write"
