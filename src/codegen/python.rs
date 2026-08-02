@@ -281,6 +281,7 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
         Decl::Use { .. } => {}           // resolved before codegen — skip
         Decl::VersionPragma { .. } => {} // pragma — no Python output
         Decl::Error { .. } => {}         // poison node — skip
+        Decl::Test { .. } => {}         // shadow test block — skip
     }
 }
 

@@ -3,6 +3,12 @@ use crate::builtins::Builtin;
 use crate::lexer::Token;
 use std::collections::{HashMap, HashSet};
 
+/// Helper for parsing `ok`/`err` assertion kinds inside test blocks.
+enum TestAssertKind {
+    Ok,
+    Err,
+}
+
 /// Default cap on AST nesting depth. Borrowed from Zero (rocicorp/mono#6000)
 /// after the same "untrusted source can blow the parser stack" attack surface
 /// surfaced for ilo: `ilo serv` and the bare-positional dispatch both compile
@@ -661,6 +667,8 @@ impl Parser {
                 }
                 // Unambiguous declaration starters
                 Some(Token::Type) | Some(Token::Tool) if depth == 0 => break,
+                // `test` ident at depth 0 — shadow test block start
+                Some(Token::Ident(n)) if depth == 0 && n == "test" => break,
                 // An identifier that looks like a function header
                 _ if depth == 0 && self.is_fn_decl_start(self.pos) => break,
                 _ => {
@@ -806,6 +814,9 @@ impl Parser {
                 };
                 if ident_str == "alias" {
                     return self.parse_alias_decl();
+                }
+                if ident_str == "test" {
+                    return self.parse_test_decl();
                 }
                 let hint = match ident_str {
                     "function" | "def" | "fn" =>
@@ -1425,6 +1436,175 @@ statement boundary; bind the chain to a local first. For example, split \
             target,
             span: start.merge(end),
         })
+    }
+
+    /// `test fn_name { ok fn args... expected; err fn args... expected_err }`
+    ///
+    /// Shadow test blocks are compiled alongside functions and evaluated
+    /// at `ilo check` time. Each assertion calls the named function with
+    /// literal arguments and compares the result to an expected literal.
+    fn parse_test_decl(&mut self) -> Result<Decl> {
+        let start = self.peek_span();
+        // consume the `test` identifier
+        self.advance();
+
+        // parse function name
+        let fn_name = match self.peek().cloned() {
+            Some(Token::Ident(n)) => {
+                self.advance();
+                n
+            }
+            _ => {
+                return Err(self.error(
+                    "ILO-P003",
+                    "expected function name after `test`".to_string(),
+                ));
+            }
+        };
+
+        // expect opening brace
+        self.expect(&Token::LBrace)?;
+
+        let mut assertions = Vec::new();
+
+        while !self.at_end() && self.peek() != Some(&Token::RBrace) {
+            let assert_start = self.peek_span();
+            let kind = match self.peek().cloned() {
+                Some(Token::Ident(ref n)) if n == "ok" => {
+                    self.advance();
+                    TestAssertKind::Ok
+                }
+                Some(Token::Ident(ref n)) if n == "err" => {
+                    self.advance();
+                    TestAssertKind::Err
+                }
+                Some(Token::Semi) => {
+                    self.advance();
+                    continue; // skip empty statements
+                }
+                _ => {
+                    return Err(self.error(
+                        "ILO-P003",
+                        "expected `ok` or `err` in test block".to_string(),
+                    ));
+                }
+            };
+
+            // parse function name in assertion
+            let assert_fn_name = match self.peek().cloned() {
+                Some(Token::Ident(n)) => {
+                    self.advance();
+                    n
+                }
+                _ => {
+                    return Err(self.error(
+                        "ILO-P003",
+                        "expected function name in assertion".to_string(),
+                    ));
+                }
+            };
+
+            // parse literal arguments until `;`, `}`, or end
+            let mut literals = Vec::new();
+            while !self.at_end()
+                && self.peek() != Some(&Token::Semi)
+                && self.peek() != Some(&Token::RBrace)
+            {
+                let lit = self.parse_test_literal()?;
+                literals.push(lit);
+            }
+
+            let assert_end = self.prev_span();
+
+            // need at least 1 arg (the expected value); 0 args = error
+            if literals.is_empty() {
+                return Err(self.error(
+                    "ILO-P003",
+                    "test assertion needs at least one argument (the expected value)".to_string(),
+                ));
+            }
+
+            // last literal is the expected value, rest are call args
+            let expected = literals.pop().unwrap();
+            let args = literals;
+
+            let assertion = match kind {
+                TestAssertKind::Ok => TestAssertion::Ok {
+                    fn_name: assert_fn_name,
+                    args,
+                    expected,
+                    span: assert_start.merge(assert_end),
+                },
+                TestAssertKind::Err => TestAssertion::Err {
+                    fn_name: assert_fn_name,
+                    args,
+                    expected_err: expected,
+                    span: assert_start.merge(assert_end),
+                },
+            };
+            assertions.push(assertion);
+
+            // consume optional `;`
+            if self.peek() == Some(&Token::Semi) {
+                self.advance();
+            }
+        }
+
+        // expect closing brace
+        self.expect(&Token::RBrace)?;
+        let end = self.prev_span();
+
+        Ok(Decl::Test {
+            fn_name,
+            assertions,
+            span: start.merge(end),
+        })
+    }
+
+    /// Parse a literal value for use inside test assertions.
+    /// Only numbers, strings, booleans, and nil are accepted — test
+    /// assertions use simple literal arguments, not arbitrary expressions.
+    fn parse_test_literal(&mut self) -> Result<Literal> {
+        match self.peek().cloned() {
+            Some(Token::Number(n)) => {
+                self.advance();
+                Ok(Literal::Number(n))
+            }
+            Some(Token::Text(s)) => {
+                self.advance();
+                Ok(Literal::Text(s))
+            }
+            Some(Token::True) => {
+                self.advance();
+                Ok(Literal::Bool(true))
+            }
+            Some(Token::False) => {
+                self.advance();
+                Ok(Literal::Bool(false))
+            }
+            Some(Token::Nil) => {
+                self.advance();
+                Ok(Literal::Nil)
+            }
+            Some(Token::Minus) => {
+                // negative number literal: `-5`
+                self.advance();
+                match self.peek().cloned() {
+                    Some(Token::Number(n)) => {
+                        self.advance();
+                        Ok(Literal::Number(-n))
+                    }
+                    _ => Err(self.error(
+                        "ILO-P003",
+                        "expected number after `-` in test assertion".to_string(),
+                    )),
+                }
+            }
+            _ => Err(self.error(
+                "ILO-P003",
+                "expected a literal (number, string, true, false, nil) in test assertion".to_string(),
+            )),
+        }
     }
 
     /// `name params>return;body`

@@ -2516,7 +2516,8 @@ impl RegCompiler {
                 | Decl::Alias { .. }
                 | Decl::Use { .. }
                 | Decl::VersionPragma { .. }
-                | Decl::Error { .. } => {}
+                | Decl::Error { .. }
+                | Decl::Test { .. } => {}
             }
         }
 

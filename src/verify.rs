@@ -4709,6 +4709,7 @@ impl VerifyContext {
                 Decl::Use { .. } => {}           // resolved before verify — skip
                 Decl::VersionPragma { .. } => {} // pragma — no verification needed
                 Decl::Error { .. } => {}         // poison node — skip silently
+                Decl::Test { .. } => {}         // shadow test block — skip during verify
             }
         }
 
