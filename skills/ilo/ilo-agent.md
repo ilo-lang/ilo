@@ -95,6 +95,23 @@ main>_
 
 `ilo.lock` records slug, SHA, and URL — commit it to source control. A path whose first component has no `.` is always a package reference; use `"./local.ilo"` for local files.
 
+## Constrained decoding
+
+`ilo constrain` exports the parser grammar so an external LLM harness can apply logit masks at generation time, making syntactically invalid ilo unreachable before `ilo check` ever runs.
+
+```
+ilo constrain                         grammar state machine as JSON (default)
+ilo constrain --mode masks             per-state binary masks over token vocabulary
+ilo constrain --mode completions --file foo.ilo --line 3 --col 12   valid tokens at cursor
+```
+
+Three JSON shapes:
+- `--mode states`: `{"schemaVersion":1,"states":{"TopLevel":{"transitions":{...}},...},"initial":"TopLevel","accept":["End"]}`. 29 parse states.
+- `--mode masks`: `{"schemaVersion":1,"vocabulary":["type","tool",...],"masks":{"TopLevel":[1,1,1,...0],...}}`. 59 token categories.
+- `--mode completions`: `{"schemaVersion":1,"state":"FnHeader","validTokens":["<","ident",">",...]}`.
+
+The state machine is static (grammar shape, not parser bookkeeping). Prevents lex/parse errors at generation; type errors and runtime errors still caught by `ilo check` and `ilo run`.
+
 ## Branching
 
 Failures / repair: `ilo-edit-loop`. Runnable patterns: `ilo-examples`. Tools: `ilo-tools`. Engine pick: `ilo-engines`.
