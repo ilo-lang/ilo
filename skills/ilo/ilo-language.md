@@ -84,6 +84,8 @@ Tail calls do not consume host-stack frames. A function that recurses in tail po
 
 `xs >> flt pos >> map sq` desugars left-to-right. Wrap `()` for non-last fns.
 
+**Result-aware short-circuit (ILO-510).** When the left side returns `R T E` or `O T`, `>>` auto-unwraps: `~v` passes inner value to next stage; `^e` short-circuits and propagates out of enclosing fn. Non-Result values pass through unchanged. No explicit `!` needed per stage: `get url>>jpar>>jpth "name"` — if any stage returns `^e`, remaining stages skip and `^e` propagates. Enclosing fn must return `R`/`O`.
+
 ## lambdas
 
 Parens: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT auto-fallback.

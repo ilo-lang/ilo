@@ -417,12 +417,21 @@ pub enum UnwrapMode {
     Propagate,
     /// `func!! args` — on Err/nil, abort with diagnostic + exit 1.
     Panic,
+    /// Set by the parser on intermediate pipe-desugared calls (`expr >> func`).
+    /// Like `Propagate` at runtime: unwraps Result (Ok→inner, Err→propagate)
+    /// and Optional (non-nil→inner, nil→propagate). Unlike `Propagate`, the
+    /// verifier treats non-Result/non-Optional returns leniently — they pass
+    /// through without an ILO-T025 error, so non-Result pipes work unchanged.
+    /// Never written by users; the parser injects it on the source-side Call
+    /// of each pipe stage so the piped value is unwrapped before the next
+    /// function receives it.
+    PipePropagate,
 }
 
 impl UnwrapMode {
-    /// True for `!` (propagate via early-return).
+    /// True for `!` (propagate via early-return) or `PipePropagate`.
     pub fn is_propagate(self) -> bool {
-        matches!(self, UnwrapMode::Propagate)
+        matches!(self, UnwrapMode::Propagate | UnwrapMode::PipePropagate)
     }
 
     /// True for `!!` (abort with diagnostic + exit 1).

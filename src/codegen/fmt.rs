@@ -588,6 +588,7 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
                 UnwrapMode::None => "",
                 UnwrapMode::Propagate => "!",
                 UnwrapMode::Panic => "!!",
+                UnwrapMode::PipePropagate => "", // implicit — injected by >> desugaring
             };
             if args.is_empty() {
                 format!("{}{}()", function, bang)

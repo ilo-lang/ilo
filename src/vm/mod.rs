@@ -2344,6 +2344,9 @@ impl RegCompiler {
 
     fn emit_result_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
         debug_assert!(unwrap.is_any(), "emit_result_unwrap called with None");
+        if matches!(unwrap, UnwrapMode::PipePropagate) {
+            return self.emit_pipe_unwrap(a);
+        }
         let check_reg = self.alloc_reg();
         self.emit_abc(OP_ISOK, check_reg, a, 0);
         let skip_cold = self.emit_jmpt(check_reg);
@@ -2356,6 +2359,45 @@ impl RegCompiler {
         self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
     }
 
+    /// Conditional unwrap for `PipePropagate` (>> short-circuit).
+    ///
+    /// Ok → UNWRAP inner; Err → RET (propagate); Nil → RET (propagate);
+    /// all other tag types → pass through unchanged.
+    ///
+    /// Layout:
+    /// ```text
+    ///   ISOK  temp, a
+    ///   JMPT  temp, → L_unwrap       ; Ok → unwrap
+    ///   ISERR temp, a
+    ///   JMPT  temp, → L_propagate    ; Err → propagate
+    ///   JMPNN a, → L_done            ; not nil → passthrough
+    ///   L_propagate: RET a           ; propagate Err / Nil
+    ///   L_unwrap:    UNWRAP a, a     ; extract Ok inner
+    ///   L_done:
+    /// ```
+    fn emit_pipe_unwrap(&mut self, a: u8) {
+        let ok_reg = self.alloc_reg();
+        self.emit_abc(OP_ISOK, ok_reg, a, 0);
+        let to_unwrap = self.emit_jmpt(ok_reg);
+
+        let err_reg = self.alloc_reg();
+        self.emit_abc(OP_ISERR, err_reg, a, 0);
+        let to_propagate = self.emit_jmpt(err_reg);
+
+        let not_nil = self.emit_abx(OP_JMPNN, a, 0);
+
+        self.current.patch_jump(to_propagate);
+        self.emit_abx(OP_RET, a, 0);
+
+        self.current.patch_jump(not_nil);
+        let to_end = self.emit_jmp_placeholder();
+
+        self.current.patch_jump(to_unwrap);
+        self.emit_abc(OP_UNWRAP, a, a, 0);
+
+        self.current.patch_jump(to_end);
+    }
+
     /// Emit the unwrap epilogue for an Optional-returning call whose result is
     /// in register `a`. Hot branch (non-nil) falls through; cold branch (nil)
     /// either propagates via OP_RET (Propagate) or aborts via
@@ -2364,6 +2406,9 @@ impl RegCompiler {
     /// the function's tail return.
     fn emit_optional_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
         debug_assert!(unwrap.is_any(), "emit_optional_unwrap called with None");
+        if matches!(unwrap, UnwrapMode::PipePropagate) {
+            return self.emit_pipe_unwrap(a);
+        }
         let skip_cold = self.emit_abx(OP_JMPNN, a, 0);
         if unwrap.is_panic() {
             self.emit_abc(OP_PANIC_UNWRAP, a, a, 0);
@@ -24695,6 +24740,37 @@ mod tests {
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(5.0)]),
             Value::Number(8.0)
+        );
+    }
+
+    #[test]
+    fn vm_pipe_result_shortcircuit_ok() {
+        // Pipe through Result-returning fns: both return R, PipePropagate
+        // unwraps the intermediate Ok so the next stage receives the inner value.
+        let source = "step1 x:n>R n t;~*x 2\nstep2 x:n>R n t;~+x 1\nf x:n>R n t;step1 x>>step2";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(5.0)]),
+            Value::Ok(Box::new(Value::Number(11.0)))
+        );
+    }
+
+    #[test]
+    fn vm_pipe_result_shortcircuit_non_result() {
+        // Non-Result pipe chain: values pass through unchanged.
+        let source = "dbl x:n>n;*x 2\nadd1 x:n>n;+x 1\nf x:n>n;dbl x>>add1";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(5.0)]),
+            Value::Number(11.0)
+        );
+    }
+
+    #[test]
+    fn vm_pipe_result_shortcircuit_mixed() {
+        // Mixed chain: non-Result fn then Result fn.
+        let source = "dbl x:n>n;*x 2\nto-ok x:n>R n t;~x\nf x:n>R n t;dbl x>>to-ok";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(5.0)]),
+            Value::Ok(Box::new(Value::Number(10.0)))
         );
     }
 

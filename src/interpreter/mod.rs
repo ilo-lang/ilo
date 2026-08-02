@@ -11083,7 +11083,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             }
             match *unwrap {
                 UnwrapMode::None => Ok(result),
-                UnwrapMode::Propagate => match result {
+                UnwrapMode::Propagate | UnwrapMode::PipePropagate => match result {
                     Value::Ok(v) => Ok(*v),
                     Value::Err(e) => Err(RuntimeError {
                         propagate_value: Some(Box::new(Value::Err(e))),
@@ -18869,5 +18869,30 @@ f>n;+area(circle 2) area(square 3)"#;
         assert_eq!(par_map_chunk_size(1, 8), 1);
         assert_eq!(par_map_chunk_size(0, 4), 0);
         assert_eq!(par_map_chunk_size(10, 0), 10); // 0 threads treated as 1
+    }
+
+    // Pipe short-circuit: >> unwraps Result Ok and propagates Err.
+    #[test]
+    fn pipe_result_shortcircuit_ok() {
+        // Pipe through Result-returning fns: step1 Ok-unwrap, step2 returns R.
+        let src = "step1 x:n>R n t;~*x 2\nstep2 x:n>R n t;~+x 1\nf x:n>R n t;step1 x>>step2";
+        let val = run_str(src, Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(val, Value::Ok(Box::new(Value::Number(11.0))));
+    }
+
+    #[test]
+    fn pipe_result_shortcircuit_non_result() {
+        // Non-Result pipe: values pass through unchanged.
+        let src = "dbl x:n>n;*x 2\ninc x:n>n;+x 1\nf x:n>n;dbl x>>inc";
+        let val = run_str(src, Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(val, Value::Number(11.0));
+    }
+
+    #[test]
+    fn pipe_result_shortcircuit_multi_stage_ok() {
+        // Multi-stage Result pipe: all stages return R, all Ok.
+        let src = "first x:n>R n t;~*x 10\nsecond x:n>R n t;~+x 5\nthird x:n>R n t;~+x 1\nf x:n>R n t;first x>>second>>third";
+        let val = run_str(src, Some("f"), vec![Value::Number(3.0)]);
+        assert_eq!(val, Value::Ok(Box::new(Value::Number(36.0))));
     }
 }
