@@ -302,6 +302,45 @@ fn version_cmd(as_json: bool) -> i32 {
     0
 }
 
+// ── Constrained decoding ──────────────────────────────────────────────────────
+
+fn constrain_cmd(c: cli::args::ConstrainArgs) -> i32 {
+    use cli::args::ConstrainMode;
+    let value = match c.mode {
+        ConstrainMode::States => ilo::constrain::state_machine_json(),
+        ConstrainMode::Masks => ilo::constrain::logit_masks_json(),
+        ConstrainMode::Completions => {
+            let file = match c.file {
+                Some(f) => f,
+                None => {
+                    eprintln!("error: --file is required for --mode completions");
+                    return 1;
+                }
+            };
+            let line = c.line.unwrap_or(1);
+            let col = c.col.unwrap_or(1);
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: cannot read '{}': {}", file, e);
+                    return 1;
+                }
+            };
+            ilo::constrain::completions_at_cursor(&source, line, col)
+        }
+    };
+    match serde_json::to_string_pretty(&value) {
+        Ok(s) => {
+            println!("{}", s);
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to serialise: {}", e);
+            1
+        }
+    }
+}
+
 /// Build-time feature flags that affect runtime behaviour. Surfaced in the
 /// `--json` version output so agents can detect e.g. whether the JIT or
 /// MCP-tools feature is compiled in without having to probe with a sample
@@ -3801,6 +3840,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
+        Some(cli::Cmd::Constrain(c)) => constrain_cmd(c),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
         Some(cli::Cmd::Update(u)) => std::process::exit(ilo::pkg::cmd_update(u.package.as_deref())),
