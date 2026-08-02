@@ -253,6 +253,7 @@ impl TokenCat {
         Some(match tok {
             Token::Type => TokenCat::Type,
             Token::Tool => TokenCat::Tool,
+            Token::Policy => TokenCat::Tool,
             Token::Use => TokenCat::Use,
             Token::With => TokenCat::With,
             Token::By => TokenCat::By,

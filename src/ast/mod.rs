@@ -131,6 +131,68 @@ pub struct Param {
     pub ty: Type,
 }
 
+/// Runtime safety policy for a tool declaration.
+///
+/// `policy{domain:"api.example.com", tokens:500, rate:10}`
+///
+/// All fields optional — `None` means no restriction on that dimension.
+/// At tool dispatch time, each field is checked before the call proceeds;
+/// a violation becomes a `^"policy: <violation>"` Result error.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolPolicy {
+    /// URL domain restriction — the tool's URL must match this domain.
+    pub domain: Option<String>,
+    /// Max tokens consumed per call (for LLM tools).
+    pub tokens: Option<f64>,
+    /// Max calls per minute (rate limit).
+    pub rate: Option<f64>,
+}
+
+impl ToolPolicy {
+    /// Check a URL against the domain policy.
+    /// Returns `Ok(())` if allowed, or `Err(message)` if the domain doesn't match.
+    pub fn check_domain(&self, url: &str) -> Result<(), String> {
+        if let Some(ref allowed) = self.domain {
+            let host = extract_url_host(url);
+            if host_matches_domain(allowed, &host) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "policy: domain mismatch — url host '{}' not in allowed domain '{}'",
+                    host, allowed
+                ))
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Extract the host portion from a URL string.
+fn extract_url_host(url: &str) -> String {
+    let rest = if let Some(s) = url.strip_prefix("https://") {
+        s
+    } else if let Some(s) = url.strip_prefix("http://") {
+        s
+    } else {
+        url
+    };
+    rest.split(['/', '?', '#']).next().unwrap_or(rest).to_string()
+}
+
+/// True if `pattern` matches `host`.
+/// Supports a leading `*.` wildcard (e.g. `*.example.com` matches
+/// `api.example.com` and `example.com`).
+fn host_matches_domain(pattern: &str, host: &str) -> bool {
+    if pattern == host {
+        return true;
+    }
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        return host == suffix || host.ends_with(&format!(".{suffix}"));
+    }
+    false
+}
+
 /// A variant in a sum-type declaration.
 /// `Circle(n)` → Variant { name: "circle", payload: Some(Type::Number) }
 /// `red`       → Variant { name: "red",    payload: None }
@@ -198,7 +260,7 @@ pub enum Decl {
         span: Span,
     },
 
-    /// `tool name"desc" params>return timeout:n,retry:n`
+    /// `tool name"desc" params>return timeout:n,retry:n policy{domain:...,tokens:...,rate:...}`
     Tool {
         name: String,
         description: String,
@@ -206,6 +268,9 @@ pub enum Decl {
         return_type: Type,
         timeout: Option<f64>,
         retry: Option<f64>,
+        /// Runtime safety limits: domain restriction, token budget, rate limit.
+        /// All fields optional; `None` means no restriction on that dimension.
+        policy: Option<ToolPolicy>,
         #[serde(skip)]
         span: Span,
     },
