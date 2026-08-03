@@ -3889,19 +3889,9 @@ statement boundary; bind the chain to a local first. For example, split \
     /// `expr >> func a b` desugars to `func(a, b, expr)` — piped value becomes last arg.
     fn maybe_pipe(&mut self, mut expr: Expr) -> Result<Expr> {
         while matches!(self.peek(), Some(Token::PipeOp)) {
-            // If the source expression is a Call without an explicit `!` or
-            // `!!`, inject PipePropagate so the piped value is unwrapped when
-            // it's a Result (Ok→inner, Err→short-circuit) and passed through
-            // unchanged when it's not. Non-Call sources (refs, literals) are
-            // left alone — there's no return value to unwrap.
-            if let Expr::Call { unwrap, .. } = &mut expr {
-                if matches!(*unwrap, UnwrapMode::None) {
-                    *unwrap = UnwrapMode::PipePropagate;
-                }
-            }
             self.advance(); // consume >>
             let func_name = self.expect_ident()?;
-            let unwrap = self.maybe_postfix_unwrap();
+            let explicit_unwrap = self.maybe_postfix_unwrap();
             // Parse additional args (operands until we hit >>, ;, }, etc.)
             // Use call-arg parsing so nested calls inside a pipe target
             // expand naturally (e.g. `xs >> map str` keeps `str` as a bare
@@ -3923,6 +3913,20 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             // Piped value becomes last arg
             args.push(expr);
+            // The pipe call gets PipePropagate unless the user wrote an
+            // explicit unwrap (! or !!). PipePropagate means: unwrap the
+            // piped value (last arg) before calling the function:
+            //   Result: Ok→inner, Err→propagate (short-circuit)
+            //   Optional: non-nil→inner, nil→propagate
+            //   non-Result: passthrough unchanged
+            // This handles both Call sources (the source's R return is
+            // unwrapped by this call's pre-call arg unwrap) and Ref/literal
+            // sources (the Ref's R value is unwrapped pre-call).
+            let unwrap = if matches!(explicit_unwrap, UnwrapMode::None) {
+                UnwrapMode::PipePropagate
+            } else {
+                explicit_unwrap
+            };
             expr = Expr::Call {
                 function: func_name,
                 args,

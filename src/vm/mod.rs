@@ -2347,7 +2347,7 @@ impl RegCompiler {
     fn emit_result_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
         debug_assert!(unwrap.is_any(), "emit_result_unwrap called with None");
         if matches!(unwrap, UnwrapMode::PipePropagate) {
-            return self.emit_pipe_unwrap(a);
+            return; // pre-call arg unwrap handles PipePropagate; return passes through
         }
         let check_reg = self.alloc_reg();
         self.emit_abc(OP_ISOK, check_reg, a, 0);
@@ -2409,7 +2409,7 @@ impl RegCompiler {
     fn emit_optional_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
         debug_assert!(unwrap.is_any(), "emit_optional_unwrap called with None");
         if matches!(unwrap, UnwrapMode::PipePropagate) {
-            return self.emit_pipe_unwrap(a);
+            return; // pre-call arg unwrap handles PipePropagate; return passes through
         }
         let skip_cold = self.emit_abx(OP_JMPNN, a, 0);
         if unwrap.is_panic() {
@@ -6511,6 +6511,16 @@ impl RegCompiler {
                     }
                 }
 
+                // PipePropagate pre-call arg unwrap: the piped value (last
+                // arg slot) is auto-unwrapped before OP_CALL. Ok→inner,
+                // Err→OP_RET (propagate out of enclosing fn), Nil→OP_RET,
+                // non-Result→passthrough. The function is never called on
+                // the Err/Nil path.
+                if matches!(unwrap, UnwrapMode::PipePropagate) && !arg_regs.is_empty() {
+                    let pipe_arg = args_base + (args.len() - 1) as u8;
+                    self.emit_pipe_unwrap(pipe_arg);
+                }
+
                 assert!(
                     func_idx <= 255,
                     "too many functions: function index {} exceeds 8-bit limit in OP_CALL",
@@ -6548,7 +6558,9 @@ impl RegCompiler {
                 // Auto-unwrap (`!` propagate, `!!` panic):
                 //   Result:   Ok(v)→v; Err(e) → RET or PANIC_UNWRAP
                 //   Optional: Some(v)→v; Nil  → RET or PANIC_UNWRAP
-                if unwrap.is_any() {
+                // PipePropagate already handled the arg pre-call; the return
+                // value passes through as-is (no post-call unwrap).
+                if unwrap.is_any() && !matches!(unwrap, UnwrapMode::PipePropagate) {
                     let is_optional = func_idx < self.func_return_types.len()
                         && matches!(self.func_return_types[func_idx], Type::Optional(_));
                     if is_optional {

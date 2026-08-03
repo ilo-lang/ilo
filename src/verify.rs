@@ -6725,11 +6725,25 @@ impl VerifyContext {
                     }
                     // ── End generic checking ──────────────────────────────────
 
+                    let is_pipe = matches!(unwrap, UnwrapMode::PipePropagate);
+                    let last_idx = arg_types.len().saturating_sub(1);
                     for (i, ((param_name, param_ty), arg_ty)) in
                         sig_params.iter().zip(arg_types.iter()).enumerate()
                     {
-                        if !compatible_ext(param_ty, arg_ty, &self.types) {
-                            let hint = match (param_ty, arg_ty) {
+                        // PipePropagate: the piped value (last arg) is auto-unwrapped.
+                        // If it's a Result/Optional, check the inner type against
+                        // the param instead of the outer Result/Optional type.
+                        let effective_arg: &Ty = if is_pipe && i == last_idx {
+                            match arg_ty {
+                                Ty::Result(inner, _) => inner.as_ref(),
+                                Ty::Optional(inner) => inner.as_ref(),
+                                _ => arg_ty,
+                            }
+                        } else {
+                            arg_ty
+                        };
+                        if !compatible_ext(param_ty, effective_arg, &self.types) {
+                            let hint = match (param_ty, effective_arg) {
                                 (Ty::Text, Ty::Number) => {
                                     Some("use 'str' to convert number to text".to_string())
                                 }
@@ -6743,7 +6757,7 @@ impl VerifyContext {
                                 func,
                                 format!(
                                     "type mismatch: param '{}' of '{}' expects {}, got {}",
-                                    param_name, callee, param_ty, arg_ty
+                                    param_name, callee, param_ty, effective_arg
                                 ),
                                 hint,
                                 Some(span),
@@ -6909,7 +6923,12 @@ impl VerifyContext {
                 // requires the enclosing function's return type to carry the
                 // propagated Err/nil. `!!` (Panic) aborts at runtime instead, so
                 // there is no enclosing-return constraint.
-                if unwrap.is_any() {
+                //
+                // PipePropagate is handled differently: it unwraps the PIPED ARG
+                // (last arg), not the callee's return. So we skip the post-call
+                // return unwrap entirely for PipePropagate — the return value
+                // passes through as-is.
+                if unwrap.is_any() && !matches!(unwrap, UnwrapMode::PipePropagate) {
                     let op_str = if unwrap.is_panic() { "!!" } else { "!" };
                     let op_desc = if unwrap.is_panic() {
                         "'!!' auto-unwraps R (Ok→v, Err→abort) or O (Some→v, Nil→abort)".to_string()
