@@ -2139,6 +2139,57 @@ solver, so it may emit false positives when the guard logic is too complex
 to match structurally.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T050",
+        phase: Phase::Verify,
+        short: "shadow test block assertion failed",
+        long: r#"## ILO-T050: shadow test block assertion failed
+
+A `test` block assertion (`ok f args expected` or `err f args expected_err`)
+did not hold when evaluated at `ilo check` time.
+
+For `ok` assertions: the function returned a value that does not equal the
+expected literal. For `err` assertions: the function either returned `Ok`
+instead of `^e`, or returned a different error value than expected.
+
+**Trips this error:**
+
+    add a:n b:n>n;+a b
+    test add { ok add 2 3 99 }
+
+`add 2 3` returns `5`, not `99`, so `ilo check` fires ILO-T050.
+
+**Fixes**
+
+- Correct the expected value in the assertion to match the function's
+  actual output.
+- Or fix the function body so it produces the expected output.
+
+Shadow tests are evaluated at check time, not runtime. They run the
+function with the literal arguments provided and compare the result.
+Functions with side effects (HTTP, file I/O) will execute those effects
+during `ilo check`.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-W020",
+        phase: Phase::Verify,
+        short: "function missing a shadow test block",
+        long: r#"## ILO-W020: function missing a shadow test block
+
+The function has no `test` block. Under `--strict`, this warning is
+promoted to an error.
+
+Shadow tests let the agent self-verify function behavior at `ilo check`
+time before spending a runtime invocation. Adding a `test` block is
+optional but recommended for functions with non-trivial logic.
+
+**Add a test block:**
+
+    add a:n b:n>n;+a b
+    test add { ok add 2 3 5; ok add 0 0 0 }
+"#,
+    },
 ];
 
 /// Look up an error entry by code (e.g. `"ILO-T005"`).

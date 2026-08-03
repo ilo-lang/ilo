@@ -4620,6 +4620,35 @@ fn resolve_engine_func_name<'a>(
 /// out rather than reused so a future verify-only invocation path
 /// (e.g. an `--check-only` flag on `run`) can call into the same logic
 /// without disturbing the run hot path.
+/// Convert an AST [`Literal`](crate::ast::Literal) to an interpreter
+/// [`Value`](crate::interpreter::Value) for test-block evaluation.
+fn literal_to_value(lit: &ast::Literal) -> interpreter::Value {
+    use std::sync::Arc;
+    match lit {
+        ast::Literal::Number(n) => interpreter::Value::Number(*n),
+        ast::Literal::Text(s) => interpreter::Value::Text(Arc::new(s.clone())),
+        ast::Literal::Bool(b) => interpreter::Value::Bool(*b),
+        ast::Literal::Nil => interpreter::Value::Nil,
+    }
+}
+
+/// Human-readable formatting for a [`Literal`](crate::ast::Literal),
+/// used in test-block diagnostic messages.
+fn format_literal(lit: &ast::Literal) -> String {
+    match lit {
+        ast::Literal::Number(n) => {
+            if *n == (*n as i64) as f64 {
+                format!("{}", *n as i64)
+            } else {
+                format!("{}", n)
+            }
+        }
+        ast::Literal::Text(s) => format!("\"{}\"", s),
+        ast::Literal::Bool(b) => b.to_string(),
+        ast::Literal::Nil => "nil".to_string(),
+    }
+}
+
 fn check_cmd(
     source_arg: &str,
     mode: OutputMode,
@@ -4760,6 +4789,104 @@ fn check_cmd(
                 fx.inferred.join("|")
             };
             println!("  {}: {}{}", fx.name, inferred_str, declared_str);
+        }
+    }
+
+    // Evaluate shadow test blocks — only if verify passed (no point
+    // running tests on a broken program). Each `ok f args expected` and
+    // `err f args expected_err` assertion is evaluated by calling the
+    // function through the tree interpreter and comparing the result.
+    if !had_errors {
+        for d in &program.declarations {
+            let ast::Decl::Test { fn_name, assertions, .. } = d else {
+                continue;
+            };
+            for assertion in assertions {
+                let (afn, args, is_err, expected_lit) = match assertion {
+                    ast::TestAssertion::Ok { fn_name, args, expected, .. } => {
+                        (fn_name, args, false, expected)
+                    }
+                    ast::TestAssertion::Err { fn_name, args, expected_err, .. } => {
+                        (fn_name, args, true, expected_err)
+                    }
+                };
+                let values: Vec<interpreter::Value> =
+                    args.iter().map(literal_to_value).collect();
+                let arg_desc: String = args
+                    .iter()
+                    .map(format_literal)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let call_desc = format!("{} {}", afn, arg_desc);
+                match interpreter::run(&program, Some(afn.as_str()), values) {
+                    Ok(result) => {
+                        if is_err {
+                            // Expected an error (^e) from the function.
+                            match &result {
+                                interpreter::Value::Err(inner) => {
+                                    let exp_val = literal_to_value(expected_lit);
+                                    if inner.as_ref() != &exp_val {
+                                        report_diagnostic(
+                                            &enrich(
+                                                Diagnostic::error(format!(
+                                                    "test '{}': {} returned ^{}, expected ^{}",
+                                                    fn_name, call_desc, inner, exp_val
+                                                ))
+                                                .with_code("ILO-T050"),
+                                            ),
+                                            mode,
+                                        );
+                                        had_errors = true;
+                                    }
+                                }
+                                _ => {
+                                    // Expected error but got Ok.
+                                    report_diagnostic(
+                                        &enrich(
+                                            Diagnostic::error(format!(
+                                                "test '{}': expected error ^{} but got {}",
+                                                fn_name, format_literal(expected_lit), result
+                                            ))
+                                            .with_code("ILO-T050"),
+                                        ),
+                                        mode,
+                                    );
+                                    had_errors = true;
+                                }
+                            }
+                        } else {
+                            let exp_val = literal_to_value(expected_lit);
+                            if &result != &exp_val {
+                                report_diagnostic(
+                                    &enrich(
+                                        Diagnostic::error(format!(
+                                            "test '{}': {} returned {}, expected {}",
+                                            fn_name, call_desc, result, exp_val
+                                        ))
+                                        .with_code("ILO-T050"),
+                                    ),
+                                    mode,
+                                );
+                                had_errors = true;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Runtime error during test evaluation.
+                        report_diagnostic(
+                            &enrich(
+                                Diagnostic::error(format!(
+                                    "test '{}': {} evaluation error: {}",
+                                    fn_name, call_desc, e
+                                ))
+                                .with_code("ILO-T050"),
+                            ),
+                            mode,
+                        );
+                        had_errors = true;
+                    }
+                }
+            }
         }
     }
 
@@ -9491,6 +9618,61 @@ mod tests {
             !stdout.trim().is_empty(),
             "expected compact spec on stdout, got empty"
         );
+    }
+
+    // ── subprocess: shadow test blocks (ILO-T050 exit code) ────────────────
+
+    #[test]
+    fn cli_check_failing_shadow_test_exits_nonzero() {
+        let file = std::env::temp_dir().join("ilo_shadow_fail_test.ilo");
+        std::fs::write(
+            &file,
+            "add a:n b:n>n;+a b\ntest add { ok add 2 3 99 }\n",
+        )
+        .unwrap();
+        let out = std::process::Command::new(ilo_bin())
+            .args(["check", file.to_str().unwrap()])
+            .output()
+            .expect("failed to run ilo check");
+        assert!(
+            !out.status.success(),
+            "expected non-zero exit for failing shadow test, got: {}; stdout: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            combined.contains("ILO-T050"),
+            "expected ILO-T050 in output, got stdout: {} stderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn cli_check_passing_shadow_test_exits_zero() {
+        let file = std::env::temp_dir().join("ilo_shadow_pass_test.ilo");
+        std::fs::write(
+            &file,
+            "add a:n b:n>n;+a b\ntest add { ok add 2 3 5 }\n",
+        )
+        .unwrap();
+        let out = std::process::Command::new(ilo_bin())
+            .args(["check", file.to_str().unwrap()])
+            .output()
+            .expect("failed to run ilo check");
+        assert!(
+            out.status.success(),
+            "expected exit 0 for passing shadow test, got: {}; stdout: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let _ = std::fs::remove_file(&file);
     }
 
     // ── subprocess: empty code ────────────────────────────────────────────────
