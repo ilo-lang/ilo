@@ -3,6 +3,7 @@ use crate::interpreter::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[allow(dead_code)] // fields used when `tools` feature is enabled
@@ -112,10 +113,10 @@ impl ToolProvider for HttpProvider {
                     Ok(Value::Ok(Box::new(val)))
                 } else {
                     let err_msg = json.to_string();
-                    Ok(Value::Err(Box::new(Value::Text(format!(
+                    Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                         "HTTP {}: {}",
                         status, err_msg
-                    )))))
+                    ))))))
                 }
             }
             #[cfg(not(feature = "tools"))]
