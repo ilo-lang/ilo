@@ -9280,6 +9280,61 @@ mod tests {
         );
     }
 
+    // ── subprocess: shadow test blocks (ILO-T050 exit code) ────────────────
+
+    #[test]
+    fn cli_check_failing_shadow_test_exits_nonzero() {
+        let file = std::env::temp_dir().join("ilo_shadow_fail_test.ilo");
+        std::fs::write(
+            &file,
+            "add a:n b:n>n;+a b\ntest add { ok add 2 3 99 }\n",
+        )
+        .unwrap();
+        let out = std::process::Command::new(ilo_bin())
+            .args(["check", file.to_str().unwrap()])
+            .output()
+            .expect("failed to run ilo check");
+        assert!(
+            !out.status.success(),
+            "expected non-zero exit for failing shadow test, got: {}; stdout: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            combined.contains("ILO-T050"),
+            "expected ILO-T050 in output, got stdout: {} stderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn cli_check_passing_shadow_test_exits_zero() {
+        let file = std::env::temp_dir().join("ilo_shadow_pass_test.ilo");
+        std::fs::write(
+            &file,
+            "add a:n b:n>n;+a b\ntest add { ok add 2 3 5 }\n",
+        )
+        .unwrap();
+        let out = std::process::Command::new(ilo_bin())
+            .args(["check", file.to_str().unwrap()])
+            .output()
+            .expect("failed to run ilo check");
+        assert!(
+            out.status.success(),
+            "expected exit 0 for passing shadow test, got: {}; stdout: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+
     // ── subprocess: empty code ────────────────────────────────────────────────
 
     #[test]
