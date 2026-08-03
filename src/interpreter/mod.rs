@@ -11075,6 +11075,30 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 _ => (function.clone(), Vec::new()),
             };
             arg_vals.extend(extra_captures);
+            // PipePropagate pre-call arg unwrap: the piped value (last arg)
+            // is auto-unwrapped before calling the function. Ok→inner,
+            // Err→propagate (short-circuit), Nil→propagate, other→passthrough.
+            if matches!(unwrap, UnwrapMode::PipePropagate) && !arg_vals.is_empty() {
+                let last = arg_vals.len() - 1;
+                match &arg_vals[last] {
+                    Value::Ok(v) => {
+                        arg_vals[last] = (**v).clone();
+                    }
+                    Value::Err(e) => {
+                        return Err(RuntimeError {
+                            propagate_value: Some(Box::new(Value::Err(e.clone()))),
+                            ..RuntimeError::new("ILO-R014", "pipe short-circuit propagating Err")
+                        });
+                    }
+                    Value::Nil => {
+                        return Err(RuntimeError {
+                            propagate_value: Some(Box::new(Value::Nil)),
+                            ..RuntimeError::new("ILO-R014", "pipe short-circuit propagating nil")
+                        });
+                    }
+                    _ => {} // non-Result: pass through unchanged
+                }
+            }
             let result = call_function(env, &callee, arg_vals)?;
             // Fire sub-expression event for this call (depth=expr mode).
             {
@@ -11083,7 +11107,10 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             }
             match *unwrap {
                 UnwrapMode::None => Ok(result),
-                UnwrapMode::Propagate | UnwrapMode::PipePropagate => match result {
+                // PipePropagate already handled the arg pre-call; the return
+                // value passes through as-is (no post-call unwrap).
+                UnwrapMode::PipePropagate => Ok(result),
+                UnwrapMode::Propagate => match result {
                     Value::Ok(v) => Ok(*v),
                     Value::Err(e) => Err(RuntimeError {
                         propagate_value: Some(Box::new(Value::Err(e))),
