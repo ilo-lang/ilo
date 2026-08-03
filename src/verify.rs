@@ -98,8 +98,25 @@ fn format_expr(expr: &Expr) -> String {
         Expr::Literal(Literal::Bool(b)) => b.to_string(),
         Expr::Literal(Literal::Nil) => "nil".to_string(),
         Expr::Ref(name) => name.clone(),
-        Expr::BinOp { op, left: _, right: _ } => {
-            format!("{:?}", op)
+        Expr::BinOp { op, left, right } => {
+            let l = format_expr(left);
+            let r = format_expr(right);
+            let sym = match op {
+                BinOp::Equals => "=",
+                BinOp::NotEquals => "!=",
+                BinOp::GreaterThan => ">",
+                BinOp::GreaterOrEqual => ">=",
+                BinOp::LessThan => "<",
+                BinOp::LessOrEqual => "<=",
+                BinOp::Add => "+",
+                BinOp::Subtract => "-",
+                BinOp::Multiply => "*",
+                BinOp::Divide => "/",
+                BinOp::Append => "+=",
+                BinOp::And => "&",
+                BinOp::Or => "|",
+            };
+            format!("{l}{sym}{r}")
         }
         Expr::UnaryOp { op, operand } => {
             format!("{:?}{}", op, format_expr(operand))
@@ -5144,10 +5161,73 @@ impl VerifyContext {
                         caller, value, spanned.span, preconds, &guards,
                     );
                 }
-                _ => {
-                    // For any other statement, check for calls in its exprs
-                    // via a simpler scan
+                Stmt::Expr(expr) => {
+                    // Bare expression as statement (e.g. return value)
+                    self.check_preconditions_in_expr(
+                        caller, expr, spanned.span, preconds, &guards,
+                    );
                 }
+                Stmt::Return(expr) => {
+                    self.check_preconditions_in_expr(
+                        caller, expr, spanned.span, preconds, &guards,
+                    );
+                }
+                Stmt::Break(Some(expr)) => {
+                    self.check_preconditions_in_expr(
+                        caller, expr, spanned.span, preconds, &guards,
+                    );
+                }
+                Stmt::Destructure { value, .. } => {
+                    self.check_preconditions_in_expr(
+                        caller, value, spanned.span, preconds, &guards,
+                    );
+                }
+                Stmt::Match { subject, arms, .. } => {
+                    if let Some(s) = subject {
+                        self.check_preconditions_in_expr(
+                            caller, s, spanned.span, preconds, &guards,
+                        );
+                    }
+                    for arm in arms {
+                        self.check_preconditions_in_stmts(
+                            caller, &arm.body, preconds, &guards,
+                        );
+                    }
+                }
+                Stmt::ForEach { collection, body, .. } => {
+                    self.check_preconditions_in_expr(
+                        caller, collection, spanned.span, preconds, &guards,
+                    );
+                    self.check_preconditions_in_stmts(
+                        caller, body, preconds, &guards,
+                    );
+                }
+                Stmt::ForRange { start, end, body, .. } => {
+                    self.check_preconditions_in_expr(
+                        caller, start, spanned.span, preconds, &guards,
+                    );
+                    self.check_preconditions_in_expr(
+                        caller, end, spanned.span, preconds, &guards,
+                    );
+                    self.check_preconditions_in_stmts(
+                        caller, body, preconds, &guards,
+                    );
+                }
+                Stmt::While { condition, body, .. } => {
+                    self.check_preconditions_in_expr(
+                        caller, condition, spanned.span, preconds, &guards,
+                    );
+                    self.check_preconditions_in_stmts(
+                        caller, body, preconds, &guards,
+                    );
+                }
+                Stmt::Defer { expr, .. } => {
+                    self.check_preconditions_in_expr(
+                        caller, expr, spanned.span, preconds, &guards,
+                    );
+                }
+                // Stmt::Continue, Stmt::Break(None) — no expressions to check
+                _ => {}
             }
         }
     }
@@ -5174,7 +5254,7 @@ impl VerifyContext {
                                 "call to '{function}' may violate precondition {precond_str} — add a guard"
                             ),
                             Some(format!(
-                                "guard before the call: e.g. `={precond_str} ^\"...\"` or wrap the call in a match on R"
+                                "guard before the call: negate the condition (e.g. for req b!=0, add `=b 0 ^\"...\"` before the call) or wrap in a match on R"
                             )),
                             Some(span),
                         );
