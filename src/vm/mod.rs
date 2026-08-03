@@ -11017,7 +11017,7 @@ impl<'a> VM<'a> {
                                 if let Some(rt) = self.tokio_runtime {
                                     rt.block_on(_provider.call(_tool_name, value_args))
                                         .unwrap_or_else(|e| {
-                                            Value::Err(Box::new(Value::Text(e.to_string())))
+                                            Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))
                                         })
                                 } else {
                                     let _ = value_args;
