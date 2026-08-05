@@ -211,6 +211,13 @@ fn examples_all_engines() {
                         }
                     }
                     Expect::Stderr => {
+                        // Strip the .ilo deprecation hint so .ilo examples
+                        // don't fail on hint pollution.
+                        let stderr_clean = stderr
+                            .lines()
+                            .filter(|l| !l.starts_with("hint: .ilo extension is deprecated"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         if out.status.success() {
                             failures.push(format!(
                                 "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  EXPECTED FAILURE but exit 0\n  stdout: {stdout}",
@@ -220,7 +227,7 @@ fn examples_all_engines() {
                                 case.run_args.join(" "),
                                 engine_name = engine.name,
                             ));
-                        } else if stderr != case.expected {
+                        } else if stderr_clean != case.expected {
                             failures.push(format!(
                                 "{name} [{engine_name}] (line {}): `ilo {} {} {}` (-- err:)\n  expected stderr: {:?}\n  actual stderr:   {:?}",
                                 case.line,
