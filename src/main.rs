@@ -4790,7 +4790,7 @@ fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
     if fixable.is_empty() {
         if mode == OutputMode::Json {
             println!(
-                "{{\"schemaVersion\":1,\"fixesApplied\":0,\"remaining\":{}}}",
+                "{{\"schemaVersion\":1,\"fixesApplied\":0,\"remaining\":{},\"write\":false}}",
                 diags.len()
             );
         } else {
