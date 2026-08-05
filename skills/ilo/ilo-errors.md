@@ -42,6 +42,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 - **R020 file not found** - check path or `env "HOME"`.
 - **R030 http error** - non-2xx or network. Match `^e`.
 - **R040 json parse error** - bad `jpar` input. Match `^e`.
+- **R600 CLI arg type mismatch** - argument's declared type doesn't match the provided CLI value. Check the function signature and the CLI args.
 
 ## Patterns
 
