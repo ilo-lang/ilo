@@ -1,0 +1,70 @@
+# ilo
+
+> ilo — the token-minimal programming language AI agents write. Prefix notation, strongly typed, verified pre-run. Designed so the agent is the primary author, not a human.
+
+ilo is designed for one audience: AI agents that author code. Every design decision is evaluated against a single metric — total tokens from intent to working code. Six principles govern the language: Token-Conservative, Constrained, Self-Contained, Language-Agnostic, Graph-Reducible, and Structured Compiler-to-Agent Surface.
+
+## Quick start
+
+```bash
+# Install
+curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/scripts/ensure-ilo.sh | bash
+
+# Write and run
+echo 'add a:n b:n>n;+a b' > hello.@
+ilo run hello.@ add 3 4    # outputs: 7
+```
+
+## Core docs
+
+- [Manifesto](https://ilo-lang.ai/docs/manifesto/): The six principles and why they exist. Read this first.
+- [SPEC.md](https://github.com/ilo-lang/ilo/blob/main/SPEC.md): Full language specification (2,675 lines). Syntax, types, builtins, error codes, CLI.
+- [ai.txt](https://github.com/ilo-lang/ilo/blob/main/ai.txt): Token-minimal agent spec (23 lines). The entire language in a single prompt-sized file.
+- [SKILL.md](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/SKILL.md): Bootstrap skill — 8 modular sub-skills served from the binary via `ilo skill get <name>`.
+
+## Skills (modular, load only what the task needs)
+
+- [ilo-language](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-language.md): Syntax, types, guards, match, pipes, records, Results
+- [ilo-builtins-core](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-builtins-core.md): List, map, HOFs
+- [ilo-builtins-io](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-builtins-io.md): File I/O, HTTP, JSON, env, time, process
+- [ilo-builtins-math](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-builtins-math.md): Math, stats, bitwise
+- [ilo-builtins-text](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-builtins-text.md): String ops, regex, formatting
+- [ilo-tools](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-tools.md): MCP + HTTP tool declarations
+- [ilo-errors](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-errors.md): ILO-XXXX error code reference
+- [ilo-edit-loop](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-edit-loop.md): The repair cycle, JSON diagnostics, common fixes
+- [ilo-engines](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-engines.md): VM, JIT, AOT execution backends
+- [ilo-agent](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-agent.md): Agent integration, skill discovery, output contract
+- [ilo-examples](https://github.com/ilo-lang/ilo/blob/main/skills/ilo/ilo-examples.md): Curated example index
+
+## Key concepts
+
+- **Prefix notation**: `+a b` not `a + b`. Nesting: `+*a b c` = `(a*b)+c`. Eliminates parentheses, saves tokens.
+- **Shape-only typing**: no borrow checker, no lifetimes. Values are RC-managed. The type checker enforces shape only.
+- **Results not exceptions**: `R n t` type, `~v`=Ok, `^e`=Err. `!` auto-unwraps, `??` nil-coalesces.
+- **Guards**: flat early returns. `=b 0 ^"zero"` returns error if b is zero.
+- **Structured diagnostics**: every error is `ILO-XXXX` JSON with code, span, hint. One JSON object per line.
+- **Serv mode**: `ilo serv` — long-lived JSON stdin/stdout loop, zero process-spawn overhead.
+
+## CLI surface
+
+```
+ilo run file.@ [fn] [args]      run a program
+ilo check file.@ --json         verify without running
+ilo run file.@ --json           wrap output as {"ok":v} / {"error":...}
+ilo skill list                  list available skill modules
+ilo skill get <name>            get a skill module's content
+ilo graph file.@ --json         extract call graph as JSON
+ilo constrain                   export grammar as JSON state machine
+ilo constrain --mode masks      export per-state logit masks
+ilo compile file.@ -o out       AOT compile to standalone binary
+ilo serv                        long-lived JSON loop on stdin/stdout
+ilo explain ILO-T004 --json     structured error explanation
+```
+
+## Links
+
+- [GitHub](https://github.com/ilo-lang/ilo)
+- [Website](https://ilo-lang.ai)
+- [npm](https://www.npmjs.com/package/ilo-lang)
+- [crates.io](https://crates.io/crates/ilo)
+- [Linear](https://linear.app/ilo-lang)
