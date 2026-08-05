@@ -142,6 +142,14 @@ main>n;n=0;@line (for-line "stdin"){prnt line;n=+ n 1};n
 
 Write programs as compact one-liners separated by semicolons. Prefer inline lambdas and nested prefix ops over named helpers and intermediate bindings. This is token-optimal and is the canonical authoring form. Example: `tot p:n q:n r:n>n;s=*p q;t=*s r;+s t` — entire function on one line.
 
+## Auto-install
+
+On first run in a directory containing `.claude/skills/` or `.pi/agent/skills/`, `ilo` silently writes its bundled skill modules to the matching `ilo/` subdirectory. Idempotent: skips if `SKILL.md` already exists. Zero-config onboarding for any agent.
+
+## ilo fix
+
+`ilo fix file.@ --write` applies structured fix_plan edits from diagnostics to the source file. Dry-run by default (shows what would be fixed). Reports `{"fixesApplied":N,"remaining":M}` in JSON mode.
+
 ## Compatibility note
 
 ilo has no borrow checker, no lifetime annotations, no ownership rules. Values are RC-managed; the type checker enforces shape only. There is no `&`, no `&mut`, no `'a`. If an agent is reaching for lifetime-style reasoning in ilo, it has the wrong mental model.
