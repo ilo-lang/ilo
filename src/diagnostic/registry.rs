@@ -1713,6 +1713,34 @@ This may indicate a verifier gap for a dynamic code path.
 "#,
     },
     ErrorEntry {
+        code: "ILO-R600",
+        phase: Phase::Runtime,
+        short: "CLI argument does not match the declared parameter type",
+        long: r#"## ILO-R600: CLI argument does not match the declared parameter type
+
+A value passed on the command line could not be interpreted as the type
+the entry function declares for that parameter.
+
+```
+tri n:n>n;s=+n 1;p=*n s;/p 2
+
+$ ilo tri.@ main
+ILO-R600: argument 1 (`n`) expects n, got text `main`
+```
+
+Before this check existed the mismatched value was bound as-is, so a `n`
+parameter could receive text. Arithmetic on it produced `NaN` and the
+process still exited 0 — a silent wrong answer rather than an error.
+
+This mirrors the guarantee the language already makes in-band: `num "main"`
+returns `R n t`, so the type checker forces the failure to be handled.
+The CLI boundary now behaves the same way.
+
+**Fix:** pass a value of the declared type, or widen the parameter type
+(`_` accepts anything, `O n` accepts `nil`).
+"#,
+    },
+    ErrorEntry {
         code: "ILO-R005",
         phase: Phase::Runtime,
         short: "field not found at runtime",
