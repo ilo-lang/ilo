@@ -837,6 +837,25 @@ impl Parser {
                     err.hint = Some(hint_msg);
                     return Err(err);
                 }
+                // ILO-529: If the identifier is a builtin name and this line
+                // doesn't have a function-declaration shape (no `>` for
+                // return type), it's a top-level call expression like
+                // `prnt tri 10`. Redirect to P102 (wrap in main>_;) instead
+                // of falling through to parse_fn_decl which emits P011.
+                if Builtin::is_builtin(ident_str)
+                    && !self.line_has_return_type_marker()
+                {
+                    let name = ident_str.to_string();
+                    return Err(self.error_hint(
+                        "ILO-P102",
+                        format!(
+                            "top-level call to builtin `{name}` outside any function declaration"
+                        ),
+                        format!(
+                            "wrap in a function: `main>_;{name} ...` or define a proper entry point"
+                        ),
+                    ));
+                }
                 // Detect an orphaned identifier at a statement boundary — the
                 // identifier is followed immediately by `;`, `}`, or EOF with no
                 // `>` or params, so it cannot possibly be a function declaration.
@@ -5649,6 +5668,22 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
     /// declaration — `Ident >` (zero-param) or `Ident Ident :` (parameterised) — so
     /// that a non-last function ending with a call doesn't greedily consume the next
     /// function's name as an argument.
+    /// Check if the current line (starting at self.pos) has a `>` token
+    /// that separates params from return type — i.e. it looks like a fn decl.
+    fn line_has_return_type_marker(&self) -> bool {
+        // Scan forward from pos looking for `>` before hitting `;`, `\n`, or EOF
+        let mut i = self.pos;
+        let max_scan = 20.min(self.tokens.len().saturating_sub(self.pos));
+        for _ in 0..max_scan {
+            match self.token_at(i) {
+                Some(Token::Greater) => return true,
+                None | Some(Token::Semi) | Some(Token::Newline) => return false,
+                _ => i += 1,
+            }
+        }
+        false
+    }
+
     fn can_start_operand(&self) -> bool {
         // If the upcoming token is an Ident that begins a new declaration, stop here.
         if self.is_fn_decl_start(self.pos) {
@@ -5663,9 +5698,14 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         // and slurps the whole chain into the previous fn's body. Stopping at
         // a decl boundary lets the outer decl loop see the orphaned chain and
         // surface a single ILO-P102 hint instead of a cascade of ILO-T005s.
+        //
+        // ILO-533: Also stop for ANY ident at a top-level boundary, not just
+        // `name=expr`. Without this, `double a` at the end of one function's
+        // body absorbs `prnt quad 7` from the next line as extra call args.
+        // A top-level newline always means "end of current function body";
+        // any ident after it is a new declaration.
         if self.boundary_at_cursor().is_some()
             && matches!(self.peek(), Some(Token::Ident(_)))
-            && self.token_at(self.pos + 1) == Some(&Token::Eq)
         {
             return false;
         }
