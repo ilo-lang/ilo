@@ -3752,6 +3752,32 @@ fn load_env_file(path: &str) {
 
 /// Load `.env.local` then `.env` from the current working directory.
 /// `.env.local` takes priority (loaded first; later files don't overwrite).
+/// Auto-install ilo skill files into agent directories (.claude/skills/ilo/).
+/// Silent, at most once (skips if SKILL.md exists). Writes embedded skill
+/// files from the binary so they can't drift from the toolchain version.
+/// Manifesto P3 (Self-Contained): zero-config skill onboarding.
+fn maybe_autoinstall_skills() {
+    use std::fs;
+    use std::path::Path;
+
+    let targets = [
+        Path::new(".claude/skills/ilo"),
+        Path::new(".pi/agent/skills/ilo"),
+    ];
+
+    for dir in &targets {
+        if dir.join("SKILL.md").exists() { continue; }
+        let parent = dir.parent().unwrap_or(Path::new("."));
+        if !parent.exists() { continue; }
+        if fs::create_dir_all(dir).is_err() { continue; }
+        let _ = fs::write(dir.join("SKILL.md"), include_str!("../skills/ilo/SKILL.md"));
+        for skill in SKILLS {
+            let fname = format!("{}.md", skill.name);
+            let _ = fs::write(dir.join(&fname), skill.content);
+        }
+    }
+}
+
 fn load_dotenv() {
     load_env_file(".env.local");
     load_env_file(".env");
@@ -3785,6 +3811,7 @@ fn install_runtime_guard(global: &cli::Global, mode: OutputMode) {
 
 fn main() {
     load_dotenv();
+    maybe_autoinstall_skills();
 
     let mut raw_args: Vec<String> = std::env::args().collect();
 
