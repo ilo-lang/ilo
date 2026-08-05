@@ -6,7 +6,7 @@ mod cli;
 use ilo::ast;
 use ilo::caps::{Caps, Policy};
 use ilo::codegen;
-use ilo::diagnostic;
+use ilo::diagnostic::{self, Severity};
 use ilo::graph;
 use ilo::interpreter;
 use ilo::lexer;
@@ -4127,6 +4127,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
         Some(cli::Cmd::Constrain(c)) => constrain_cmd(c),
+        Some(cli::Cmd::Fix(f)) => fix_cmd(&f.source, f.write, cli.global.output_mode()),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
         Some(cli::Cmd::Update(u)) => std::process::exit(ilo::pkg::cmd_update(u.package.as_deref())),
@@ -4647,6 +4648,224 @@ fn format_literal(lit: &ast::Literal) -> String {
         ast::Literal::Bool(b) => b.to_string(),
         ast::Literal::Nil => "nil".to_string(),
     }
+}
+
+/// Run the full check pipeline and return all enriched diagnostics.
+/// Used by both `check_cmd` (which prints them) and `fix_cmd` (which applies fix_plans).
+fn run_check_internal(source_arg: &str) -> (Vec<Diagnostic>, bool) {
+    let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
+        match std::fs::read_to_string(source_arg) {
+            Ok(s) => (s, true),
+            Err(e) => {
+                eprintln!("Error reading {}: {}", source_arg, e);
+                return (vec![], true);
+            }
+        }
+    } else {
+        if source_arg.is_empty() {
+            eprintln!("Error: empty code string");
+            return (vec![], true);
+        }
+        (source_arg.to_string(), false)
+    };
+
+    let diag_path: Option<String> = if is_file {
+        Some(source_arg.to_string())
+    } else {
+        None
+    };
+
+    let enrich = |d: Diagnostic| -> Diagnostic {
+        let mut d = d.with_source(source.clone());
+        if let Some(p) = &diag_path {
+            d = d.with_path(p.clone());
+        }
+        d.derive_fix_plan()
+    };
+
+    let mut diags = Vec::new();
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            diags.push(enrich(Diagnostic::from(&e)));
+            return (diags, true);
+        }
+    };
+
+    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+        .into_iter()
+        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .collect();
+
+    let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
+    program.source = Some(source.clone());
+
+    // Resolve imports
+    {
+        let base_dir: Option<std::path::PathBuf> = if is_file {
+            std::path::Path::new(source_arg)
+                .canonicalize()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        } else {
+            None
+        };
+        let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        if let Ok(canonical_file) = std::path::Path::new(source_arg).canonicalize() {
+            visited.insert(canonical_file);
+        }
+        program.declarations = resolve_imports(
+            program.declarations,
+            base_dir.as_deref(),
+            &mut visited,
+            &mut import_diagnostics,
+            BuildTarget::default(),
+        );
+        for d in import_diagnostics {
+            diags.push(enrich(d));
+        }
+    }
+
+    for e in &parse_errors {
+        diags.push(enrich(Diagnostic::from(e)));
+    }
+
+    let verify_result = verify::verify_with_effects(&program, false);
+    for w in &verify_result.warnings {
+        diags.push(enrich(Diagnostic::from(w)));
+    }
+    for e in &verify_result.errors {
+        diags.push(enrich(Diagnostic::from(e)));
+    }
+
+    let had_errors = !verify_result.errors.is_empty() || !parse_errors.is_empty();
+    (diags, had_errors)
+}
+
+/// Apply structured fix_plan edits from diagnostics to source files.
+fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
+    if !std::path::Path::new(source_arg).is_file() {
+        eprintln!("Error: {} is not a file. ilo fix requires a file path.", source_arg);
+        return 2;
+    }
+
+    // Run check to get diagnostics
+    let (diags, _had_errors) = run_check_internal(source_arg);
+
+    // Collect diagnostics that have fix_plans
+    let fixable: Vec<&Diagnostic> = diags.iter().filter(|d| d.fix_plan.is_some()).collect();
+
+    if fixable.is_empty() {
+        if mode == OutputMode::Json {
+            println!(
+                "{{\"schemaVersion\":1,\"fixesApplied\":0,\"remaining\":{}}}",
+                diags.len()
+            );
+        } else {
+            eprintln!("No fixable diagnostics found.");
+            if !diags.is_empty() {
+                eprintln!("{} diagnostic(s) remain (no structured fix plans available).", diags.len());
+            }
+        }
+        return if diags.is_empty() { 0 } else { 1 };
+    }
+
+    // Read the file
+    let source = match std::fs::read_to_string(source_arg) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading {}: {}", source_arg, e);
+            return 2;
+        }
+    };
+
+    let lines: Vec<&str> = source.lines().collect();
+    let mut modified_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+    let mut fixes_applied = 0;
+
+    for diag in &fixable {
+        let plan = diag.fix_plan.as_ref().unwrap();
+        for edit in &plan.edits {
+            let line_start = edit.line_start.saturating_sub(1); // 0-based
+            let line_end = edit.line_end.saturating_sub(1); // 0-based
+
+            if line_start >= modified_lines.len() {
+                continue;
+            }
+
+            // Apply the replacement: find `before` in the line range, replace with `after`
+            let region: String = modified_lines[line_start..=line_end.min(modified_lines.len() - 1)]
+                .join("\n");
+
+            if let Some(idx) = region.find(&edit.before) {
+                let new_region = region.replacen(&edit.before, &edit.after, 1);
+                let new_lines: Vec<&str> = new_region.split('\n').collect();
+
+                // Replace the lines
+                modified_lines.drain(line_start..=line_end.min(modified_lines.len() - 1));
+                for (i, nl) in new_lines.iter().enumerate() {
+                    modified_lines.insert(line_start + i, nl.to_string());
+                }
+                fixes_applied += 1;
+
+                if !write {
+                    if mode == OutputMode::Json {
+                        // JSON dry-run report handled below
+                    } else {
+                        eprintln!(
+                            "  would fix: {} -> {} (line {})",
+                            edit.before, edit.after, edit.line_start
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if write && fixes_applied > 0 {
+        let modified_source = modified_lines.join("\n");
+        // Preserve trailing newline if original had one
+        let modified_source = if source.ends_with('\n') && !modified_source.ends_with('\n') {
+            format!("{}\n", modified_source)
+        } else {
+            modified_source
+        };
+        if let Err(e) = std::fs::write(source_arg, &modified_source) {
+            eprintln!("Error writing {}: {}", source_arg, e);
+            return 2;
+        }
+    }
+
+    // Re-check to count remaining diagnostics
+    let (post_diags, post_had_errors) = run_check_internal(source_arg);
+    let remaining = post_diags.iter().filter(|d| d.severity == Severity::Error).count();
+
+    if mode == OutputMode::Json {
+        println!(
+            "{{\"schemaVersion\":1,\"fixesApplied\":{},\"remaining\":{},\"write\":{}}}",
+            fixes_applied, remaining, write
+        );
+    } else {
+        let action = if write { "Applied" } else { "Would apply" };
+        eprintln!("{} {} fix(es).", action, fixes_applied);
+        if remaining > 0 {
+            eprintln!("{} diagnostic(s) remain — manual review needed.", remaining);
+        } else {
+            eprintln!("All diagnostics resolved.");
+        }
+    }
+
+    // Print remaining diagnostics
+    for d in &post_diags {
+        report_diagnostic(d, mode);
+    }
+
+    if remaining > 0 || post_had_errors { 1 } else { 0 }
 }
 
 fn check_cmd(

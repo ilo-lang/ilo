@@ -131,6 +131,21 @@ pub enum Cmd {
     Trace(TraceArgs),
     /// Export grammar state machine for LLM constrained decoding.
     Constrain(ConstrainArgs),
+
+    /// Apply structured fix plans from diagnostics to source files.
+    Fix(FixArgs),
+}
+
+// ── Fix ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct FixArgs {
+    /// Source file to fix.
+    pub source: String,
+
+    /// Apply fixes to the file (without this flag, shows a dry-run).
+    #[arg(long)]
+    pub write: bool,
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
