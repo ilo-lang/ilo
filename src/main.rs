@@ -6676,12 +6676,6 @@ fn parse_cli_args_typed(
             {
                 v = interpreter::Value::List(std::sync::Arc::new(vec![v]));
             }
-            if matches!(expected, Some(ast::Type::Number))
-                && matches!(&v, interpreter::Value::Number(n) if n.is_nan())
-            {
-                eprintln!("Error: ILO-R005: CLI arg '{}' cannot be coerced to number", s);
-                std::process::exit(1);
-            }
             v
         })
         .collect()
