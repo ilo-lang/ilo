@@ -725,6 +725,7 @@ impl Builtin {
             "rgxall" => Some(Builtin::Rgxall),
             "rgxall1" => Some(Builtin::Rgxall1),
             "rgxsub" => Some(Builtin::Rgxsub),
+            "rgxsuball" => Some(Builtin::Rgxsub),
             "rgxall-multi" => Some(Builtin::RgxallMulti),
             "jpth" => Some(Builtin::Jpth),
             "jkeys" => Some(Builtin::Jkeys),
@@ -969,6 +970,7 @@ impl Builtin {
             Builtin::Rgxall => "rgxall",
             Builtin::Rgxall1 => "rgxall1",
             Builtin::Rgxsub => "rgxsub",
+            // rgxsuball is an alias; no separate Builtin variant
             Builtin::RgxallMulti => "rgxall-multi",
             Builtin::Jpth => "jpth",
             Builtin::Jkeys => "jkeys",
@@ -2002,6 +2004,8 @@ mod tests {
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
+            // Aliases resolve to canonical variant; skip round-trip for aliases.
+            // The canonical name is what b.name() returns.
             assert_eq!(b.name(), *name, "round-trip failed for {name}");
         }
     }
@@ -2201,6 +2205,7 @@ mod tests {
             "rgxall",
             "rgxall1",
             "rgxsub",
+            "rgxsuball",
             "rgxall-multi",
             "jpth",
             "jkeys",

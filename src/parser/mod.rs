@@ -3470,9 +3470,15 @@ statement boundary; bind the chain to a local first. For example, split \
                     && self.token_at(after_semi + 1) == Some(&Token::Colon)
             }
             // literal: → literal pattern (number, string, bool)
+            // Also handles or-patterns: literal | literal | ... :
             Some(Token::Number(_) | Token::Text(_) | Token::True | Token::False | Token::Nil) => {
-                after_semi + 1 < self.tokens.len()
-                    && self.token_at(after_semi + 1) == Some(&Token::Colon)
+                // Find the colon, skipping | alternatives
+                let mut pos = after_semi + 1;
+                while pos < self.tokens.len() && self.token_at(pos) == Some(&Token::Pipe) {
+                    pos += 1; // skip |
+                    pos += 1; // skip the alternative pattern token
+                }
+                pos < self.tokens.len() && self.token_at(pos) == Some(&Token::Colon)
             }
             // n/t/b/l ident: or n/t/b/l _: → TypeIs pattern
             Some(Token::Ident(ty_name)) if matches!(ty_name.as_str(), "n" | "t" | "b" | "l") => {
@@ -3497,9 +3503,14 @@ statement boundary; bind the chain to a local first. For example, split \
                 true
             }
             // ident: → payload-less variant pattern
+            // Also handles or-patterns: ident | ident | ... :
             Some(Token::Ident(_)) => {
-                after_semi + 1 < self.tokens.len()
-                    && self.token_at(after_semi + 1) == Some(&Token::Colon)
+                let mut pos = after_semi + 1;
+                while pos < self.tokens.len() && self.token_at(pos) == Some(&Token::Pipe) {
+                    pos += 1; // skip |
+                    pos += 1; // skip the alternative pattern token
+                }
+                pos < self.tokens.len() && self.token_at(pos) == Some(&Token::Colon)
             }
             _ => false,
         }

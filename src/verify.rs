@@ -1199,6 +1199,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rgxall", &["t", "t"], "L (L t)"),
     ("rgxall1", &["t", "t"], "L t"),
     ("rgxsub", &["t", "t", "t"], "t"),
+    ("rgxsuball", &["t", "t", "t"], "t"), // alias for rgxsub
     ("rgxall-multi", &["list", "t"], "L t"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
@@ -3022,7 +3023,7 @@ fn builtin_check_args(
             // jdmp accepts any value, no type checking needed
             (Ty::Text, errors)
         }
-        "rgxsub" => {
+        "rgxsub" | "rgxsuball" => {
             for (i, arg) in arg_types.iter().enumerate() {
                 if !compatible(arg, &Ty::Text) {
                     errors.push(VerifyError {
