@@ -92,6 +92,10 @@ Parens: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT auto-fallback.
 
 Non-last fns end with safe expr (op, index, match, literal, parens); last fn: anything.
 
+## script mode (implicit main)
+
+Bare top-level statements auto-wrap into a synthetic `main>_;` — no wrapper needed. `prnt +2 2` alone in a file prints 4. Mix with decls: each statement on its OWN top-level line (unindented). `tri n:n>n;/(*n +n 1) 2` then newline then `prnt tri 10` prints 55. A call glued to the decl's line (`tri n:n>n;...;prnt tri 10`) joins `tri`'s body → `tri` calls itself → ILO-V500 unconditional recursion. Explicit `main` + bare statements together = ILO-P104; pick one.
+
 ## strings
 
 `"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"hi {name}"` => `fmt "hi {}" name`. Single-ident slots only. `{{`/`}}` escape inside interpolated strings. Bare `{}` still positional; don't mix `{ident}` + `{}` in one string.

@@ -51,6 +51,15 @@ The content lives in `skills/ilo/<name>.md`. The installed binary serves the sam
 
 ## Quick reference - things agents miss
 
+**Script mode - no `main>_;` wrapper needed (ILO-439).** Bare top-level statements are collected into a synthetic `main`. `prnt +2 2` alone in a file prints 4. Mixing with declarations works when each statement starts its own top-level line:
+
+```
+tri n:n>n;/(*n +n 1) 2
+prnt tri 10        -- own line -> becomes main's body; prints 55
+```
+
+Do NOT glue the call to the declaration's line - `tri n:n>n;...;prnt tri 10` puts the call inside `tri`'s body, making it call itself (rejected as ILO-V500 unconditional recursion). Don't combine bare statements with an explicit `main` (ILO-P104).
+
 **Text concatenation - three builtins, three jobs.** Pick by shape, not by habit:
 
 - `+ a b` - two-arg text/number concat (also list concat). `+ "hi " name` -> `"hi alice"`.

@@ -1,0 +1,9 @@
+-- Script mode with declarations (ILO-439): bare top-level statements on
+-- their own lines are collected into a synthetic `main>_;`, so a file can
+-- define helpers and then just call them - the shape a model writes when
+-- asked for a compact program. No `main>_;` wrapper needed.
+tri n:n>n;r=*n +n 1;/r 2
+prnt tri 10
+
+-- run: main
+-- out: 55

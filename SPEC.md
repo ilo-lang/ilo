@@ -65,6 +65,40 @@ Early return: braceless guard (`>=x 0 val` exits the function immediately when t
 
 Result unwrap mid-body: `v=call!` extracts the Ok value and propagates Err out of the function before continuing.
 
+### Script mode (implicit `main`)
+
+Bare statements at the top level of a file are collected, in source order, into a synthetic `main>_;` — no wrapper needed (ILO-439):
+
+```
+prnt +2 2            -- whole file; prints 4
+```
+
+Declarations and top-level statements can be mixed. Each statement must start
+its own top-level line (an unindented newline is already the top-level
+boundary, exactly as between two function declarations):
+
+```
+tri n:n>n;/(*n +n 1) 2
+prnt tri 10          -- own line → becomes main's body; prints 55
+```
+
+Rules:
+
+- A statement glued to the same line as a declaration belongs to that
+  declaration's body. `tri n:n>n;...;prnt tri 10` makes `tri` call itself —
+  rejected at verify time as unconditional recursion (`ILO-V500`) since a
+  straight-line body that calls its own function can never terminate.
+- A file with an explicit `main` **and** bare top-level statements is
+  rejected (`ILO-P104`) — two entry points with no defined order.
+- Bare top-level `name=expr` bindings glued after a declaration still surface
+  `ILO-P102` with the `main>_;` wrapper hint; on their own line they are
+  script statements like any other.
+- Fragments that are clearly a malformed declaration (`main->n`, `f x:`,
+  foreign keywords like `let`/`if`/`return`) keep their targeted parser
+  diagnostics rather than being swallowed as statements.
+- The synthesised `main` behaves exactly like a hand-written `main>_;` —
+  same graph root, same `ilo file.@` auto-run, same engines.
+
 ---
 
 ## Types
