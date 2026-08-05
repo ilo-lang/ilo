@@ -150,6 +150,10 @@ On first run in a directory containing `.claude/skills/` or `.pi/agent/skills/`,
 
 `ilo fix file.@ --write` applies structured fix_plan edits from diagnostics to the source file. Dry-run by default (shows what would be fixed). Reports `{"fixesApplied":N,"remaining":M}` in JSON mode.
 
+## ilo mcp
+
+`ilo mcp` runs as an MCP server (JSON-RPC 2.0 over stdio), exposing 6 typed tools: `check`, `run`, `explain`, `constrain`, `fix`, `skill`. Any agent harness can add ilo as an MCP server: `{"mcpServers":{"ilo":{"command":"ilo","args":["mcp"]}}}`.
+
 ## Compatibility note
 
 ilo has no borrow checker, no lifetime annotations, no ownership rules. Values are RC-managed; the type checker enforces shape only. There is no `&`, no `&mut`, no `'a`. If an agent is reaching for lifetime-style reasoning in ilo, it has the wrong mental model.
