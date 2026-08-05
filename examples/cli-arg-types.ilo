@@ -1,0 +1,32 @@
+-- CLI arguments are checked against the entry function's declared parameter
+-- types before any engine runs (ILO-517). A mismatch is `ILO-R600` with a
+-- non-zero exit, not a silently-bound wrong value.
+--
+-- Previously `ilo file.ilo main` against `tri n:n>n` bound the text "main"
+-- to a `n` parameter: tree/VM printed `NaN`, the JIT echoed `main`, and all
+-- of them exited 0.
+--
+-- The guard is deliberately permissive, and this file pins the shapes that
+-- must keep working:
+--   * `n` accepts a numeric literal
+--   * `t` accepts a bare ident (the ILO-182 single-fn pass-through)
+--   * `_` accepts anything
+--   * `O n` accepts `nil`
+--
+-- The rejection cases can't live here — the examples harness asserts on
+-- successful output — so they're covered by
+-- tests/regression_cli_arg_type_mismatch.rs, which runs each one across
+-- the default, --vm and --jit engines.
+
+tri n:n>n;s=+n 1;p=*n s;/p 2
+
+greet s:t>t;+"hello " s
+
+anything x:_>t;"got"
+
+maybe x:O n>t;??x 0;"ok"
+
+main>t;fmt "{} {} {} {}" (tri 10) (greet "world") (anything "main") (maybe nil)
+
+-- run: main
+-- out: 55 hello world got ok

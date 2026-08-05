@@ -4771,6 +4771,11 @@ fn dispatch_run(
                 {
                     return code;
                 }
+                if let Err(code) =
+                    check_cli_arg_types(&program, func_name, &run_args, &source, mode)
+                {
+                    return code;
+                }
                 let compiled = match vm::compile(&program) {
                     Ok(c) => c,
                     Err(e) => {
@@ -4807,6 +4812,11 @@ fn dispatch_run(
                 // while the others use ILO-R004.
                 if let Err(code) =
                     check_cli_arity(&program, func_name, run_args.len(), &source, mode)
+                {
+                    return code;
+                }
+                if let Err(code) =
+                    check_cli_arg_types(&program, func_name, &run_args, &source, mode)
                 {
                     return code;
                 }
@@ -5003,6 +5013,9 @@ fn run_cranelift_engine(
     // for the regression history; same contract applies to the explicit
     // --jit dispatch path.
     if let Err(code) = check_cli_arity(program, func_name, run_args.len(), source, mode) {
+        return code;
+    }
+    if let Err(code) = check_cli_arg_types(program, func_name, &run_args, source, mode) {
         return code;
     }
     let suppress = program_result_should_suppress(program, func_name);
@@ -5464,6 +5477,9 @@ fn run_default(
     // `[ ] nil` writes from the interactive-cli tracker. Checking here
     // makes the engine choice irrelevant to the error contract.
     if let Err(code) = check_cli_arity(program, func_name, args.len(), source, mode) {
+        return code;
+    }
+    if let Err(code) = check_cli_arg_types(program, func_name, &args, source, mode) {
         return code;
     }
     let suppress = program_result_should_suppress(program, func_name);
@@ -6530,6 +6546,110 @@ fn check_cli_arity(
         mode,
     );
     Err(1)
+}
+
+/// Describe a parsed CLI value for a diagnostic message: the ilo type sigil
+/// plus the offending literal, so the reader can see both what arrived and
+/// what was expected.
+fn describe_cli_value(v: &interpreter::Value) -> String {
+    match v {
+        interpreter::Value::Number(n) => format!("number `{n}`"),
+        interpreter::Value::Text(s) => format!("text `{s}`"),
+        interpreter::Value::Bool(b) => format!("bool `{b}`"),
+        interpreter::Value::Nil => "nil".to_string(),
+        interpreter::Value::List(_) => "a list".to_string(),
+        _ => "a value of a different type".to_string(),
+    }
+}
+
+/// Whether a parsed CLI value is compatible with a declared parameter type.
+///
+/// Deliberately permissive: this guard exists to catch values that are
+/// *unambiguously* wrong (text bound to `n`), not to re-implement the type
+/// checker at the CLI boundary. Anything structural or user-defined is
+/// waved through and left to the engines.
+fn cli_value_matches_type(v: &interpreter::Value, ty: &ast::Type) -> bool {
+    match ty {
+        // The numeric family. This is the case ILO-R600 exists for: binding
+        // text here yielded NaN with a zero exit code.
+        ast::Type::Number | ast::Type::U32 | ast::Type::U64 | ast::Type::I64 => {
+            matches!(v, interpreter::Value::Number(_))
+        }
+        ast::Type::Bool => matches!(v, interpreter::Value::Bool(_)),
+        // `parse_cli_arg_for_param` guarantees Text for `t` params, so there
+        // is nothing left to check.
+        ast::Type::Text => true,
+        // `nil` is a legitimate value for an optional; anything else must
+        // satisfy the inner type.
+        ast::Type::Optional(inner) => {
+            matches!(v, interpreter::Value::Nil) || cli_value_matches_type(v, inner)
+        }
+        // `parse_cli_args_typed` already wraps non-lists for `L _` params.
+        // Everything below is either "don't care" or too structural to judge
+        // from a shell string without guessing.
+        ast::Type::Any
+        | ast::Type::List(_)
+        | ast::Type::Map(_, _)
+        | ast::Type::Result(_, _)
+        | ast::Type::Sum(_)
+        | ast::Type::Fn(_, _)
+        | ast::Type::Named(_) => true,
+    }
+}
+
+/// CLI-boundary type guard. Sibling of `check_cli_arity`: that one checks how
+/// many args arrived, this one checks that each is the declared type.
+///
+/// Without it, a `n:n` parameter could receive `Value::Text` (a shell string
+/// that isn't numeric falls through `parse_cli_arg`'s ladder to `Text`).
+/// Downstream arithmetic then produced `NaN` and the process exited 0, so a
+/// caller passing an unvalidated string got a silent wrong answer instead of
+/// an error — the CLI was less safe than the language it fronts, where
+/// `num "main"` returns `R n t` and must be handled.
+///
+/// Returns `Err(1)` on the first mismatch so callers can short-circuit before
+/// handing off to any engine, keeping the diagnostic identical across
+/// tree / VM / JIT dispatch.
+fn check_cli_arg_types(
+    program: &ast::Program,
+    func_name: Option<&str>,
+    args: &[interpreter::Value],
+    source: &str,
+    mode: OutputMode,
+) -> Result<(), i32> {
+    let target = match resolve_entry_func_name(program, func_name) {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+    let params = match lookup_param_types(program, Some(target)) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    for (i, param) in params.iter().enumerate() {
+        let Some(v) = args.get(i) else { break };
+        if cli_value_matches_type(v, &param.ty) {
+            continue;
+        }
+        let err = interpreter::RuntimeError {
+            code: "ILO-R600",
+            message: format!(
+                "argument {} (`{}`) expects {}, got {}",
+                i + 1,
+                param.name,
+                ilo::codegen::fmt::type_str(&param.ty),
+                describe_cli_value(v)
+            ),
+            span: None,
+            call_stack: Vec::new(),
+            propagate_value: None,
+        };
+        report_diagnostic(
+            &Diagnostic::from(&err).with_source(source.to_string()),
+            mode,
+        );
+        return Err(1);
+    }
+    Ok(())
 }
 
 /// Parse and coerce CLI args against a function's declared parameter types.

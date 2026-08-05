@@ -55,7 +55,7 @@ fn bench_silent_suppresses_program_stdout_under_json() {
         non_json_lines.is_empty(),
         "expected only JSON envelopes on stdout under --silent; saw {} non-JSON lines (first few: {:?})",
         non_json_lines.len(),
-        &non_json_lines.iter().take(3).collect::<Vec<_>>()
+        non_json_lines.iter().take(3).collect::<Vec<_>>()
     );
 
     // ...and we still got bench numbers — at least one envelope per
