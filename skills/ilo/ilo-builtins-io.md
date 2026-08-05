@@ -81,7 +81,7 @@ r.exit    -- number (0 = success)
 
 ## Environment / process
 
-`env name` (var), `env-all` (`R (M t t) t`), `exit code`.
+`env name > R t t` — Ok(value) if set; Err("env var 'X' not set") if missing. For defaults: `r=env "X";?r{~v:v;^_:"fallback"}`. `env-all > R (M t t) t`. `exit code`.
 
 `run` details: no shell, no glob, no interpolation. argv passed to `Command::args`. `code` is decimal (signal -> `signal:<n>`). Non-zero exit is not `Err`; branch on `mget m "code"`. Err = spawn failure or 10 MiB/stream cap. Stdin closed; inherits env + cwd. WASM Errs.
 
