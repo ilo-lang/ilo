@@ -104,14 +104,6 @@ pub fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> interpr
         };
         return interpreter::Value::Text(std::sync::Arc::new(stripped.to_string()));
     }
-    if matches!(expected, Some(ast::Type::Number)) {
-        if let Ok(n) = s.parse::<f64>() {
-            if n.is_finite() {
-                return interpreter::Value::Number(n);
-            }
-        }
-        return interpreter::Value::Number(f64::NAN);
-    }
     parse_cli_arg(s)
 }
 
@@ -250,18 +242,6 @@ mod tests {
     #[test]
     fn parse_cli_arg_for_param_no_hint_falls_through() {
         let v = parse_cli_arg_for_param("42", None);
-        assert_eq!(n(&v), 42.0);
-    }
-
-    #[test]
-    fn parse_cli_arg_for_param_number_rejects_non_numeric() {
-        let v = parse_cli_arg_for_param("abc", Some(&ast::Type::Number));
-        assert!(matches!(v, Value::Number(n) if n.is_nan()));
-    }
-
-    #[test]
-    fn parse_cli_arg_for_param_number_parses_numeric() {
-        let v = parse_cli_arg_for_param("42", Some(&ast::Type::Number));
         assert_eq!(n(&v), 42.0);
     }
 
