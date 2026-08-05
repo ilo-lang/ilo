@@ -585,22 +585,23 @@ declarations (`type T = ...`), tools (`tool name ...`), or `use` imports.
 A bare `name=expr` is a **binding statement**, not a declaration - it has
 to live inside a function body.
 
-This diagnostic fires when a file starts with (or contains) a top-level
-chain like:
+Since script mode (ILO-439), a chain that starts its own top-level line
+is simply valid: it is collected into a synthetic `main>_;` and runs.
+So this diagnostic no longer fires for a file of bare statements, or for
+statements on their own lines after a declaration.
 
-    pts=gen-pts
-    cs0=[[4.8 4.9][6.2 7.1]]
-    cs1=iter cs0 pts
-    cs2=iter cs1 pts
-    prnt cs2
+It still fires when a binding is **glued to a preceding declaration on
+the same line**:
 
-Without a function header to anchor those bindings, the parser either
-fails on the bare `=` (ILO-P003) or - when a prior `name>type;body`
-declaration sits above - slurps the whole chain into that function's
-body, producing a wall of misleading ILO-T005 cascades that point at
-the wrong line.
+    helper>n;42 pts=[1 2 3]
 
-**Fix: wrap the chain in a `main>_;` entry point.**
+That shape is almost never an intentional script line - it is a function
+body that ran past its end - and silently splitting it would swallow the
+real mistake. The historical cascade this code prevents: the chain being
+slurped into the prior function's body, producing a wall of misleading
+ILO-T005 errors pointing at the wrong line.
+
+**Fix: put the statement on its own line, or wrap it in `main>_;`.**
 
     main>_;
     pts=gen-pts
@@ -618,6 +619,27 @@ manifesto target is that a wrong program produces *one* actionable
 diagnostic, not a cascade. ILO-P102 collapses what used to be 5-50
 ILO-T005 lines (one per slurped binding) into a single pointer at the
 shape fix.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-P104",
+        phase: Phase::Parse,
+        short: "file has both an explicit `main` and bare top-level statements",
+        long: r#"## ILO-P104: explicit `main` plus bare top-level statements
+
+Script mode (ILO-439) wraps bare top-level statements into a synthetic
+`main>_;`. A file that also declares its own `main` would then have two
+entry points with no defined order between them, so it is rejected:
+
+    prnt 9               <- bare statement, collected for the synthetic main
+    main>n;42            <- but an explicit main also exists
+
+(Statements *after* an explicit `main` never reach this check - they are
+handed to the declaration parser instead, surfacing its usual
+diagnostics, so both orderings reject.)
+
+**Fix:** move the top-level statements into `main`, or delete the
+explicit `main` and let the statements become it.
 "#,
     },
     ErrorEntry {
@@ -810,6 +832,36 @@ deliberately if the depth is real.
 "#,
     },
     // ── Type / Verifier ──────────────────────────────────────────────────────
+    ErrorEntry {
+        code: "ILO-V500",
+        phase: Phase::Verify,
+        short: "function unconditionally calls itself and can never terminate",
+        long: r#"## ILO-V500: unconditional recursion
+
+A function whose body is a straight line — no guards, matches, loops, or
+early returns — contains a direct call to itself. Every invocation reaches
+the self-call again, so the recursion has no base case and the function can
+never terminate. Because ilo trampolines tail calls, this would spin forever
+at runtime rather than overflow the stack.
+
+```
+tri n:n>n;r=*n +n 1;/r 2;prnt tri 10
+                         ^^^^^^^^^^^ glued into tri's body — tri calls tri
+```
+
+The most common source is a trailing top-level call written on the same line
+as the function it was meant to exercise. Script mode (ILO-439) collects
+statements into `main` only when they start their own top-level line.
+
+**Fix:** add a base-case guard before the recursive call (`=n 0 0`), or move
+the trailing call onto its own line so it becomes a top-level statement:
+
+```
+tri n:n>n;r=*n +n 1;/r 2
+prnt tri 10
+```
+"#,
+    },
     ErrorEntry {
         code: "ILO-T001",
         phase: Phase::Verify,

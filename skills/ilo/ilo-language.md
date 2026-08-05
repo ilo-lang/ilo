@@ -92,6 +92,10 @@ Parens: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT auto-fallback.
 
 Non-last fns end with safe expr (op, index, match, literal, parens); last fn: anything.
 
+## script mode
+
+Bare top-level statements auto-wrap into a synthetic `main>_;`. `prnt +2 2` alone prints 4. With decls, each statement on its OWN unindented line; glued to a decl's line it joins that body (self-call → ILO-V500). Explicit `main` + bare stmts = ILO-P104.
+
 ## strings
 
 `"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"hi {name}"` => `fmt "hi {}" name`. Single-ident slots only. `{{`/`}}` escape inside interpolated strings. Bare `{}` still positional; don't mix `{ident}` + `{}` in one string.

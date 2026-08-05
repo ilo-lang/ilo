@@ -77,19 +77,37 @@ fn check_capture(_engine: &str, src: &str) -> (bool, String) {
 
 const BARE_TOP_CHAIN: &str = "pts=[1 2 3];cs0=[4 5 6];cs1=pts;prnt cs1";
 
+// ILO-439 inverts this. A chain of bare statements at file start is now a
+// script: the parser wraps it in a synthetic `main>_;` and it runs. The old
+// expectation (reject with ILO-P102 and suggest the wrapper) described the
+// tax this ticket removes. P102 itself is not dead — see
+// `p102_still_fires_for_glued_binding` for the case it still catches.
 fn check_bare_top_chain(engine: &str) {
-    let (ok, _stdout, stderr) = run_capture(engine, BARE_TOP_CHAIN, "main");
+    let (ok, stdout, stderr) = run_capture(engine, BARE_TOP_CHAIN, "main");
     assert!(
-        !ok,
-        "{engine}: top-level chain without main wrapper must reject at parse time"
+        ok,
+        "{engine}: bare top-level chain should now run in script mode. stderr: {stderr}"
     );
     assert!(
+        stdout.contains("[1, 2, 3]"),
+        "{engine}: expected `[1, 2, 3]` from the script-mode chain, got: {stdout}"
+    );
+}
+
+// P102's remaining job. A binding glued to a preceding declaration (same
+// line, no top-level newline before it) is not a script line — it is almost
+// always a body that ran on past its end. Script mode deliberately declines
+// it, so the "wrap in `main>_;`" hint still fires where it is apt.
+fn check_p102_still_fires_for_glued_binding(engine: &str) {
+    let (ok, _stdout, stderr) = run_capture(engine, "helper>n;42 pts=[1 2 3]", "main");
+    assert!(!ok, "{engine}: glued top-level binding must still reject");
+    assert!(
         stderr.contains("ILO-P102"),
-        "{engine}: expected ILO-P102, got: {stderr}"
+        "{engine}: expected ILO-P102 for glued binding, got: {stderr}"
     );
     assert!(
         stderr.contains("main>_"),
-        "{engine}: diagnostic should suggest `main>_;` wrapper, got: {stderr}"
+        "{engine}: diagnostic should still suggest `main>_;`, got: {stderr}"
     );
 }
 
@@ -105,22 +123,28 @@ const SLURP_INTO_PRIOR_FN: &str = "gen-pts>L(L n);[[2.0 3.0][8.0 8.0]]\n\
                                    iter cs:L(L n) pts:L(L n)>L(L n);cs\n\
                                    pts=gen-pts;cs0=[[4.8 4.9][6.2 7.1]];cs1=iter cs0 pts;cs2=iter cs1 pts;prnt cs2";
 
+// ILO-439: this shape now runs. The chain on line 3 starts its own top-level
+// line, so script mode collects it into a synthetic `main` instead of
+// rejecting it — the k-means program that originally motivated ILO-P102 is
+// simply valid ilo now. The slurp guard still matters and is still asserted:
+// `iter`'s body must stop at `cs` rather than eating line 3, which the
+// correct result proves (`cs2 == cs0`, since `iter` returns its first arg).
 fn check_slurp_into_prior_fn(engine: &str) {
-    let (ok, _stdout, stderr) = run_capture(engine, SLURP_INTO_PRIOR_FN, "main");
+    let (ok, stdout, stderr) = run_capture(engine, SLURP_INTO_PRIOR_FN, "main");
     assert!(
-        !ok,
-        "{engine}: slurped top-level chain must reject at parse time"
+        ok,
+        "{engine}: slurped-shape chain should now run in script mode. stderr: {stderr}"
     );
     assert!(
-        stderr.contains("ILO-P102"),
-        "{engine}: expected ILO-P102 (not a T005 cascade), got: {stderr}"
+        stdout.contains("[[4.8, 4.9], [6.2, 7.1]]"),
+        "{engine}: expected cs2 == cs0, which proves `iter`'s body did not \
+         slurp line 3; got: {stdout}"
     );
-    // The misparse used to produce multiple ILO-T005 errors anchored on
-    // the wrong function. The fix collapses to a single P102 — verify
-    // we don't get a T005 cascade.
+    // The original misparse produced a cascade of ILO-T005s anchored on the
+    // wrong function. Still must not happen.
     assert!(
         !stderr.contains("ILO-T005"),
-        "{engine}: ILO-P102 should preempt the T005 cascade, got: {stderr}"
+        "{engine}: unexpected T005 cascade, got: {stderr}"
     );
 }
 
@@ -176,8 +200,14 @@ fn check_builtin_shadow_keeps_p011(engine: &str) {
 
 #[test]
 fn p102_via_ilo_check_no_engine() {
-    let (ok, combined) = check_capture("--vm", BARE_TOP_CHAIN);
-    assert!(!ok, "`ilo check` must reject top-level chain");
+    // ILO-439: `ilo check` accepts a bare top-level chain now, because it is a
+    // script. Point the P102 assertion at the glued shape that script mode
+    // still declines, so `ilo check` keeps its coverage of the diagnostic.
+    let (ok, _combined) = check_capture("--vm", BARE_TOP_CHAIN);
+    assert!(ok, "`ilo check` should accept a script-mode chain");
+
+    let (ok, combined) = check_capture("--vm", "helper>n;42 pts=[1 2 3]");
+    assert!(!ok, "`ilo check` must reject a glued top-level binding");
     assert!(
         combined.contains("ILO-P102"),
         "expected ILO-P102 from `ilo check`, got: {combined}"
@@ -186,6 +216,7 @@ fn p102_via_ilo_check_no_engine() {
 
 fn check_all(engine: &str) {
     check_bare_top_chain(engine);
+    check_p102_still_fires_for_glued_binding(engine);
     check_slurp_into_prior_fn(engine);
     check_main_wrapper_runs(engine);
     check_normal_fn_decl_unaffected(engine);

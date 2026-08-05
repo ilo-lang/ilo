@@ -1742,8 +1742,14 @@ fn repl_cmd() {
                         )
                     })
                     .collect();
+                // Script mode (ILO-439) wraps bare statements in a synthesised
+                // `main`, which looks like a definition in the AST. Ask the
+                // parser what shape the *input* was, so `+1 2` still evaluates
+                // to 3 here instead of reporting `defined: main() -> _`.
+                let is_script = parser::is_script_mode_input(&token_spans);
                 let (program, errors) = parser::parse(token_spans);
-                if errors.is_empty()
+                if !is_script
+                    && errors.is_empty()
                     && !program.declarations.is_empty()
                     && program.declarations.iter().all(|d| {
                         matches!(
