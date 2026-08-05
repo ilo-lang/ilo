@@ -134,6 +134,9 @@ pub enum Cmd {
 
     /// Apply structured fix plans from diagnostics to source files.
     Fix(FixArgs),
+
+    /// Run as an MCP server (JSON-RPC 2.0 over stdio).
+    Mcp,
 }
 
 // ── Fix ─────────────────────────────────────────────────────────────────────

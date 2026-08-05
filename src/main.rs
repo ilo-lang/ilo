@@ -2422,6 +2422,340 @@ fn print_build_help() {
 
 /// Stdio-based agent serve loop.
 /// Reads one JSON request per line from stdin, writes one JSON response per line to stdout.
+/// MCP server: JSON-RPC 2.0 over stdio.
+///
+/// Implements the Model Context Protocol so any agent harness (Claude Code,
+/// Codex, Cursor, etc.) can add ilo as an MCP server and get typed access to
+/// check/run/explain/constrain/fix/skill without shell-scraping.
+///
+/// Transport: newline-delimited JSON-RPC 2.0 on stdin/stdout.
+/// Protocol: initialize → tools/list → tools/call.
+fn mcp_cmd() -> i32 {
+    use std::io::BufRead;
+
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let msg: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        let id = msg.get("id").cloned();
+
+        // Notifications (no id) — acknowledge silently
+        if id.is_none() {
+            continue;
+        }
+
+        let response = match method {
+            "initialize" => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "ilo",
+                        "version": env!("CARGO_PKG_VERSION")
+                    }
+                }
+            }),
+            "tools/list" => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "check",
+                            "description": "Verify an ilo program without running it. Returns diagnostics.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "source": {"type": "string", "description": "ilo source code"}
+                                },
+                                "required": ["source"]
+                            }
+                        },
+                        {
+                            "name": "run",
+                            "description": "Run an ilo program and return its output.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "source": {"type": "string", "description": "ilo source code"},
+                                    "func": {"type": "string", "description": "function to call (default: auto-pick)"},
+                                    "args": {"type": "array", "items": {"type": "string"}, "description": "CLI arguments"}
+                                },
+                                "required": ["source"]
+                            }
+                        },
+                        {
+                            "name": "explain",
+                            "description": "Explain an ILO-XXXX error code.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {"type": "string", "description": "Error code (e.g. ILO-T004)"}
+                                },
+                                "required": ["code"]
+                            }
+                        },
+                        {
+                            "name": "constrain",
+                            "description": "Export grammar state machine for LLM constrained decoding.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"type": "string", "enum": ["states", "masks", "completions"]},
+                                    "file": {"type": "string"},
+                                    "line": {"type": "integer"},
+                                    "col": {"type": "integer"}
+                                }
+                            }
+                        },
+                        {
+                            "name": "fix",
+                            "description": "Apply structured fix plans from diagnostics to source code.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "source": {"type": "string", "description": "ilo source code"},
+                                    "write": {"type": "boolean", "description": "Return fixed source (always true for MCP)"}
+                                },
+                                "required": ["source"]
+                            }
+                        },
+                        {
+                            "name": "skill",
+                            "description": "List or get ilo skill modules.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "action": {"type": "string", "enum": ["list", "get"]},
+                                    "name": {"type": "string", "description": "skill module name (for 'get')"}
+                                },
+                                "required": ["action"]
+                            }
+                        }
+                    ]
+                }
+            }),
+            "tools/call" => {
+                let params = msg.get("params").cloned().unwrap_or_default();
+                let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let args = params.get("arguments").cloned().unwrap_or_default();
+                let result = mcp_handle_tool(tool_name, &args);
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": result
+                })
+            }
+            _ => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32601, "message": "method not found"}
+            })
+        };
+
+        println!("{}", serde_json::to_string(&response).unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".into()));
+    }
+    0
+}
+
+/// Handle a single MCP tool call. Returns the tool result as JSON-RPC content.
+fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
+    match name {
+        "check" => {
+            let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let (diags, _) = run_check_internal(source);
+            let clean = diags.is_empty();
+            let diag_json: Vec<_> = diags.iter().map(diag_to_json).collect();
+            let text = if clean {
+                format!("OK: program is valid ({} diagnostics)", diags.len())
+            } else {
+                let lines: Vec<_> = diags.iter().map(|d| {
+                    let code = d.code.unwrap_or("");
+                    let msg = &d.message;
+                    format!("{}: {}", code, msg)
+                }).collect();
+                lines.join("\n")
+            };
+            serde_json::json!({
+                "content": [{"type": "text", "text": text}],
+                "isError": !clean
+            })
+        }
+        "run" => {
+            let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let func = args.get("func").and_then(|v| v.as_str()).unwrap_or("main");
+            let cli_args: Vec<String> = args.get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            // Write source to temp file, run it
+            let path = std::env::temp_dir().join(format!("ilo-mcp-{}.@", std::process::id()));
+            if let Err(e) = std::fs::write(&path, source) {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Error writing temp file: {}", e)}],
+                    "isError": true
+                });
+            }
+
+            let mut cmd_args = vec![path.to_string_lossy().to_string()];
+            if func != "main" { cmd_args.push(func.to_string()); }
+            cmd_args.extend(cli_args);
+
+            // Use the existing run pipeline
+            let output = std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| "ilo".into()))
+                .args(&cmd_args)
+                .output();
+
+            let _ = std::fs::remove_file(&path);
+
+            match output {
+                Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    if o.status.success() {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": stdout.trim_end()}],
+                            "isError": false
+                        })
+                    } else {
+                        serde_json::json!({
+                            "content": [{"type": "text", "text": format!("Error (exit {}):\n{}", o.status.code().unwrap_or(-1), stderr.trim_end())}],
+                            "isError": true
+                        })
+                    }
+                }
+                Err(e) => serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Failed to spawn: {}", e)}],
+                    "isError": true
+                })
+            }
+        }
+        "explain" => {
+            let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            // Reuse the explain lookup
+            let text = match diagnostic::registry::lookup(code) {
+                Some(entry) => entry.long.to_string(),
+                None => format!("Unknown error code: {}. Codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.", code),
+            };
+            serde_json::json!({
+                "content": [{"type": "text", "text": text}]
+            })
+        }
+        "constrain" => {
+            let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("states");
+            // Export grammar — reuse the constrain logic
+            let result = match mode {
+                "masks" => ilo::constrain::logit_masks_json(),
+                "completions" => {
+                    let file = args.get("file").and_then(|v| v.as_str());
+                    let line = args.get("line").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(1);
+                    let col = args.get("col").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(1);
+                    if let Some(f) = file {
+                        if let Ok(source) = std::fs::read_to_string(f) {
+                            ilo::constrain::completions_at_cursor(&source, line, col)
+                        } else {
+                            serde_json::json!({"error": "cannot read file"})
+                        }
+                    } else {
+                        serde_json::json!({"error": "file required for completions mode"})
+                    }
+                },
+                _ => ilo::constrain::state_machine_json(),
+            };
+            let text = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
+            serde_json::json!({
+                "content": [{"type": "text", "text": text}]
+            })
+        }
+        "fix" => {
+            let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            // Write to temp file, run fix_cmd, read result
+            let path = std::env::temp_dir().join(format!("ilo-mcp-fix-.{}", std::process::id()));
+            if let Err(e) = std::fs::write(&path, source) {
+                return serde_json::json!({
+                    "content": [{"type": "text", "text": format!("Error: {}", e)}],
+                    "isError": true
+                });
+            }
+
+            let (diags_before, _) = run_check_internal(source);
+            let fixable: Vec<_> = diags_before.iter().filter(|d| d.fix_plan.is_some()).collect();
+            let fixes_applied = fixable.len();
+
+            // Apply fixes to the temp file content
+            let mut modified = source.to_string();
+            for d in &diags_before {
+                if let Some(ref plan) = d.fix_plan {
+                    for edit in &plan.edits {
+                        modified = modified.replace(&edit.before, &edit.after);
+                    }
+                }
+            }
+            let (_diags_after, clean_after) = run_check_internal(&modified);
+
+            let _ = std::fs::remove_file(&path);
+
+            let remaining = if clean_after { 0 } else { 1 };
+            let text = format!("Fixes applied: {}, Remaining: {}", fixes_applied, remaining);
+            serde_json::json!({
+                "content": [{"type": "text", "text": format!("{}\n\nFixed source:\n{}", text, modified)}]
+            })
+        }
+        "skill" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+            let name = args.get("name").and_then(|v| v.as_str());
+            match action {
+                "list" => {
+                    let items: Vec<_> = SKILLS.iter().map(|s| {
+                        format!("- {}: {}", s.name, &s.description[..s.description.len().min(80)])
+                    }).collect();
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": items.join("\n")}]
+                    })
+                }
+                "get" => {
+                    if let Some(n) = name {
+                        if let Some(skill) = SKILLS.iter().find(|s| s.name == n) {
+                            return serde_json::json!({
+                                "content": [{"type": "text", "text": skill.content}]
+                            });
+                        }
+                    }
+                    serde_json::json!({
+                        "content": [{"type": "text", "text": "Skill not found. Use action='list' to see available skills."}],
+                        "isError": true
+                    })
+                }
+                _ => serde_json::json!({
+                    "content": [{"type": "text", "text": "Unknown action. Use 'list' or 'get'."}],
+                    "isError": true
+                })
+            }
+        }
+        _ => serde_json::json!({
+            "content": [{"type": "text", "text": format!("Unknown tool: {}", name)}],
+            "isError": true
+        })
+    }
+}
+
 fn serv_cmd(args_slice: &[String]) {
     let mut mcp_path: Option<String> = None;
     let mut http_path: Option<String> = None;
@@ -4155,6 +4489,8 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         Some(cli::Cmd::Trace(t)) => cli::trace::run(t),
         Some(cli::Cmd::Constrain(c)) => constrain_cmd(c),
         Some(cli::Cmd::Fix(f)) => fix_cmd(&f.source, f.write, cli.global.output_mode()),
+        Some(cli::Cmd::Mcp) => mcp_cmd(),
+
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
         Some(cli::Cmd::Update(u)) => std::process::exit(ilo::pkg::cmd_update(u.package.as_deref())),
