@@ -12,8 +12,8 @@ pub enum VmError {
     NoFunctionsDefined,
     #[error("undefined function: {name}")]
     UndefinedFunction { name: String },
-    #[error("division by zero")]
-    DivisionByZero,
+    #[error("division by zero: {dividend}/{divisor}")]
+    DivisionByZero { dividend: f64, divisor: f64 },
     #[error("no field '{field}' on record")]
     FieldNotFound { field: String },
     #[error("unknown opcode: {op}")]
@@ -9507,7 +9507,7 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         let dv = cv.as_number();
                         if dv == 0.0 {
-                            vm_err!(VmError::DivisionByZero);
+                            vm_err!(VmError::DivisionByZero { dividend: bv.as_number(), divisor: dv });
                         }
                         reg_set!(a, NanVal::number(bv.as_number() / dv));
                     } else {
@@ -11736,7 +11736,7 @@ impl<'a> VM<'a> {
                     let kv = unsafe { *nan_consts.get_unchecked(c) };
                     let dv = kv.as_number();
                     if dv == 0.0 {
-                        vm_err!(VmError::DivisionByZero);
+                        vm_err!(VmError::DivisionByZero { dividend: reg!(b).as_number(), divisor: dv });
                     }
                     let result = NanVal::number(reg!(b).as_number() / dv);
                     unsafe {
@@ -11789,7 +11789,7 @@ impl<'a> VM<'a> {
                     // SAFETY: same as OP_SUB_NN.
                     let dv = reg!(c).as_number();
                     if dv == 0.0 {
-                        vm_err!(VmError::DivisionByZero);
+                        vm_err!(VmError::DivisionByZero { dividend: reg!(b).as_number(), divisor: dv });
                     }
                     let result = NanVal::number(reg!(b).as_number() / dv);
                     unsafe {
@@ -16045,8 +16045,10 @@ pub(crate) extern "C" fn jit_mul(a: u64, b: u64, span_bits: u64) -> u64 {
 /// compile time so non-zero `OP_DIVK_N` keeps the unconditional fast path.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_raise_divzero(span_bits: u64) -> u64 {
-    jit_set_runtime_error_with_span(VmError::DivisionByZero, span_bits);
+pub(crate) extern "C" fn jit_raise_divzero(dividend_boxed: u64, span_bits: u64) -> u64 {
+    let dv = NanVal(dividend_boxed);
+    let dividend = if dv.is_number() { dv.as_number() } else { f64::NAN };
+    jit_set_runtime_error_with_span(VmError::DivisionByZero { dividend, divisor: 0.0 }, span_bits);
     TAG_NIL
 }
 
@@ -16058,7 +16060,7 @@ pub(crate) extern "C" fn jit_div(a: u64, b: u64, span_bits: u64) -> u64 {
     if av.is_number() && bv.is_number() {
         let dv = bv.as_number();
         if dv == 0.0 {
-            jit_set_runtime_error_with_span(VmError::DivisionByZero, span_bits);
+            jit_set_runtime_error_with_span(VmError::DivisionByZero { dividend: av.as_number(), divisor: dv }, span_bits);
             return TAG_NIL;
         }
         return NanVal::number(av.as_number() / dv).0;
@@ -27272,7 +27274,7 @@ mod tests {
             let r = jit_div(num(5.0), num(0.0), 0);
             assert!(is_nil(r));
             let err = jit_take_runtime_error().expect("expected pending error");
-            assert!(matches!(err.0, VmError::DivisionByZero));
+            assert!(matches!(err.0, VmError::DivisionByZero { .. }));
         }
 
         #[test]

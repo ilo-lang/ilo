@@ -483,7 +483,7 @@ impl From<&crate::vm::VmError> for Diagnostic {
         let code = match e {
             VmError::NoFunctionsDefined => "ILO-R012",
             VmError::UndefinedFunction { .. } => "ILO-R002",
-            VmError::DivisionByZero => "ILO-R003",
+            VmError::DivisionByZero { .. } => "ILO-R003",
             VmError::FieldNotFound { .. } => "ILO-R005",
             VmError::UnknownOpcode { .. } => "ILO-R013",
             VmError::Type(_) => "ILO-R004",
@@ -684,7 +684,7 @@ mod tests {
     fn from_vm_runtime_error() {
         use crate::ast::Span;
         let e = crate::vm::VmRuntimeError {
-            error: crate::vm::VmError::DivisionByZero,
+            error: crate::vm::VmError::DivisionByZero { dividend: 10.0, divisor: 0.0 },
             span: Some(Span { start: 3, end: 6 }),
             call_stack: vec!["g".to_string()],
         };
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn from_vm_error_division_by_zero() {
-        let e = crate::vm::VmError::DivisionByZero;
+        let e = crate::vm::VmError::DivisionByZero { dividend: 10.0, divisor: 0.0 };
         let d = Diagnostic::from(&e);
         assert_eq!(d.code, Some("ILO-R003"));
         assert!(d.message.contains("division by zero"));

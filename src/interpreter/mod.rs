@@ -5179,7 +5179,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {
                 if *b == 0.0 {
-                    Err(RuntimeError::new("ILO-R003", "modulo by zero".to_string()))
+                    Err(RuntimeError::new("ILO-R003", format!("mod by zero: {} % {}", a, b)))
                 } else {
                     Ok(Value::Number(a % b))
                 }
@@ -5196,7 +5196,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 if *b == 0.0 {
                     Err(RuntimeError::new(
                         "ILO-R003",
-                        "fmod: modulo by zero".to_string(),
+                        "fmod: mod by zero: {} % {}".to_string(),
                     ))
                 } else {
                     // floor-mod: always non-negative when b > 0.
@@ -11007,7 +11007,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                     None if *safe => Ok(Value::Nil),
                     None => Err(RuntimeError::new(
                         "ILO-R005",
-                        format!("no field '{}' on record", field),
+                        format!("no field '{}' on record (fields: {:?})", field, fields.keys().collect::<Vec<_>>()),
                     )),
                 },
                 // World field access: .net .read .write .run → Bool
@@ -11342,7 +11342,7 @@ fn eval_binop(op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
         (BinOp::Multiply, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
         (BinOp::Divide, Value::Number(a), Value::Number(b)) => {
             if *b == 0.0 {
-                Err(RuntimeError::new("ILO-R003", "division by zero"))
+                Err(RuntimeError::new("ILO-R003", format!("division by zero: {}/{}", a, b)))
             } else {
                 Ok(Value::Number(a / b))
             }
@@ -18100,7 +18100,7 @@ mod tests {
             vec![Value::Number(10.0), Value::Number(0.0)],
         )
         .unwrap_err();
-        assert!(err.to_string().contains("modulo by zero"), "got: {err}");
+        assert!(err.to_string().contains("mod by zero"), "got: {err}");
     }
 
     #[test]

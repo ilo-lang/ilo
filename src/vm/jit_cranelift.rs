@@ -454,7 +454,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         sub: declare_helper(module, "jit_sub", 3, 1),
         mul: declare_helper(module, "jit_mul", 3, 1),
         div: declare_helper(module, "jit_div", 3, 1),
-        raise_divzero: declare_helper(module, "jit_raise_divzero", 1, 1),
+        raise_divzero: declare_helper(module, "jit_raise_divzero", 2, 1),
         eq: declare_helper(module, "jit_eq", 2, 1),
         ne: declare_helper(module, "jit_ne", 2, 1),
         gt: declare_helper(module, "jit_gt", 3, 1),
@@ -1493,7 +1493,7 @@ fn compile_function_body(
 
                 builder.switch_to_block(zero_block);
                 let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
-                let call_inst = builder.ins().call(fref, &[span_arg]);
+                let bv_i64 = builder.ins().bitcast(I64, mf, bf); let call_inst = builder.ins().call(fref, &[bv_i64, span_arg]);
                 let nil_res = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[nil_res]);
 
@@ -1581,7 +1581,7 @@ fn compile_function_body(
                     let span_bits = pack_span_bits(chunk.spans[ip]);
                     let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
-                    let call_inst = builder.ins().call(fref, &[span_arg]);
+                    let bv_i64 = builder.ins().bitcast(I64, mf, bf); let call_inst = builder.ins().call(fref, &[bv_i64, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                     if a_idx < reg_count && reg_always_num[a_idx] {
@@ -1645,7 +1645,7 @@ fn compile_function_body(
 
                         builder.switch_to_block(zero_block);
                         let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
-                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let bv_i64 = builder.ins().bitcast(I64, mf, bf); let call_inst = builder.ins().call(fref, &[bv_i64, span_arg]);
                         let nil_res = builder.inst_results(call_inst)[0];
                         builder.ins().jump(merge_div, &[nil_res]);
 
@@ -1722,7 +1722,7 @@ fn compile_function_body(
 
                         builder.switch_to_block(zero_block_div);
                         let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
-                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let bv_i64 = builder.ins().bitcast(I64, mf, bf); let call_inst = builder.ins().call(fref, &[bv_i64, span_arg]);
                         let nil_res = builder.inst_results(call_inst)[0];
                         builder.ins().jump(merge_block, &[nil_res]);
 
