@@ -487,6 +487,60 @@ impl Parser {
 
     // ---- Top-level parsing ----
 
+    /// Does a declaration start at `pos`?
+    ///
+    /// Anything else at top level is a bare statement, which script mode
+    /// collects into a synthetic `main` rather than rejecting (ILO-439).
+    fn is_decl_start(&self, pos: usize) -> bool {
+        match self.token_at(pos) {
+            Some(Token::Type) | Some(Token::Tool) | Some(Token::Use) => true,
+            // Foreign syntax from other languages. These are not ilo statements,
+            // so letting them fall into script mode would swap a targeted
+            // "ilo uses `name=expr` for bindings" hint for a confusing
+            // body-parse error. Keep routing them to `parse_decl` so ILO-P001
+            // fires with its keyword-specific guidance.
+            Some(Token::KwIf)
+            | Some(Token::KwReturn)
+            | Some(Token::KwLet)
+            | Some(Token::KwFn)
+            | Some(Token::KwDef)
+            | Some(Token::KwVar)
+            | Some(Token::KwConst) => true,
+            // `_name` (underscore glued to an ident) — module-private fn name.
+            Some(Token::Underscore)
+                if matches!(self.token_at(pos + 1), Some(Token::Ident(_)))
+                    && pos + 1 < self.tokens.len()
+                    && self.tokens[pos].1.end == self.tokens[pos + 1].1.start =>
+            {
+                true
+            }
+            // `alias` is a plain ident handled in `parse_decl_body`.
+            Some(Token::Ident(s)) if s == "alias" => true,
+            // Foreign keywords that reach the parser as plain idents (the lexer
+            // does not reserve them). Same reasoning as the `Kw*` arm above:
+            // these are other languages' syntax, not ilo statements, and the
+            // ILO-P001 keyword hint is far more useful than parsing `let x = 5`
+            // as a call to a function named `let`.
+            Some(Token::Ident(s))
+                if matches!(
+                    s.as_str(),
+                    "let" | "var" | "const" | "return" | "if" | "function" | "def"
+                ) =>
+            {
+                true
+            }
+            Some(Token::Ident(_)) => self.is_fn_decl_start(pos),
+            // `^<N>` version pragma is only a decl at the very first token.
+            Some(Token::Caret)
+                if pos == 0
+                    && matches!(self.token_at(pos + 1), Some(Token::Number(n)) if *n > 0.0) =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn parse_program(&mut self) -> (Program, Vec<ParseError>) {
         let mut declarations = Vec::new();
         let mut errors: Vec<ParseError> = Vec::new();
@@ -497,12 +551,95 @@ impl Parser {
         // subsequent ones are noise produced while resyncing through stray
         // tokens (e.g. a leftover `}` after a body-level parse failure).
         let mut suppress_p001 = false;
+        // Bare top-level statements, gathered in source order across the whole
+        // file and wrapped in a synthetic `main>_;` once parsing finishes
+        // (ILO-439 script mode). Kept separate from `declarations` so program
+        // mode's ordering and error handling are untouched when a file has
+        // none, which is the compatibility guarantee that matters.
+        let mut script_stmts: Vec<Spanned<Stmt>> = Vec::new();
+        let mut script_span: Option<Span> = None;
 
         while !self.at_end() {
             if errors.len() >= MAX_ERRORS {
                 break;
             }
             let before_pos = self.pos;
+
+            // Not a declaration, so it's a statement. `parse_body_with(true)`
+            // stops at the next declaration boundary, which is what lets a file
+            // interleave `tri n:n>n;...` with a trailing `prnt tri 10` — the
+            // shape models reach for when asked for a compact program.
+            // If an explicit `main` has already been parsed, a stray non-decl
+            // token is far more likely to be a truncated body than a deliberate
+            // script statement — `main>n;dth=*/dt 1 6 s1;prnt dth` leaves `s1`
+            // orphaned exactly this way. Hand it to `parse_decl`, whose
+            // diagnostics for these shapes (the prefix-binop "one too few
+            // operands" hint, for one) are far more specific than anything
+            // script mode could say.
+            let main_already_declared = declarations
+                .iter()
+                .any(|d| matches!(d, Decl::Function { name, .. } if name == "main"));
+
+            // A file that *starts* with statements is unambiguously a script,
+            // so anything goes there. Statements appearing *after* a
+            // declaration are ambiguous: they may be a deliberate script line
+            // (`prnt tri 10`), or wreckage left when a body parse truncated
+            // (`0 -1.5` spilling a glued negative literal into decl position).
+            // `decl_boundary` records where unindented newlines sat before they
+            // were filtered out, which separates the two precisely: a real
+            // script line starts a new top-level line, whereas wreckage is
+            // glued to the declaration it fell out of (`f>n;1e`). Wreckage
+            // falls through to `parse_decl`, whose tailored diagnostics for
+            // those shapes are worth far more than a silently-accepted
+            // statement.
+            let stmt_ok_here = declarations.is_empty()
+                || self
+                    .decl_boundary
+                    .get(self.pos)
+                    .is_some_and(Option::is_some);
+
+            if !self.is_decl_start(self.pos) && !main_already_declared && stmt_ok_here {
+                let start = self.peek_span();
+                match self.parse_body_with(true) {
+                    Ok(stmts) => {
+                        if stmts.is_empty() {
+                            // Consumed nothing and produced nothing — the token
+                            // can't start a statement either (a stray `}`, say).
+                            // Hand it to `parse_decl` so the normal
+                            // "expected declaration" diagnostic fires rather
+                            // than silently skipping the token.
+                            match self.parse_decl() {
+                                Ok(decl) => declarations.push(decl),
+                                Err(e) => {
+                                    let err_span = e.span;
+                                    errors.push(e);
+                                    let end_span = self.sync_to_decl_boundary();
+                                    declarations.push(Decl::Error {
+                                        span: err_span.merge(end_span),
+                                    });
+                                }
+                            }
+                            if self.pos == before_pos {
+                                self.advance();
+                            }
+                            continue;
+                        }
+                        script_stmts.extend(stmts);
+                        let merged = start.merge(self.prev_span());
+                        script_span = Some(script_span.map_or(merged, |s: Span| s.merge(merged)));
+                    }
+                    Err(e) => {
+                        errors.push(e);
+                        let end_span = self.sync_to_decl_boundary();
+                        let _ = end_span;
+                        if self.pos == before_pos {
+                            self.advance();
+                        }
+                    }
+                }
+                continue;
+            }
+
             match self.parse_decl() {
                 Ok(decl) => {
                     declarations.push(decl);
@@ -527,6 +664,37 @@ impl Parser {
                         self.advance();
                     }
                 }
+            }
+        }
+
+        // Wrap any bare top-level statements in a synthetic `main>_;`
+        // (ILO-439). A file may carry declarations and trailing statements
+        // together — `tri n:n>n;...` followed by `prnt tri 10` — because that
+        // is the shape a model writes when asked for a compact program, and
+        // rejecting it cost retries on every task in the ILO-364 benchmark.
+        if !script_stmts.is_empty() {
+            let has_explicit_main = declarations
+                .iter()
+                .any(|d| matches!(d, Decl::Function { name, .. } if name == "main"));
+            if has_explicit_main {
+                // Two entry points, no way to order them. Refuse rather than
+                // silently picking one.
+                errors.push(self.error_hint(
+                    "ILO-P104",
+                    "file has both an explicit `main` and bare top-level statements".into(),
+                    "move the top-level statements into `main`, or remove the explicit `main` and let the statements become it.".into(),
+                ));
+            } else {
+                let span = script_span.unwrap_or_else(|| self.prev_span());
+                declarations.push(Decl::Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Any,
+                    effect_set: None,
+                    body: script_stmts,
+                    span,
+                });
             }
         }
 
@@ -568,6 +736,26 @@ impl Parser {
             Some(Token::Greater) => true,
             // name param:type ... — has params
             Some(Token::Ident(_)) => matches!(self.token_at(pos + 2), Some(Token::Colon)),
+            // name kw:type — a reserved keyword used as a parameter name. This
+            // is a malformed decl, not a statement, so keep it in program mode:
+            // `parse_fn_decl` emits a targeted ILO-P011 naming the keyword,
+            // which script mode would replace with a confusing body-parse error.
+            Some(
+                Token::KwFn
+                | Token::KwDef
+                | Token::KwLet
+                | Token::KwVar
+                | Token::KwConst
+                | Token::KwReturn
+                | Token::KwIf,
+            ) => matches!(self.token_at(pos + 2), Some(Token::Colon)),
+            // name: ... — a `:>`-shaped signature typo. Also a malformed decl
+            // rather than a statement; `parse_fn_decl` emits the signature hint.
+            Some(Token::Colon) => true,
+            // name-> ... — an arrow borrowed from another language where ilo
+            // uses a bare `>`. Malformed decl, not a statement: keep it in
+            // program mode so ILO-P003's arrow hint fires.
+            Some(Token::Minus) => matches!(self.token_at(pos + 2), Some(Token::Greater)),
             // name<a:bound> ... — generic type-parameter block
             // Recognise `name <` when `<` is followed by a single-char lowercase
             // ident (the type variable) so we don't misfire on `x < y` in expression
@@ -7159,6 +7347,22 @@ fn is_guard_eligible_condition(expr: &Expr) -> bool {
 /// for declarations that failed to parse. Check `errors.is_empty()` before using
 /// the program for execution — error nodes are skipped by the verifier but not
 /// by the backends.
+/// Would this token stream start in script mode — i.e. is its first construct a
+/// bare statement rather than a declaration (ILO-439)?
+///
+/// Callers that need to distinguish "the user defined something" from "the user
+/// wrote an expression" must ask this *before* parsing, because script mode
+/// wraps statements in a synthesised `main`, which is indistinguishable from a
+/// hand-written `main` in the resulting AST. The REPL uses it so `+1 2` still
+/// evaluates to `3` instead of reporting `defined: main() -> _`.
+pub fn is_script_mode_input(tokens: &[(Token, Span)]) -> bool {
+    if tokens.is_empty() {
+        return false;
+    }
+    let parser = Parser::new(tokens.to_vec());
+    !parser.is_decl_start(0)
+}
+
 pub fn parse(tokens: Vec<(Token, Span)>) -> (Program, Vec<ParseError>) {
     parse_with_max_depth(tokens, effective_max_ast_depth())
 }
@@ -8214,11 +8418,17 @@ mod tests {
     /// `^` followed by a non-numeric token at position 0 must still error —
     /// it is not a version pragma and should not silently produce garbage.
     #[test]
-    fn caret_at_file_start_non_version_is_error() {
-        let (_, errs) = parse_str_errors("^\"not a version\"");
+    fn caret_at_file_start_non_version_enters_script_mode() {
+        // ILO-439: `^` not followed by a version number is not a pragma, so it
+        // is a bare expression, and a file of bare expressions is a script.
+        // Previously this asserted a parse error, back when top-level
+        // statements were illegal.
+        let (prog, errs) = parse_str_errors("^\"not a version\"");
+        assert!(errs.is_empty(), "unexpected parse errors: {errs:?}");
+        assert_eq!(prog.declarations.len(), 1);
         assert!(
-            !errs.is_empty(),
-            "expected parse error for non-numeric pragma"
+            matches!(&prog.declarations[0], Decl::Function { name, .. } if name == "main"),
+            "script mode should synthesise `main`"
         );
     }
 
@@ -8524,8 +8734,16 @@ mod tests {
             .collect();
         let (_prog, errors) = parse(token_spans);
         let err = errors.into_iter().next().expect("expected parse error");
+        // ILO-439 known limitation: statements followed by a declaration.
+        // `42 x:n>n;x` still errors, but the message is now the body parser's
+        // rather than "expected declaration", because statement parsing
+        // consumes `42 x` as a call before reaching the `:` that would have
+        // marked `x` as a declaration. Decl-then-statements (the shape models
+        // actually write) is unaffected — statements after a declaration are
+        // collected into the synthetic `main`. See
+        // `mixed_statements_then_decl_is_a_known_limitation`.
         assert!(
-            err.message.contains("expected declaration"),
+            err.message.contains("expected declaration") || err.message.contains("expected `>`"),
             "got: {}",
             err.message
         );
@@ -8696,7 +8914,7 @@ mod tests {
         // than a generic EOF message with `Span::UNKNOWN`. Either shape is
         // fine for the persona — the assertion just needs to confirm a
         // real parse error fired, not pin the exact wording.
-        let (_, errors) = parse_str_errors("f");
+        let (_, errors) = parse_str_errors("f x:");
         assert!(!errors.is_empty(), "expected parse error");
         assert!(
             errors.iter().any(|e| e.message.contains("EOF")
@@ -8821,10 +9039,18 @@ mod tests {
     }
 
     #[test]
-    fn declaration_starts_with_prefix_op_gets_hint() {
-        // A declaration starting with `+` — triggers hint about prefix operators
-        let (_, errors) = parse_str_errors("+x 1");
-        assert!(!errors.is_empty(), "expected parse error");
+    fn declaration_starts_with_prefix_op_enters_script_mode() {
+        // ILO-439: `+x 1` is a prefix-op expression, which is a legal statement,
+        // so a file containing only it is a script. Previously asserted a parse
+        // error. The prefix-operator P001 hint still fires where the construct
+        // really is in declaration position (see
+        // `hint_p001_operator_in_decl_position_direct`).
+        let (prog, errors) = parse_str_errors("+x 1");
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        assert!(
+            matches!(&prog.declarations[0], Decl::Function { name, .. } if name == "main"),
+            "script mode should synthesise `main`"
+        );
     }
 
     #[test]
@@ -9076,17 +9302,23 @@ mod tests {
     }
 
     #[test]
-    fn hint_p001_operator_at_decl_level() {
-        // '+' at declaration level — operator hint
+    fn operator_at_file_start_enters_script_mode() {
+        // ILO-439: a leading prefix operator is an expression, so the file is a
+        // script. Previously this asserted ILO-P001 with the "prefix operators
+        // can't start a declaration" hint; that hint arm is now unreachable
+        // from the top of a file, because `is_decl_start` routes operators to
+        // statement parsing before `parse_decl` ever sees them.
         let tokens = vec![
             (Token::Plus, Span::UNKNOWN),
             (Token::Ident("x".into()), Span::UNKNOWN),
+            (Token::Number(1.0), Span::UNKNOWN),
         ];
-        let (_, errors) = parse(tokens);
-        assert!(!errors.is_empty());
-        let e = errors.iter().find(|e| e.code == "ILO-P001").unwrap();
-        let hint = e.hint.as_ref().unwrap();
-        assert!(hint.contains("prefix operators"));
+        let (prog, errors) = parse(tokens);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        assert!(
+            matches!(&prog.declarations[0], Decl::Function { name, .. } if name == "main"),
+            "script mode should synthesise `main`"
+        );
     }
 
     #[test]
@@ -9262,14 +9494,18 @@ mod tests {
     }
 
     #[test]
-    fn no_hint_p001_unrecognized_token() {
-        // A token that has no specific hint
+    fn bare_number_at_file_start_enters_script_mode() {
+        // ILO-439: a bare literal is a valid statement, so a file containing
+        // only `42` is a script whose `main` returns 42. Previously this
+        // asserted ILO-P001 with no hint, back when top-level statements were
+        // illegal.
         let tokens = vec![(Token::Number(42.0), Span::UNKNOWN)];
-        let (_, errors) = parse(tokens);
-        assert!(!errors.is_empty());
-        // Should get ILO-P001 but no hint for a bare number
-        let e = errors.iter().find(|e| e.code == "ILO-P001").unwrap();
-        assert!(e.hint.is_none());
+        let (prog, errors) = parse(tokens);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        assert!(
+            matches!(&prog.declarations[0], Decl::Function { name, .. } if name == "main"),
+            "script mode should synthesise `main`"
+        );
     }
 
     #[test]

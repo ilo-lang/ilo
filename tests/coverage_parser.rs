@@ -203,13 +203,19 @@ fn ident_keyword_if_hint() {
 }
 
 #[test]
-fn decl_starts_with_operator_plus() {
-    fail_code("+1 2", "ILO-P001");
+fn operator_at_file_start_is_script_not_error() {
+    // ILO-439: `+1 2` is a prefix-op expression, which is a legal statement, so
+    // a file containing only it is a script. Previously asserted ILO-P001, back
+    // when top-level statements were illegal.
+    let (_n, errs) = try_parse("+1 2");
+    assert!(errs.is_empty(), "expected script mode, got: {errs:?}");
 }
 
 #[test]
-fn decl_starts_with_operator_minus() {
-    fail_code("-1 2", "ILO-P001");
+fn negative_literal_at_file_start_is_script_not_error() {
+    // As above. `-1 2` is `(-1) 2` in script position, not a failed declaration.
+    let (_n, errs) = try_parse("-1 2");
+    assert!(errs.is_empty(), "expected script mode, got: {errs:?}");
 }
 
 #[test]
