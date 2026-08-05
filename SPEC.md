@@ -975,7 +975,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rgxall1 pat s` | flat first-capture-group convenience: 0 groups → `L t` of whole matches; 1 group → `L t` of capture-1 strings; 2+ groups errors | `L t` |
 | `rgxall-multi pats s` | multi-pattern flat-match: apply each pattern in `pats:L t` to `s`, concat all hits in pattern order; per-pattern semantics follow `rgxall1` (0 groups → whole matches; 1 group → capture-1 strings; 2+ groups errors) | `L t` |
 | `rgxsub pat repl s` | regex substitute all matches; `$1`, `$2`, ... reference capture groups | `t` |
-| `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
+| `dtfmt epoch fmt` | format Unix epoch (SECONDS) as text (strftime, UTC). Convert ms with /`now-ms` 1000 | `R t t` |
 | `dtparse s fmt` | parse text to Unix epoch (strftime, UTC) | `R n t` |
 | `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
 | `dur-parse s` | parse human duration string ("3h 30m", "1 week 2 days", "1.5 hours", "90s") into seconds. Lenient: accepts abbreviations `s`/`m`/`h`/`d`/`w`, full names (singular + plural), decimal quantities, mixed sequences. Err if empty or no unit found | `R n t` |

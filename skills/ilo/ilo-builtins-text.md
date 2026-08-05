@@ -60,7 +60,7 @@ Out of scope: `{:e}` / `{:g}` (scientific / sig-figs), `{:06d}` (zero-pad), `{:+
 
 ## Date parsing
 
-`dtparse s fmt` parse date string to timestamp; `dtfmt ts fmt` format timestamp to string.
+`dtparse s fmt` parse date string to timestamp; `dtfmt ts fmt` format timestamp to string. dtfmt takes epoch SECONDS (from `now`). If using `now-ms`, convert first: `/now-ms 1000`.
 
 `dtparse-rel s now` parse a relative-date phrase to a Unix epoch anchored at `now`. Supported phrases:
 - `today`, `yesterday`, `tomorrow`
