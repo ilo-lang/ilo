@@ -7561,6 +7561,107 @@ pub fn infer_effects(program: &Program) -> Vec<FnEffects> {
 
 /// Run static verification on a parsed program.
 /// Returns errors and warnings separately.
+/// Does evaluating `e` *unconditionally* call `fname`?
+///
+/// "Unconditionally" is the load-bearing word: args of any call, operands of
+/// ops, list/record elements, and the *condition/subject/value* side of
+/// ternaries, matches, and nil-coalesces always evaluate, so a self-call
+/// there is guaranteed to run. The branch sides of those constructs, and
+/// closure bodies (which may never be invoked), are excluded — a self-call
+/// behind any of them is ordinary recursion, not a proven loop.
+fn expr_unconditionally_calls(e: &Expr, fname: &str) -> bool {
+    match e {
+        Expr::Call { function, args, .. } => {
+            function == fname || args.iter().any(|a| expr_unconditionally_calls(a, fname))
+        }
+        Expr::BinOp { left, right, .. } => {
+            expr_unconditionally_calls(left, fname) || expr_unconditionally_calls(right, fname)
+        }
+        Expr::UnaryOp { operand, .. } => expr_unconditionally_calls(operand, fname),
+        Expr::Ok(inner) | Expr::Err(inner) | Expr::Todo(inner) => {
+            expr_unconditionally_calls(inner, fname)
+        }
+        Expr::Field { object, .. } | Expr::Index { object, .. } => {
+            expr_unconditionally_calls(object, fname)
+        }
+        Expr::List(items) => items.iter().any(|i| expr_unconditionally_calls(i, fname)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => fields
+            .iter()
+            .any(|(_, v)| expr_unconditionally_calls(v, fname)),
+        Expr::With { object, updates } => {
+            expr_unconditionally_calls(object, fname)
+                || updates
+                    .iter()
+                    .any(|(_, v)| expr_unconditionally_calls(v, fname))
+        }
+        // Only the always-evaluated side of each conditional construct.
+        Expr::Ternary { condition, .. } => expr_unconditionally_calls(condition, fname),
+        Expr::Match { subject, .. } => subject
+            .as_deref()
+            .is_some_and(|s| expr_unconditionally_calls(s, fname)),
+        Expr::NilCoalesce { value, .. } => expr_unconditionally_calls(value, fname),
+        // A closure that references the function may never be invoked.
+        Expr::MakeClosure { .. } => false,
+        _ => false,
+    }
+}
+
+/// ILO-V500: a straight-line function body that calls its own function can
+/// never terminate — there is no branch, guard, loop exit, or early return
+/// that could ever skip the self-call.
+///
+/// Motivated by ILO-439 script mode: `tri n:n>n;...;prnt tri 10` glues the
+/// trailing call into `tri`'s body, and tail-call trampolining turns the
+/// guaranteed infinite recursion into a silent spin (a 20s timeout per
+/// attempt in the ILO-364 closed-loop benchmark) instead of a stack
+/// overflow. Verify-time rejection converts that spin into an instant,
+/// actionable diagnostic.
+///
+/// Deliberately conservative: the check only fires when the body contains
+/// nothing but bindings, destructures, and expression statements. Any guard,
+/// match, loop, `ret`, `brk`, `cnt`, or `defer` disables it — those bodies
+/// may recurse legitimately, and this pass makes no attempt to reason about
+/// them.
+fn check_unconditional_recursion(program: &Program, errors: &mut Vec<VerifyError>) {
+    for decl in &program.declarations {
+        let Decl::Function { name, body, .. } = decl else {
+            continue;
+        };
+        let straight_line = body.iter().all(|s| {
+            matches!(
+                s.node,
+                Stmt::Let { .. } | Stmt::Destructure { .. } | Stmt::Expr(_)
+            )
+        });
+        if !straight_line {
+            continue;
+        }
+        for s in body {
+            let expr = match &s.node {
+                Stmt::Let { value, .. } => value,
+                Stmt::Destructure { value, .. } => value,
+                Stmt::Expr(e) => e,
+                _ => unreachable!("straight_line filter"),
+            };
+            if expr_unconditionally_calls(expr, name) {
+                errors.push(VerifyError {
+                    code: "ILO-V500",
+                    function: name.clone(),
+                    message: format!(
+                        "`{name}` unconditionally calls itself — it can never terminate"
+                    ),
+                    hint: Some(format!(
+                        "every call to `{name}` reaches this self-call again, so the recursion has no base case. Add a guard (e.g. `=n 0 0`) before the recursive call — or, if `{name} ...` was meant as a top-level statement, put it on its own line so script mode wraps it in `main` instead of gluing it into `{name}`'s body."
+                    )),
+                    span: Some(s.span),
+                    is_warning: false,
+                });
+                break;
+            }
+        }
+    }
+}
+
 pub fn verify(program: &Program) -> VerifyResult {
     verify_with_effects(program, false)
 }
@@ -7576,6 +7677,9 @@ pub fn verify_with_effects(program: &Program, show_effects: bool) -> VerifyResul
 
     // Phase 2: verify function bodies (includes effect-set mismatch warnings)
     ctx.verify_bodies_with_effects(program);
+
+    // ILO-V500: provably-infinite recursion in straight-line bodies.
+    check_unconditional_recursion(program, &mut ctx.errors);
 
     // ILO-W003 (ILO-463): surface parser advisories for `?h <ref> a b`
     // keyword-form uses where the condition is already a bare bool ref.
@@ -11238,8 +11342,10 @@ mod tests {
 
     #[test]
     fn compat_text_to_sum_param() {
-        // Passing text to Sum param → compatible(Text, Sum) (line 186)
-        assert!(parse_and_verify(r#"f x:S a b>n;0   g y:S a b>n;g "hello""#).is_ok());
+        // Passing text to Sum param → compatible(Text, Sum) (line 186).
+        // (`g` calls `f`, not itself — the original fixture's self-call was
+        // genuinely infinite recursion and now trips ILO-V500.)
+        assert!(parse_and_verify(r#"f x:S a b>n;0   g y:S a b>n;f "hello""#).is_ok());
     }
 
     #[test]
@@ -13011,6 +13117,88 @@ mod tests {
             0,
             "outer var rebind inside inner loop should not warn, got {:?}",
             result.warnings
+        );
+    }
+
+    // ── ILO-V500: unconditional recursion ────────────────────────────────
+
+    #[test]
+    fn v500_trailing_self_call_glued_into_body() {
+        // The ILO-439 shape: `prnt tri 10` on the same line joins tri's body,
+        // so tri unconditionally calls itself. Used to spin for the full
+        // runtime timeout; must now be a verify error.
+        let errs = parse_and_verify("tri n:n>n;r=*n +n 1;/r 2;prnt tri 10").unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-V500"),
+            "expected ILO-V500, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn v500_direct_tail_self_call() {
+        let errs = parse_and_verify("f n:n>n;f n").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-V500"), "got {errs:?}");
+    }
+
+    #[test]
+    fn v500_self_call_in_binding() {
+        // The self-call needn't be the tail — a binding evaluates it too.
+        let errs = parse_and_verify("f n:n>n;r=f n;r").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-V500"), "got {errs:?}");
+    }
+
+    #[test]
+    fn v500_not_fired_with_guard_base_case() {
+        // Canonical tail recursion from the skill docs — guard disables the check.
+        let result = parse_and_verify_full("cd n:n>n;=n 0 0;cd -n 1");
+        assert!(
+            !result.errors.iter().any(|e| e.code == "ILO-V500"),
+            "guarded recursion must not fire V500: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn v500_not_fired_with_match_recursion() {
+        let result = parse_and_verify_full("f n:n>n;?n{0:0;_:f -n 1}");
+        assert!(
+            !result.errors.iter().any(|e| e.code == "ILO-V500"),
+            "match-arm recursion must not fire V500: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn v500_not_fired_in_ternary_branch() {
+        // Self-call in a ternary *branch* is conditional; only the condition
+        // side counts as unconditional.
+        let result = parse_and_verify_full("f n:n>n;?h =n 0 0 f -n 1");
+        assert!(
+            !result.errors.iter().any(|e| e.code == "ILO-V500"),
+            "ternary-branch recursion must not fire V500: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn v500_not_fired_for_fn_ref_arg() {
+        // Passing the function by name to a HOF is a reference, not an
+        // unconditional call.
+        let result = parse_and_verify_full("f xs:L n>L n;map f xs");
+        assert!(
+            !result.errors.iter().any(|e| e.code == "ILO-V500"),
+            "fn-ref HOF arg must not fire V500: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn v500_not_fired_plain_nonrecursive() {
+        let result = parse_and_verify_full("tri n:n>n;r=*n +n 1;/r 2");
+        assert!(
+            !result.errors.iter().any(|e| e.code == "ILO-V500"),
+            "non-recursive body must not fire V500: {:?}",
+            result.errors
         );
     }
 }
