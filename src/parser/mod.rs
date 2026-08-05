@@ -56,6 +56,13 @@ pub struct ParseContext {
     /// range-bound expression in a foreach/for-range statement so that
     /// `@x xs{body}` is never mis-parsed as `@x (xs {lambda})`.
     pub no_brace_lambda_operand: bool,
+    /// When true, an unindented newline (top-level decl boundary) terminates
+    /// any call-arg / operand chain. Set while collecting script-mode
+    /// statements (ILO-439): newlines are filtered from the token stream, so
+    /// without this, `r=quad 7` followed by `prnt r` on its own line parses as
+    /// `r = quad(7, prnt, r)` — the call greedily eats the next top-level
+    /// line as arguments.
+    pub script_stmt_boundary: bool,
 }
 
 pub struct Parser {
@@ -600,7 +607,10 @@ impl Parser {
 
             if !self.is_decl_start(self.pos) && !main_already_declared && stmt_ok_here {
                 let start = self.peek_span();
-                match self.parse_body_with(true) {
+                let saved = self.push_ctx(|c| c.script_stmt_boundary = true);
+                let parsed = self.parse_body_with(true);
+                self.pop_ctx(saved);
+                match parsed {
                     Ok(stmts) => {
                         if stmts.is_empty() {
                             // Consumed nothing and produced nothing — the token
@@ -5542,6 +5552,12 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         {
             return false;
         }
+        // In script-mode statement collection every top-level line is its own
+        // statement, so any decl boundary ends the operand chain — not just
+        // the `ident =` shape above (ILO-439).
+        if self.ctx.script_stmt_boundary && self.boundary_at_cursor().is_some() {
+            return false;
+        }
         self.can_start_atom()
             || matches!(
                 self.peek(),
@@ -9491,6 +9507,45 @@ mod tests {
             errors
         );
         assert!(!program.declarations.is_empty());
+    }
+
+    #[test]
+    fn script_lines_do_not_glue_into_call_args() {
+        // Regression: newlines are filtered before expression parsing, so
+        // without the script_stmt_boundary ctx flag `r=quad 7` followed by
+        // `prnt r` on its own line parsed as `r = quad(7, prnt, r)` — an
+        // arity error on a program that is visibly correct.
+        let src = "double x:n>n;*x 2\nquad x:n>n;a=double x;double a\nr=quad 7\nprnt r";
+        let (prog, errors) = parse_str_errors(src);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        let main = prog
+            .declarations
+            .iter()
+            .find_map(|d| match d {
+                Decl::Function { name, body, .. } if name == "main" => Some(body),
+                _ => None,
+            })
+            .expect("script mode should synthesise main");
+        assert_eq!(
+            main.len(),
+            2,
+            "expected two separate statements, got {main:?}"
+        );
+    }
+
+    #[test]
+    fn multi_line_script_statements_stay_separate() {
+        let (prog, errors) = parse_str_errors("a=+1 2\nb=*a 3\nprnt b");
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        let main = prog
+            .declarations
+            .iter()
+            .find_map(|d| match d {
+                Decl::Function { name, body, .. } if name == "main" => Some(body),
+                _ => None,
+            })
+            .expect("script mode should synthesise main");
+        assert_eq!(main.len(), 3, "expected three statements, got {main:?}");
     }
 
     #[test]
