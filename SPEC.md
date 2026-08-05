@@ -364,6 +364,10 @@ The following identifiers are reserved and cannot be used as names: `if`, `retur
 -- ERROR: `return` is a reserved word. Last expression is the return value.
 -- ERROR: `let` is a reserved word. Use: name = expr
 -- ERROR: `fn`/`def` is a reserved word. Use: name param:type > rettype; body
+-- ERROR: `const` is a reserved word. For constants, prefer inline literals > local bindings > zero-arg fns.
+    -- inline (best for small): just write `42` or `"hello"` where needed
+    -- local binding (for reuse within a fn): `pi = 3.14159` at the top of the body
+    -- zero-arg fn (for cross-function reuse): `pi>n;3.14159` called as `pi()`
 ```
 
 These checks fire at parse time across every context the keyword can appear in: top-level declaration head (`fn>n;...`), binding LHS (`fn=5`), and **parameter position** (`g fn:n>n;fn` rejects with ILO-P011 against the param name, not a cryptic ILO-P003 against the missing `>`).
