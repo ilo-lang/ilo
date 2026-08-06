@@ -1094,6 +1094,31 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
                         ),
                     });
                 }
+                // Post-dot underscore merge: when a `_` follows a post-dot
+                // identifier (e.g. `d.overlap_with_ilo`), logos stops at `_`
+                // because the ident regex doesn't allow underscores. Merge the
+                // full underscore-containing run into the preceding Ident.
+                if bad == "_" && prev_ident_is_post_dot(&tokens) {
+                    // Scan forward to consume the full field name including underscores
+                    let mut scan_end = span.start;
+                    let bytes = normalized.as_bytes();
+                    while scan_end < bytes.len()
+                        && (bytes[scan_end].is_ascii_alphanumeric() || bytes[scan_end] == b'_')
+                    {
+                        scan_end += 1;
+                    }
+                    if scan_end > span.start {
+                        // Merge: replace the last Ident token with the full name
+                        let full_name = normalized[tokens.last().unwrap().1.start..scan_end].to_string();
+                        let full_span = tokens.last().unwrap().1.start..scan_end;
+                        let bump = scan_end.saturating_sub(span.end);
+                        if bump > 0 {
+                            lexer.bump(bump);
+                        }
+                        *tokens.last_mut().unwrap() = (Token::Ident(full_name), full_span);
+                        continue;
+                    }
+                }
                 // Haskell/Rust-style lambda shorthand: `\x{body}` or
                 // `\x -> body`. Reached for by personas coming from Haskell
                 // (`\x -> ...`) and Rust closure mental models. Logos rejects
@@ -1375,6 +1400,14 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
                     has_underscore = true;
                     j += 2;
                 }
+                // After a dot, keywords like `with`, `type`, `use` are field-name
+                // fragments (e.g. `d.overlap_with_ilo`, `r.user_type`).
+                // Merge them into the snake_case run.
+                Token::With | Token::Type | Token::Use | Token::Tool
+                | Token::Timeout | Token::Retry | Token::Policy => {
+                    has_underscore = true;
+                    j += 2;
+                }
                 Token::Number(n) if n.fract() == 0.0 && *n >= 0.0 => {
                     has_underscore = true;
                     j += 2;
@@ -1547,7 +1580,8 @@ fn emit_ident_at_dot(
     let bytes = normalized.as_bytes();
     let mut end = span_start;
     while end < bytes.len() {
-        if bytes[end].is_ascii_alphanumeric() {
+        // Post-dot field names allow underscores (JSON keys like overlap_with_ilo).
+        if bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' {
             end += 1;
         } else {
             break;
