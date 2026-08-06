@@ -59,7 +59,7 @@ Worked example — scale `sz` by 30% with explicit divisor:
 
 ## guards & conditionals
 
-Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body}` runs body NO early return; `cond{a}{b}` value no early return. Ternary: `?h cond a b` (3-arg: bool cond, true-value, false-value — requires spaces between ALL operands: `?h >=x 90 "A" "B"`). `?h cond{...}` illegal. `!` negates all. Multi-way: nest ternaries with spaces: `?h >=x 90 "A" ?h >=x 80 "B" "C"`. Bare comparison IS a guard; bind to return a bool: `r=>a b;r`.
+Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body}` runs body NO early return; `cond{a}{b}` value no early return. Ternary: `?h cond a b` (3-arg: bool cond, true-value, false-value — requires spaces between ALL operands: `?h >=x 90 "A" "B"`). `?h cond{...}` illegal. `!` negates all. **Do NOT nest ternaries** — the 2-arg/3-arg ambiguity breaks nesting. For multi-way branches use match: `?x{90:"A";80:"B";70:"C";_:"F"}` or guard chain: `>=x 90 "A";>=x 80 "B";>=x 70 "C";"F"`. Bare comparison IS a guard; bind to return a bool: `r=>a b;r`.
 
 ## match
 
