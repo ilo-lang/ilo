@@ -995,7 +995,7 @@ Called like functions, compiled to dedicated opcodes.
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
 | `spawn fn args...` | run `fn args...` on a background OS thread, fire-and-forget; returns nil immediately. Errors and panics inside the thread go to stderr; the parent is unaffected. Caps are inherited from the parent. No join, no channels, no supervision, no cancellation in v1, see ILO-477. Tree-walker only at runtime; VM and Cranelift inherit via the tree bridge | `_` |
 | `tz-offset tz epoch` | UTC offset in seconds for the named IANA timezone at the given Unix epoch. DST-aware (chrono-tz). Positive = east of UTC. `Err` on unknown timezone name | `R n t` |
-| `rou n` | round to nearest integer (banker's rounding) | `n` |
+| `rou n` | round to nearest integer (banker's rounding). `rou n digits` rounds to N decimal places. | `n` |
 | `rndn mu sigma` | one sample from normal distribution `N(mu, sigma)` (Box-Muller) | `n` |
 | `pow b e` | `b` raised to power `e` | `n` |
 | `sqrt n` | square root | `n` |
