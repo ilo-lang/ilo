@@ -17,6 +17,10 @@ Single-line: `f x:n>n;+x 1`. Brace-block: `f x:n>n { s=+x 1; *s s }` (same seman
 
 `n` num, `t` text, `b` bool, `_` nil/any. `L n` list, `M t n` map, `R n t` result, `O n` optional, `S a b c` sum (closed, runtime `t`), `F n t` fn-type. Named: `order`. Type vars: any letter except `n t b`. `?? x d` nil-coalesce; unwraps `O T` only. For `R T E` use `default-on-err r d`.
 
+## spacing (CRITICAL)
+
+**Every token needs whitespace separation.** ilo has no implicit concatenation or adjacency. A number immediately followed by a string (`90"A"`) is a parse error; use `90 "A"`. A closing paren followed by a number (`)2`) is a parse error; use `) 2`. This is the single most common model mistake.
+
 ## operators
 
 Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a*b)+c`; outer binds inner LEFT. Atoms/nested-ops not calls; bind first: `r=fac -n 1;*n r`. No compound `<=a b`. Glued `-n` = neg literal; bare `0 -1` errs ILO-P001. **`??` precedence**: `+a ??d b`=`a + (d ?? b)`, NOT `(a??d)+b`. For `(a??d)+b` bind first (`x=a??d;+x b`) or wrap (`+(a??d) b`).
@@ -55,7 +59,7 @@ Worked example — scale `sz` by 30% with explicit divisor:
 
 ## guards & conditionals
 
-Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body}` runs body NO early return; `cond{a}{b}` value no early return. Ternary: `?h a b` (`h`:bool), `?h cond a b` (`cond`:bool expr). `?h cond{...}` illegal - drop `?h` or drop braces. `!` negates all. Bare comparison IS a guard; bind to return a bool: `r=>a b;r`.
+Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body}` runs body NO early return; `cond{a}{b}` value no early return. Ternary: `?h cond a b` (3-arg: bool cond, true-value, false-value — requires spaces between ALL operands: `?h >=x 90 "A" "B"`). `?h cond{...}` illegal. `!` negates all. Multi-way: nest ternaries with spaces: `?h >=x 90 "A" ?h >=x 80 "B" "C"`. Bare comparison IS a guard; bind to return a bool: `r=>a b;r`.
 
 ## match
 
@@ -120,7 +124,9 @@ Non-last fns end with safe expr (op, index, match, literal, parens); last fn: an
 
 `test fn-name { ok fn-name arg... expected; err fn-name arg... expected-err }`. `ok` asserts return equals expected; `err` asserts `^expected-err`. Literal args only. Runs at `ilo check` time. Failure = `ILO-T050`; missing under `--strict` = `ILO-W020`. Complements `-- run:` / `-- out:` annotation tests.
 
-## reserved names
+## reserved names (DO NOT use as bindings)
+
+**All 1-3 char lowercase identifiers are likely reserved builtins.** If you need a local variable, use 4+ chars: `total` not `tl`, `avg-v` not `av`, `count` not `ct`. Reserved: `at hd pi tl rd wr ct` (2-char) and `abs avg b64 cap cat cel chr cos del det dot env exp fft fld flr flt fmt frq get grp has hed inv len log lst lwr map max min mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou run sin slc spl srt str sum tan tau trm unq upr wra wrl zip` (3-char). Also avoid `avg` `tl` `len` `sum` `map` `cat` `str` — the model reaches for these most.
 
 Fn/binding shadowing builtin/alias fires `ILO-P011`. 2-char safe; 4+ safe except `take drop mget mset flat range`; 3-char safe.
 
