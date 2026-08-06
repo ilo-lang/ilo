@@ -159,7 +159,7 @@ impl Diagnostic {
         };
 
         let plan = match code {
-            "ILO-T004" | "ILO-T003" => derive_typo_rename(&self, source),
+            "ILO-T004" | "ILO-T003" | "ILO-T005" => derive_typo_rename(&self, source),
             "ILO-T032" => derive_fmt_prefix(&self, source),
             "ILO-L002" => derive_underscore_hyphen(&self, source),
             "ILO-T008" => derive_return_type_cast(&self, source),
@@ -196,18 +196,77 @@ fn derive_typo_rename(d: &Diagnostic, source: &str) -> Option<FixPlan> {
     }
 
     let sm = SourceMap::new(source);
-    let (line_start, _) = sm.lookup(span.start);
-    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
 
+    // ILO-501: find ALL word-boundary occurrences of `before` in the source,
+    // not just the one at the diagnostic span. Without this the fix_plan
+    // only renames one occurrence, leaving other uses of the same typo
+    // broken and causing non-converging repair loops.
+    let edits = find_all_identifier_occurrences(source, &before, &after, &sm, &d.path);
+
+    if edits.is_empty() {
+        return None;
+    }
     Some(FixPlan {
         path: d.path.clone(),
-        edits: vec![FixEdit {
+        edits,
+    })
+}
+
+/// ILO-501: Find all word-boundary occurrences of `needle` in `source` and
+/// build a FixEdit for each. This ensures `ilo fix --write` renames every
+/// use of a typo/reserved name, not just the one at the diagnostic span.
+/// Without this the repair loop is non-converging: fix one occurrence,
+/// next run reports the next, etc.
+fn find_all_identifier_occurrences(
+    source: &str,
+    needle: &str,
+    replacement: &str,
+    sm: &SourceMap,
+    _path: &Option<String>,
+) -> Vec<FixEdit> {
+    let mut edits = Vec::new();
+    let needle_bytes = needle.as_bytes();
+    let source_bytes = source.as_bytes();
+
+    // ilo identifier characters: [a-z0-9-]. A match at position `i` is a
+    // whole-identifier match if the chars before and after are NOT ident
+    // chars (or are at string boundaries).
+    let is_ident_char = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-';
+
+    let mut search_from = 0;
+    while search_from < source.len() {
+        let Some(rel) = source_bytes[search_from..]
+            .windows(needle_bytes.len())
+            .position(|w| w == needle_bytes)
+        else {
+            break;
+        };
+        let abs = search_from + rel;
+        search_from = abs + 1; // advance past this match for next iteration
+
+        let end = abs + needle_bytes.len();
+        if end > source.len() {
+            break;
+        }
+
+        // Check word boundaries.
+        let prev_ok = abs == 0 || !is_ident_char(source_bytes[abs - 1]);
+        let next_ok = end >= source.len() || !is_ident_char(source_bytes[end]);
+        if !prev_ok || !next_ok {
+            continue;
+        }
+
+        let (line_start, _) = sm.lookup(abs);
+        let (line_end, _) = sm.lookup(end.saturating_sub(1));
+        edits.push(FixEdit {
             line_start,
             line_end,
-            before,
-            after,
-        }],
-    })
+            before: needle.to_string(),
+            after: replacement.to_string(),
+        });
+    }
+
+    edits
 }
 
 /// Build a fix that prepends `prnt ` before the bare `fmt`/`fmt2` call.
@@ -350,17 +409,16 @@ fn derive_reserved_rename(d: &Diagnostic, source: &str) -> Option<FixPlan> {
     let after = format!("{before}2");
 
     let sm = SourceMap::new(source);
-    let (line_start, _) = sm.lookup(span.start);
-    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
 
+    // ILO-501: find ALL occurrences, same as derive_typo_rename.
+    let edits = find_all_identifier_occurrences(source, &before, &after, &sm, &d.path);
+
+    if edits.is_empty() {
+        return None;
+    }
     Some(FixPlan {
         path: d.path.clone(),
-        edits: vec![FixEdit {
-            line_start,
-            line_end,
-            before,
-            after,
-        }],
+        edits,
     })
 }
 
@@ -1047,5 +1105,27 @@ mod tests {
         let json_str = super::json::render(&d);
         let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(v["fix_plan"]["path"], "/tmp/test.ilo");
+    }
+}
+
+#[cfg(test)]
+mod test_ilo501 {
+    use super::*;
+
+    #[test]
+    fn fix_plan_finds_all_occurrences() {
+        // ILO-501: fix_plan should rename ALL occurrences, not just the one at the span
+        let source = "f x:n>n;a=lenh [1];lenh [2]";
+        let d = Diagnostic::error("undefined function 'lenh'")
+            .with_code("ILO-T005")
+            .with_span(Span { start: 10, end: 14 }, "")
+            .with_suggestion("did you mean 'len'?")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan should be derived for T005");
+        assert_eq!(
+            plan.edits.len(), 2,
+            "should find both occurrences of lenh, found {}", plan.edits.len()
+        );
     }
 }
