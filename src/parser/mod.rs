@@ -6735,7 +6735,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("abs", 1, &[]),
         ("flr", 1, &[]),
         ("cel", 1, &[]),
-        ("rou", 1, &[]),
+        ("rou", 2, &[]),
         ("sqrt", 1, &[]),
         ("log", 1, &[]),
         ("log10", 1, &[]),

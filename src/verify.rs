@@ -972,6 +972,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("flr", &["n"], "n"),
     ("cel", &["n"], "n"),
     ("rou", &["n"], "n"),
+    ("rou", &["n", "n"], "n"),
     ("min", &["n", "n"], "n"),
     ("min", &["list"], "n"),
     ("max", &["n", "n"], "n"),
@@ -1490,6 +1491,34 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'{name}' expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Number, errors)
+        }
+        "rou" if arg_types.len() == 2 => {
+            // rou x digits > n: round x to N decimal places.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rou' expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rou' digits expects n, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -6392,6 +6421,9 @@ impl VerifyContext {
                     } else if callee == "min" || callee == "max" {
                         // min xs (list form, returns min element) / min a b (number pair)
                         args.len() == 1 || args.len() == 2
+                    } else if callee == "rou" {
+                        // rou x (round to integer) / rou x digits (round to N decimal places)
+                        args.len() == 1 || args.len() == 2
                     } else if callee == "par-map" {
                         // par-map fn xs / par-map fn xs n
                         args.len() == 2 || args.len() == 3
@@ -6450,6 +6482,8 @@ impl VerifyContext {
                         ) {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
+                            "1 or 2".to_string()
+                        } else if callee == "rou" {
                             "1 or 2".to_string()
                         } else if callee == "run" || callee == "run2" {
                             "2 or 3".to_string()

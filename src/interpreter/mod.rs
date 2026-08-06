@@ -5395,6 +5395,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if matches!(builtin, Some(Builtin::Rou)) && args.len() == 2 {
+        let n = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rou requires a number, got {:?}", other),
+                ));
+            }
+        };
+        let digits = match &args[1] {
+            Value::Number(d) => *d as i32,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rou digits must be a non-negative integer, got {:?}", other),
+                ));
+            }
+        };
+        if digits < 0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rou digits must be non-negative, got {}", digits),
+            ));
+        }
+        let factor = 10f64.powi(digits);
+        return Ok(Value::Number((n * factor).round() / factor));
+    }
     if matches!(
         builtin,
         Some(
@@ -18152,6 +18180,17 @@ mod tests {
         assert_eq!(result, Value::Number(4.0));
         let result2 = run_str("f x:n>n;rou x", Some("f"), vec![Value::Number(3.2)]);
         assert_eq!(result2, Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_round_with_digits() {
+        // rou x digits: round to N decimal places (ILO-535)
+        let r1 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(3.14159), Value::Number(2.0)]);
+        assert_eq!(r1, Value::Number(3.14));
+        let r2 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(3.14159), Value::Number(4.0)]);
+        assert_eq!(r2, Value::Number(3.1416));
+        let r3 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(2.5), Value::Number(0.0)]);
+        assert_eq!(r3, Value::Number(3.0));
     }
 
     // ── Ternary expression (L1583-1588) ─────────────────────────────────────

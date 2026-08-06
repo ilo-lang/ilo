@@ -1,0 +1,9 @@
+-- rou with optional digits argument (ILO-535)
+-- rou x rounds to integer; rou x digits rounds to N decimal places
+-- Replaces scale/round/unscale boilerplate.
+main>_;
+prnt fmt "rou 3.7       = {}" rou 3.7;
+prnt fmt "rou 3.14159 0 = {}" rou 3.14159 0;
+prnt fmt "rou 3.14159 2 = {}" rou 3.14159 2;
+prnt fmt "rou 3.14159 4 = {}" rou 3.14159 4;
+prnt fmt "rou 2.71828 3 = {}" rou 2.71828 3

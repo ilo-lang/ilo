@@ -9,7 +9,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Arithmetic / rounding
 
-`abs min max mod fmod flr cel rou clamp pow sqrt exp log log10 log2`. `rou`=round (alias `round`).
+`abs min max mod fmod flr cel rou clamp pow sqrt exp log log10 log2`. `rou`=round (alias `round`). `rou x` rounds to integer; `rou x digits` rounds to N decimal places (`rou 3.14159 2` -> `3.14`). Replaces scale/round/unscale boilerplate.
 
 **`mod` is C-style signed remainder** - result sign matches the dividend. `-1 mod 7 = -1`. For weekday/timezone/ring arithmetic where you need a non-negative result, use `fmod`: `fmod -1 7 = 6`. No more `(raw + 7) % 7` workaround.
 
