@@ -165,6 +165,7 @@ pub enum Builtin {
     Isfile,
     Isdir,
     EnvAll,
+    EnvOr,
 
     // String
     Trm,
@@ -700,6 +701,7 @@ impl Builtin {
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
+            "env-or" => Some(Builtin::EnvOr),
             "world" => Some(Builtin::WorldCap),
             "world-no-net" => Some(Builtin::WorldNoNet),
             "lsd" => Some(Builtin::Ls),
@@ -945,6 +947,7 @@ impl Builtin {
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
+            Builtin::EnvOr => "env-or",
             Builtin::WorldCap => "world",
             Builtin::WorldNoNet => "world-no-net",
             Builtin::Ls => "lsd",
@@ -955,6 +958,7 @@ impl Builtin {
             Builtin::Isfile => "isfile",
             Builtin::Isdir => "isdir",
             Builtin::EnvAll => "env-all",
+            Builtin::EnvOr => "env-or",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
             Builtin::Lwr => "lwr",
@@ -1102,7 +1106,7 @@ impl Builtin {
             | Builtin::Wr | Builtin::Wrl | Builtin::Ls | Builtin::Walk | Builtin::Glob
             | Builtin::Isfile | Builtin::Isdir => Some(Effect::Fs),
             // Console / env I/O
-            Builtin::Prnt | Builtin::Env | Builtin::EnvAll => Some(Effect::Io),
+            Builtin::Prnt | Builtin::Env | Builtin::EnvOr | Builtin::EnvAll => Some(Effect::Io),
             // Time builtins
             Builtin::Now | Builtin::NowMs | Builtin::Sleep => Some(Effect::Time),
             // Random builtins
@@ -1213,6 +1217,7 @@ impl Builtin {
         Builtin::Wrl,
         Builtin::Prnt,
         Builtin::Env,
+        Builtin::EnvOr,
         Builtin::WorldCap,
         Builtin::WorldNoNet,
         Builtin::Trm,
@@ -1274,6 +1279,8 @@ impl Builtin {
         // wrapped in Result. Tree-bridge eligible (zero args, no FnRef);
         // see is_tree_bridge_eligible in src/vm/mod.rs.
         Builtin::EnvAll,
+        // `env-or name:t default:t > t` — reads env var or returns default.
+        // Mirrors Python os.getenv(name, default). Tree-bridge eligible.
         // `run cmd:t args:L t > R (M t) t` — argv-list process spawn.
         // No shell, no interpolation, no glob — the principled defence
         // against shell injection in agent orchestration. See SPEC.md
@@ -2190,6 +2197,7 @@ mod tests {
             "wrl",
             "prnt",
             "env",
+            "env-or",
             "trm",
             "upr",
             "lwr",

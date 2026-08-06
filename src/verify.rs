@@ -1141,6 +1141,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse", &["t", "t"], "R n t"),
     ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
+    ("env-or", &["t", "t"], "t"),
     ("env-all", &[], "R (M t t) t"),
     ("world", &[], "World"),
     ("world-no-net", &[], "World"),
@@ -4396,6 +4397,11 @@ fn builtin_check_args(
                 });
             }
             (Ty::Number, errors)
+        }
+        "env-or" => {
+            // env-or name:t default:t > t — reads env var or returns default.
+            // Mirrors Python os.getenv(name, default). Pure text, no Result.
+            (Ty::Text, errors)
         }
         "env-all" => {
             // env-all -> R (M t t) t: snapshot the full process environment

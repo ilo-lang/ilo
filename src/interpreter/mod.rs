@@ -8492,7 +8492,30 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
 
+    if builtin == Some(Builtin::EnvOr) && args.len() == 2 {
+        let name = match &args[0] {
+            Value::Text(s) => (**s).clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R005",
+                    format!("env-or: argument 1 expects t, got {:?}", args[0]),
+                ));
+            }
+        };
+        let default = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R005",
+                    format!("env-or: argument 2 expects t, got {:?}", args[1]),
+                ));
+            }
+        };
+        let val = std::env::var(&name).unwrap_or(default);
+        return Ok(Value::Text(Arc::new(val)));
+    }
     if builtin == Some(Builtin::Env) && args.len() == 1 {
+        // Fall through to tree-bridge for VM/JIT; handled natively in interpreter below
         return match &args[0] {
             Value::Text(key) => {
                 if let Err(msg) = env.caps.check_env(key.as_str()) {

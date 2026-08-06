@@ -6845,6 +6845,9 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("rgxall", 2, &[]),
         ("rgxall1", 2, &[]),
         ("rgxsub", 3, &[]),
+        ("rgxsuball", 3, &[]),
+        // env-or: 2-arg text builtin (name, default)
+        ("env-or", 2, &[]),
         ("rgxall-multi", 2, &[]),
         // Range: arity 2 here so the alias mirror picks up `rng` and the
         // parser can eagerly consume `rng 0 n` as a nested call in arg
