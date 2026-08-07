@@ -1143,6 +1143,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-or", &["t", "t"], "t"),
+    ("zgunzip", &["t"], "t"),
     ("env-all", &[], "R (M t t) t"),
     ("world", &[], "World"),
     ("world-no-net", &[], "World"),
@@ -4444,6 +4445,22 @@ fn builtin_check_args(
                 ),
                 errors,
             )
+        }
+        "zgunzip" => {
+            // zgunzip t > t: gzip-decompress text bytes to text.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'zgunzip' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Text, errors)
         }
         "world" => {
             // world > World — return the current capability World token.

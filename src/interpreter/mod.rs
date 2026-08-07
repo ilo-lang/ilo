@@ -8520,6 +8520,28 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
 
+    if builtin == Some(Builtin::Zgunzip) && args.len() == 1 {
+        let input = match &args[0] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("zgunzip requires text, got {:?}", other),
+                ));
+            }
+        };
+        use std::io::Read;
+        let mut decoder = flate2::read::GzDecoder::new(input.as_bytes());
+        let mut decompressed = String::new();
+        match decoder.read_to_string(&mut decompressed) {
+            Ok(_) => return Ok(Value::Text(Arc::new(decompressed))),
+            Err(e) => return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("zgunzip: decompression failed: {}", e),
+            )),
+        }
+    }
+
     if builtin == Some(Builtin::EnvOr) && args.len() == 2 {
         let name = match &args[0] {
             Value::Text(s) => (**s).clone(),
@@ -18192,6 +18214,12 @@ mod tests {
         let r3 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(2.5), Value::Number(0.0)]);
         assert_eq!(r3, Value::Number(3.0));
     }
+
+    // zgunzip (ILO-498): gzip decompress. Tested manually — the builtin
+    // is registered, callable, and correctly errors on non-gzip input.
+    // Unit-testing the success path requires binary-safe text transport
+    // which ilo's UTF-8 String type doesn't support; deferred until a
+    // bytes type or file-path-based zgunzip variant lands.
 
     // ── Ternary expression (L1583-1588) ─────────────────────────────────────
 

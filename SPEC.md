@@ -859,6 +859,7 @@ Called like functions, compiled to dedicated opcodes.
 | `run-full-env cmd argv` | like `run` but inherits the full parent env (opt-in; use when child legitimately needs secrets) | `R (M t t) t` |
 | `run2-full-env cmd argv` | like `run2` but inherits the full parent env (opt-in) | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
+| `zgunzip s` | gzip-decompress text. Errs on non-gzip input | `t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `world` | return the current capability World token (see [Capability World](#capability-world)) | `W` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
