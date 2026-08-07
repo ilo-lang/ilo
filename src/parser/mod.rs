@@ -2989,8 +2989,27 @@ statement boundary; bind the chain to a local first. For example, split \
             // when only two operands follow. Restricting the keyword reading
             // to the literal ident `h` keeps every other bool-named subject
             // (`?ready a b`, `?ok 1 0`, …) unambiguous and unchanged.
-            if matches!(subj, Expr::Ref(n) if n == "h") && self.can_start_operand() {
-                let third = self.parse_prefix_binop_operand()?;
+            if matches!(subj, Expr::Ref(n) if n == "h") && (self.can_start_operand() || self.peek() == Some(&Token::Question)) {
+                // ILO-537: allow nested ternary in the else-branch.
+                // When the third operand starts with `?` (a nested ternary
+                // or match), parse it as a full expression instead of a
+                // prefix-binop operand. Without this, `?h cond a ?h cond2 b c`
+                // fails because `parse_prefix_binop_operand` doesn't handle `?`.
+                let third = if self.peek() == Some(&Token::Question) {
+                    let stmt = self.parse_match_stmt()?;
+                    match stmt {
+                        Stmt::Expr(e) => e,
+                        _ => return Err(ParseError {
+                            code: "ILO-P009",
+                            position: self.peek_span().start,
+                            message: "expected expression after `?` in ternary else-branch".into(),
+                            hint: Some("use `?cond a b` for a flat ternary or `?x{...}` for match".into()),
+                            span: self.peek_span(),
+                        }),
+                    }
+                } else {
+                    self.parse_prefix_binop_operand()?
+                };
                 // ILO-463 advisory: `?h <ref> a b` keyword form with a
                 // bare-Ref condition is shape-equivalent to the cheaper
                 // bare-bool prefix ternary `?<ref> a b`. Record the site
