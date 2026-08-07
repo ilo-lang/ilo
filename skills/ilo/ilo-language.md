@@ -126,7 +126,7 @@ Non-last fns end with safe expr (op, index, match, literal, parens); last fn: an
 
 ## reserved names (DO NOT use as bindings)
 
-**All 1-3 char lowercase identifiers are likely reserved builtins.** If you need a local variable, use 4+ chars: `total` not `tl`, `avg-v` not `av`, `count` not `ct`. Reserved: `at hd pi tl rd wr ct` (2-char) and `abs avg b64 cap cat cel chr cos del det dot env exp fft fld flr flt fmt frq get grp has hed inv len log lst lwr map max min mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou run sin slc spl srt str sum tan tau trm unq upr wra wrl zip` (3-char). Also avoid `avg` `tl` `len` `sum` `map` `cat` `str` — the model reaches for these most.
+**All 1-3 char lowercase identifiers are likely reserved builtins.** If you need a local variable, use 4+ chars: `total` not `tl`, `avg-v` not `av`, `count` not `ct`. Reserved: `at hd pi tl rd wr ct` (2-char) and `abs avg b64 cap cat cel chr cos del det dot env exp fft fld flr flt fmt frq get grp has hed inv len log lst lwr map max min mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou run sin slc spl srt str sum tan tau trm unq upr wra wrl zip` (3-char). Also avoid `avg` `tl` `len` `sum` `map` `cat` `str` `fmt` `fld` `flt` `srt` `at` `hd` `pi` `rd` `wr` `num` `ord` `rev` `run` `sin` `mod` `now` — the model reaches for these most.
 
 Fn/binding shadowing builtin/alias fires `ILO-P011`. 2-char safe; 4+ safe except `take drop mget mset flat range`; 3-char safe.
 
