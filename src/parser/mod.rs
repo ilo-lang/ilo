@@ -4212,7 +4212,27 @@ statement boundary; bind the chain to a local first. For example, split \
         // instead of leaving `sev` as a bare Ref and orphaning `sc "NONE"`.
         // Mirrors the prefix-binop swap from #332 (`>len q 0`).
         let then_expr = self.parse_prefix_binop_operand()?;
-        let else_expr = self.parse_prefix_binop_operand()?;
+        // ILO-537: allow nested ternary in else-branch. When the else operand
+        // starts with `?`, parse it as a full match/ternary expression.
+        let else_expr = if self.peek() == Some(&Token::Question) {
+            if self.is_prefix_ternary() {
+                self.parse_prefix_ternary()?
+            } else {
+                let stmt = self.parse_match_stmt()?;
+                match stmt {
+                    Stmt::Expr(e) => e,
+                    _ => return Err(ParseError {
+                        code: "ILO-P009",
+                        position: self.peek_span().start,
+                        message: "expected expression in ternary else-branch".into(),
+                        hint: None,
+                        span: self.peek_span(),
+                    }),
+                }
+            }
+        } else {
+            self.parse_prefix_binop_operand()?
+        };
         Ok(Expr::Ternary {
             condition: Box::new(condition),
             then_expr: Box::new(then_expr),
@@ -4315,8 +4335,14 @@ statement boundary; bind the chain to a local first. For example, split \
             // to write `x=?h cn "a" "b"` without falling back to a helper or
             // the brace form when the condition is an expression rather than
             // a bare bool ref.
-            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && self.can_start_operand() {
-                let third = self.parse_prefix_binop_operand()?;
+            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && (self.can_start_operand() || self.peek() == Some(&Token::Question)) {
+                // ILO-537: allow nested ternary in else-branch (same fix as
+                // parse_match_stmt and parse_prefix_ternary).
+                let third = if self.peek() == Some(&Token::Question) {
+                    self.parse_question_expr()?
+                } else {
+                    self.parse_prefix_binop_operand()?
+                };
                 // ILO-463 advisory: mirrors the stmt-position branch
                 // above. See `parse_match_stmt` for the rationale.
                 if let Expr::Ref(cond_name) = &first {
