@@ -1,10 +1,10 @@
 {
-  "generated": "2026-08-03T14:54:53Z",
+  "generated": "2026-08-07T12:03:07Z",
   "personas": {
     "schedule-arithmetic": {
       "persona": "schedule-arithmetic",
-      "outcome": "failed",
-      "generation_tokens": 335,
+      "outcome": "partial",
+      "generation_tokens": 512,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -14,8 +14,8 @@
     },
     "event-chronology": {
       "persona": "event-chronology",
-      "outcome": "failed",
-      "generation_tokens": 482,
+      "outcome": "partial",
+      "generation_tokens": 1030,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -27,7 +27,7 @@
     "linear-regression": {
       "persona": "linear-regression",
       "outcome": "partial",
-      "generation_tokens": 415,
+      "generation_tokens": 449,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -38,8 +38,8 @@
     },
     "k-means": {
       "persona": "k-means",
-      "outcome": "failed",
-      "generation_tokens": 1067,
+      "outcome": "partial",
+      "generation_tokens": 641,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -49,8 +49,8 @@
     },
     "api-poller": {
       "persona": "api-poller",
-      "outcome": "failed",
-      "generation_tokens": 486,
+      "outcome": "partial",
+      "generation_tokens": 553,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -60,8 +60,8 @@
     },
     "batch-http-fetch": {
       "persona": "batch-http-fetch",
-      "outcome": "failed",
-      "generation_tokens": 453,
+      "outcome": "partial",
+      "generation_tokens": 674,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -72,7 +72,7 @@
     "csv-pipeline": {
       "persona": "csv-pipeline",
       "outcome": "partial",
-      "generation_tokens": 252,
+      "generation_tokens": 301,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -83,8 +83,8 @@
     },
     "log-scanner": {
       "persona": "log-scanner",
-      "outcome": "working",
-      "generation_tokens": 595,
+      "outcome": "partial",
+      "generation_tokens": 719,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -95,8 +95,8 @@
     },
     "config-shaper": {
       "persona": "config-shaper",
-      "outcome": "failed",
-      "generation_tokens": 756,
+      "outcome": "partial",
+      "generation_tokens": 500,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -107,8 +107,8 @@
     },
     "record-transform": {
       "persona": "record-transform",
-      "outcome": "failed",
-      "generation_tokens": 455,
+      "outcome": "partial",
+      "generation_tokens": 419,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -118,8 +118,8 @@
     },
     "cron-explainer": {
       "persona": "cron-explainer",
-      "outcome": "failed",
-      "generation_tokens": 679,
+      "outcome": "partial",
+      "generation_tokens": 645,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -129,8 +129,8 @@
     },
     "text-mining": {
       "persona": "text-mining",
-      "outcome": "failed",
-      "generation_tokens": 521,
+      "outcome": "partial",
+      "generation_tokens": 537,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -140,8 +140,8 @@
     },
     "doc-discovery": {
       "persona": "doc-discovery",
-      "outcome": "failed",
-      "generation_tokens": 462,
+      "outcome": "partial",
+      "generation_tokens": 717,
       "attempts": 3,
       "tool_use_count": 0,
       "modules_loaded": [
@@ -154,15 +154,15 @@
   "module_tokens": {
     "ilo-agent": 1821,
     "ilo-builtins-core": 1069,
-    "ilo-builtins-io": 2469,
-    "ilo-builtins-math": 1409,
-    "ilo-builtins-text": 1763,
+    "ilo-builtins-io": 2514,
+    "ilo-builtins-math": 1453,
+    "ilo-builtins-text": 1790,
     "ilo-edit-loop": 584,
     "ilo-engines": 444,
-    "ilo-errors": 970,
+    "ilo-errors": 1001,
     "ilo-examples": 527,
     "ilo-language-records": 185,
-    "ilo-language": 2694,
+    "ilo-language": 3082,
     "ilo-tools": 747
   }
 }
