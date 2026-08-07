@@ -961,8 +961,6 @@ impl Builtin {
             Builtin::Isfile => "isfile",
             Builtin::Isdir => "isdir",
             Builtin::EnvAll => "env-all",
-            Builtin::EnvOr => "env-or",
-            Builtin::Zgunzip => "zgunzip",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
             Builtin::Lwr => "lwr",
