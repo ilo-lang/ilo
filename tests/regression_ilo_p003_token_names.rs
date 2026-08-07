@@ -185,28 +185,39 @@ fn p003_unclosed_paren_in_expression() {
 
 #[test]
 fn p005_identifier_expected_gets_source_chars() {
-    // `=42 5` — assignment to a number literal where an identifier was
-    // expected. Was `got Number(42.0)`. Now `got number `42``.
-    assert_no_token_enum_leak("=42 5");
+    // ILO-439: `=42 5` at file start now enters script mode, where it is a
+    // valid equality expression (`42 == 5` -> false), so no error fires there.
+    // Use `type 123{x:n}` instead: a number where a type name is expected,
+    // which still fires ILO-P005 "expected identifier, got number `123`" and
+    // exercises the same enum-leak guard.
+    assert_no_token_enum_leak("type 123{x:n}");
 }
 
 #[test]
 fn p001_unexpected_token_at_top_level() {
-    // Leading operator at top level — `expected declaration, got ...`.
-    // Was `got Plus`. Now `got `+``.
-    let (_, errors) = parse_str_errors("+1 2");
+    // ILO-439: a leading `+` is a statement start at every top-level position
+    // now, so it never reaches the "expected declaration, got ..." path and the
+    // old assertion on a literal `+` in the message is unreachable. The guard
+    // this test exists for — that raw Token enum names never leak into user
+    // messages — still applies to whatever token does surface, so assert that
+    // instead. Statements after an explicit `main` fall through to `parse_decl`
+    // (so its specific diagnostics survive), which is what makes this error.
+    assert_no_token_enum_leak("main>n;1\n+ 1 2");
+    let (_, errors) = parse_str_errors("main>n;1\n+ 1 2");
     let e = errors
         .iter()
         .find(|e| e.code == "ILO-P001")
         .expect("expected ILO-P001");
+    // Whatever token is named, it must be rendered as source text in backticks
+    // rather than as a Rust enum variant.
     assert!(
-        e.message.contains("`+`"),
-        "expected literal `+` in message, got: {}",
+        e.message.contains('`'),
+        "expected a backticked source glyph in message, got: {}",
         e.message,
     );
     assert!(
-        !e.message.contains("Plus"),
-        "message leaks Token enum name `Plus`: {}",
+        !e.message.contains("Plus") && !e.message.contains("Number("),
+        "message leaks a Token enum name: {}",
         e.message,
     );
 }

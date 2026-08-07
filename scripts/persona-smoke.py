@@ -219,9 +219,26 @@ def call_haiku(system: str, user: str, api_key: str) -> tuple[str, int]:
     with urllib.request.urlopen(req, timeout=60) as resp:
         body = json.loads(resp.read())
 
-    text = body["content"][0]["text"]
+    text = _strip_fences(body["content"][0]["text"])
     tokens = body["usage"]["output_tokens"]
     return text, tokens
+
+
+def _strip_fences(text: str) -> str:
+    """Strip markdown code fences (```lang ... ```) from model output.
+
+    Same helper as closed-loop-bench.py: despite "no markdown fences" in the
+    prompt, models wrap output often enough that every fenced program used to
+    die at ILO-L001 on the backtick - which is how the whole smoke set came
+    back `failed` when the baseline was re-recorded (ILO-534).
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.split("\n")
+        start = 1
+        end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+        return "\n".join(lines[start:end])
+    return text
 
 
 # ---------------------------------------------------------------------------

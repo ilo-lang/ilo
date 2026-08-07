@@ -5,35 +5,118 @@
       "description": "Write an ilo function that takes an integer n and returns n*(n+1)/2 (triangular number). Call it with n=10 and print the result.",
       "expected_output": "55",
       "difficulty": "easy",
-      "category": "arithmetic"
+      "category": "arithmetic",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-math"
+      ]
     },
     {
       "id": "with-dependencies",
       "description": "Write an ilo program that defines a helper function `double` (returns 2*x) and a function `quad` that calls double twice. Call quad with 7 and print the result.",
       "expected_output": "28",
       "difficulty": "easy",
-      "category": "function-composition"
+      "category": "function-composition",
+      "modules": [
+        "ilo-language"
+      ]
     },
     {
       "id": "data-transform",
       "description": "Write an ilo program that creates a list of integers [1, 2, 3, 4, 5], maps each element to its square, filters for values greater than 10, and prints the sum.",
       "expected_output": "41",
       "difficulty": "medium",
-      "category": "list-processing"
+      "category": "list-processing",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-math"
+      ]
     },
     {
       "id": "tool-interaction",
-      "description": "Write an ilo program that uses the `env` builtin to read an environment variable named BENCH_VAR (default to 'hello' if missing), appends ' world' to it, and prints the result. Assume BENCH_VAR is not set.",
+      "description": "Write an ilo program that reads an environment variable named BENCH_VAR with a default value of 'hello' (use the env-or builtin: env-or \"VAR\" \"default\"), appends ' world' to it, and prints the result. Assume BENCH_VAR is not set.",
       "expected_output": "hello world",
       "difficulty": "medium",
-      "category": "io-env"
+      "category": "io-env",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-io",
+        "ilo-builtins-text"
+      ]
     },
     {
       "id": "workflow-rollback",
       "description": "Write an ilo program that defines a function `safe-div` which divides two numbers but returns 0 if the divisor is zero (using an if expression). Call it with (10, 2) and (5, 0), print both results separated by a newline.",
       "expected_output": "5\n0",
       "difficulty": "medium",
-      "category": "control-flow"
+      "category": "control-flow",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "pipeline-report",
+      "description": "Parse this CSV-like string of product records: \"widget:10:5.00,gadget:3:15.00,gizmo:7:8.00,tool:2:20.00,book:15:2.00\". Each record is name:quantity:price. Compute revenue (quantity * price) for each product. Filter to only products with revenue > 20. Sort by revenue descending. Print each as \"name: revenue\" with revenue formatted to 2 decimal places, one per line.",
+      "expected_output": "gizmo: 56.00\nwidget: 50.00\ngadget: 45.00\ntool: 40.00\nbook: 30.00",
+      "difficulty": "hard",
+      "category": "data-pipeline",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-text",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "text-analysis",
+      "description": "Analyze this text: \"the quick brown fox jumps over the lazy dog the fox runs fast\". Compute and print 5 lines: word count (words=N), character count including spaces (chars=N), average word length to 1 decimal (avg_len=N.N), the longest word (longest=WORD), and the shortest word (shortest=WORD).",
+      "expected_output": "words=13\nchars=61\navg_len=3.8\nlongest=quick\nshortest=the",
+      "difficulty": "hard",
+      "category": "text-processing",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-text"
+      ]
+    },
+    {
+      "id": "function-pipeline",
+      "description": "Define three named functions: addone(x) returns x+1, double(x) returns x*2, square(x) returns x*x. Starting with the list [1, 2, 3, 4, 5], apply addone to each element, then double each result, then square each result. Print the sum of all final values as \"final_sum=N\", then print the last element after each step: \"last_after_addone=N\", \"last_after_double=N\", \"last_after_square=N\".",
+      "expected_output": "final_sum=360\nlast_after_addone=6\nlast_after_double=12\nlast_after_square=144",
+      "difficulty": "hard",
+      "category": "function-composition",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "matrix-operations",
+      "description": "Given the 3x3 matrix [[3,1,4],[1,5,9],[2,6,5]], compute and print: the sum of each row (row0=N, row1=N, row2=N), the sum of each column (col0=N, col1=N, col2=N), and the grand total (total=N). Print 7 lines total.",
+      "expected_output": "row0=8\nrow1=15\nrow2=13\ncol0=6\ncol1=12\ncol2=18\ntotal=36",
+      "difficulty": "hard",
+      "category": "nested-data",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "grade-calculator",
+      "description": "Compute weighted averages and letter grades for students. Weights are [0.3, 0.3, 0.4]. Students: Alice has scores [85, 92, 78], Bob has [70, 65, 72], Carol has [95, 88, 91]. Weighted average = sum of score*weight / sum of weights. Grade: A if >=90, B if >=80, C if >=70, else F. Print each student as \"Name: avg (grade)\" with avg to 1 decimal, one per line.",
+      "expected_output": "Alice: 84.3 (B)\nBob: 69.3 (F)\nCarol: 91.3 (A)",
+      "difficulty": "hard",
+      "category": "multi-function",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-math",
+        "ilo-builtins-text"
+      ]
     }
   ]
 }

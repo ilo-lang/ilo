@@ -1,0 +1,94 @@
+{
+  "generated": "2026-08-03T23:01:51.512528+00:00",
+  "harness": "closed-loop-bench.py",
+  "ticket": "ILO-364",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "sonnet",
+      "model_id": "claude-sonnet-4-5",
+      "generation_tokens": 281,
+      "input_tokens": 33953,
+      "repair_tokens_by_turn": [
+        62,
+        54,
+        63,
+        58
+      ],
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 19.44,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "with-dependencies",
+      "language": "ilo",
+      "model": "sonnet",
+      "model_id": "claude-sonnet-4-5",
+      "generation_tokens": 319,
+      "input_tokens": 26046,
+      "repair_tokens_by_turn": [
+        67,
+        66,
+        64,
+        63
+      ],
+      "attempts_to_success": 5,
+      "attempts_total": 5,
+      "success_rate": 1.0,
+      "wall_time_s": 19.27,
+      "final_outcome": "working"
+    },
+    {
+      "task": "data-transform",
+      "language": "ilo",
+      "model": "sonnet",
+      "model_id": "claude-sonnet-4-5",
+      "generation_tokens": 90,
+      "input_tokens": 7902,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 4.12,
+      "final_outcome": "working"
+    },
+    {
+      "task": "tool-interaction",
+      "language": "ilo",
+      "model": "sonnet",
+      "model_id": "claude-sonnet-4-5",
+      "generation_tokens": 259,
+      "input_tokens": 50110,
+      "repair_tokens_by_turn": [
+        45,
+        61,
+        45,
+        57
+      ],
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 16.51,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "workflow-rollback",
+      "language": "ilo",
+      "model": "sonnet",
+      "model_id": "claude-sonnet-4-5",
+      "generation_tokens": 165,
+      "input_tokens": 13543,
+      "repair_tokens_by_turn": [
+        84
+      ],
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 9.21,
+      "final_outcome": "working"
+    }
+  ]
+}
