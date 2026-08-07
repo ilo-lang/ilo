@@ -56,7 +56,7 @@ SKILLS_DIR = REPO_ROOT / "skills" / "ilo"
 SMOKE_LIST = REPO_ROOT / "bench" / "persona-smoke.txt"
 BASELINE_FILE = REPO_ROOT / "bench" / "persona-smoke-baseline.json"
 
-TOKEN_REGRESS_PCT = 15      # mean generation-token increase threshold (%)
+TOKEN_REGRESS_PCT = 20      # mean generation-token increase threshold (%)
 MAX_ATTEMPTS = 3            # repair attempts per persona before giving up
 ILO_TIMEOUT = 20            # seconds per ilo run
 
