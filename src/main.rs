@@ -2581,7 +2581,7 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
             let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
             let (diags, _) = run_check_internal(source);
             let clean = diags.is_empty();
-            let _diag_json: Vec<_> = diags.iter().map(diag_to_json).collect();
+            let diag_json: Vec<_> = diags.iter().map(diag_to_json).collect();
             let text = if clean {
                 format!("OK: program is valid ({} diagnostics)", diags.len())
             } else {
@@ -5165,7 +5165,7 @@ fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
             let region: String = modified_lines[line_start..=line_end.min(modified_lines.len() - 1)]
                 .join("\n");
 
-            if let Some(_idx) = region.find(&edit.before) {
+            if let Some(idx) = region.find(&edit.before) {
                 let new_region = region.replacen(&edit.before, &edit.after, 1);
                 let new_lines: Vec<&str> = new_region.split('\n').collect();
 
@@ -5546,7 +5546,7 @@ fn dispatch_run(
     // disambiguate hyphen-prefixed literal args from flags; it's not data
     // itself, so it must not reach the program as a positional arg.
     let mut r = r;
-    if let Some(_idx) = r.rest.iter().position(|s| s == "--") {
+    if let Some(idx) = r.rest.iter().position(|s| s == "--") {
         r.rest.remove(idx);
     }
 
