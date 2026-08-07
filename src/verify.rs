@@ -6399,10 +6399,18 @@ impl VerifyContext {
                              '(x:t>t;{name} x)' (paren form) or '{{x> {name} x}}' (brace form)"
                         ))
                     } else {
-                        kebab_subtract_hint(name, candidates.iter()).or_else(|| {
+                        let base_hint = kebab_subtract_hint(name, candidates.iter()).or_else(|| {
                             closest_match(name, candidates.iter())
                                 .map(|s| format!("did you mean '{s}'?"))
-                        })
+                        });
+                        // ILO-504: append hoisting advisory for all undefined
+                        // variables. Nested fn declarations are silently
+                        // hoisted to siblings in single-line form; if the
+                        // model intended a capture, the undefined-variable
+                        // error is the only signal.
+                        base_hint.map(|h| format!(
+                            "{h} (or if '{name}' is from an enclosing fn, use an inline lambda: `(x:n>n;...{name}...)`)"
+                        ))
                     };
                     self.err(
                         "ILO-T004",
