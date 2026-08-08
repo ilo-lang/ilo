@@ -5128,7 +5128,21 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `f` called with an inline-lambda arg, not a paren-call. The
                 // lambda check below peeks inside without consuming tokens.
                 if !self.looks_like_inline_lambda() {
-                    let args = self.parse_paren_call_args_for(Some(&name))?;
+                    let mut args = self.parse_paren_call_args_for(Some(&name))?;
+                    // ILO-537b: continue consuming postfix args after paren-form
+                    // when the function has known arity > paren-form arg count.
+                    // This rescues `fmt2(x)2` which the model writes without
+                    // space after `)`. The paren-form parses `(x)` as one arg,
+                    // then we continue consuming `2` as the second postfix arg.
+                    let outer_arity_known = self.fn_arity.get(&name).copied();
+                    if let Some(k) = outer_arity_known {
+                        while args.len() < k && self.can_start_operand() {
+                            let arg_idx = args.len();
+                            let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
+                            let outer_ctx = (name.as_str(), k, arg_idx);
+                            args.push(self.parse_call_arg(in_fn_pos, Some(outer_ctx))?);
+                        }
+                    }
                     let call = Expr::Call {
                         function: name,
                         args,
@@ -7087,6 +7101,8 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("chr", 1, &[]),
         ("chars", 1, &[]),
         // fmt is variadic (template + N args) — leave to greedy parsing
+        // fmt2 takes exactly 2 args (value, decimals)
+        ("fmt2", 2, &[]),
         // JSON
         ("jdmp", 1, &[]),
         ("jpar", 1, &[]),
