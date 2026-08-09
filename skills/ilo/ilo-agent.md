@@ -25,16 +25,11 @@ Every skill subcommand accepts `--json` (short alias `-j`, ILO-442). `ilo skill 
 ## Running
 
 ```
-ilo file.ilo                       auto-pick main
-ilo file.ilo func a b              call named fn
-ilo 'f x:n>n;+x 1' 5               inline source
-ilo --jit file.ilo --bench main    JIT + bench
-ilo file.ilo --bench main --json   bench output as NDJSON
-ilo file.ilo --bench main --json --silent  suppress program stdout
 ilo file.@                         auto-pick main
 ilo file.@ func a b                call named fn
-ilo 'f x:n>n;+x 1' 5              inline source
-ilo --jit file.@ --bench main     JIT + bench
+ilo 'f x:n>n;+x 1' 5               inline source
+ilo --jit file.@ --bench main      JIT + bench
+ilo file.@ --bench main --json     bench NDJSON (--silent to drop program stdout)
 ```
 
 `--silent` / `-s` mutes program-level `prnt` (and `prnv` / `jprn` / JIT prints) for the run. Paired with `--bench --json` it gives agent harnesses (e.g. persona cost rollup) a clean JSON stream on stdout instead of 10k+ lines of benchmarked output. Stderr is never silenced.
@@ -50,7 +45,7 @@ First positional dispatches to a fn when it has ident shape. Otherwise (paths, n
 
 AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
-**Auto-echo suppression.** An entry-fn ending in a bare `prnt` call, a tail loop with no early return, or — when the body has an unconditional top-level `prnt` — a wrapped string-literal tail `~"text"` / `^"text"` (status sentinel) does NOT auto-echo its return value. The collision-avoidance rules let you write `m>R t t;prnt "report";~"ok"` and get clean `report\n` on stdout instead of `report\nok\n`. A no-prnt function returning `~"ok"` (e.g. `addtask`) still emits `ok` — the wrapped literal IS the output. `~v` where `v` is a binding or call always auto-echoes; only string LITERAL sentinels are dropped.
+**Auto-echo suppression.** After an unconditional `prnt` (or a bare-`prnt`/tail-loop ending), a string-LITERAL sentinel tail `~"ok"`/`^"err"` is not echoed: `m>R t t;prnt "report";~"ok"` prints just `report`. Without a `prnt`, the literal IS the output; `~v` for bindings/calls always echoes.
 
 ## Testing
 
@@ -101,20 +96,7 @@ main>_
 
 ## Constrained decoding
 
-`ilo constrain` exports the parser grammar so an external LLM harness can apply logit masks at generation time, making syntactically invalid ilo unreachable before `ilo check` ever runs.
-
-```
-ilo constrain                         grammar state machine as JSON (default)
-ilo constrain --mode masks             per-state binary masks over token vocabulary
-ilo constrain --mode completions --file foo.ilo --line 3 --col 12   valid tokens at cursor
-```
-
-Three JSON shapes:
-- `--mode states`: `{"schemaVersion":1,"states":{"TopLevel":{"transitions":{...}},...},"initial":"TopLevel","accept":["End"]}`. 29 parse states.
-- `--mode masks`: `{"schemaVersion":1,"vocabulary":["type","tool",...],"masks":{"TopLevel":[1,1,1,...0],...}}`. 59 token categories.
-- `--mode completions`: `{"schemaVersion":1,"state":"FnHeader","validTokens":["<","ident",">",...]}`.
-
-The state machine is static (grammar shape, not parser bookkeeping). Prevents lex/parse errors at generation; type errors and runtime errors still caught by `ilo check` and `ilo run`.
+`ilo constrain` exports the parser grammar for generation-time logit masking — syntactically invalid ilo becomes unreachable before `ilo check` runs. Modes: default `states` (29-state machine JSON), `--mode masks` (per-state binary masks, 59 token categories), `--mode completions --file f --line N --col M` (valid tokens at cursor). Static grammar shape only; type/runtime errors still caught downstream.
 
 ## Branching
 
