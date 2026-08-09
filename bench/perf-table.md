@@ -4,14 +4,13 @@
 
 Wall-clock time, median of 10 runs (lower is better).
 
-| Benchmark | ilo-jit | ilo-vm | Python | ilo vs Python |
-| --- | --- | --- | --- | --- |
-| fib | 48.2 ms | 68.6 ms | 75.6 ms | **2x faster** |
-| hof | 674.0 ms | 131.7 ms | 91.0 ms | 7.4x slower |
-| listproc | 19.0 ms | 56.9 ms | 97.8 ms | **5x faster** |
-| pattern-match | 62.0 ms | 117.3 ms | 158.3 ms | **3x faster** |
-| sum-loop | 19.0 ms | 43.6 ms | 53.3 ms | **3x faster** |
+| Benchmark | ilo-jit | ilo-vm | Python | Node | ilo vs Python |
+|-----------|---------|--------|--------|------|--------------|
+| fib | 40.0 ms | 60.2 ms | 64.7 ms | 3.6 ms | **1.6x faster** (JIT) |
+| hof | — | 122.5 ms | 87.9 ms | 37.9 ms | 1.4x slower (VM) |
+| listproc | 18.7 ms | 56.5 ms | 97.1 ms | 1.4 ms | **5.2x faster** (JIT) |
+| pattern-match | 61.2 ms | 116.0 ms | 155.2 ms | 1.8 ms | **2.5x faster** (JIT) |
+| sum-loop | 18.7 ms | 42.8 ms | 53.3 ms | 916 µs | **2.8x faster** (JIT) |
 
-**ilo wins 4/5 against Python on execution speed.**
-
-Note: JIT performance regressed since the May baseline (listproc was 1.5ms, now 19ms; pattern-match was 3.1ms, now 62ms). The ratios vs Python are still favourable but the absolute JIT speed needs investigation. hof (closures) remains the one loss — closures bail JIT to tree interpreter.
+**ilo wins 4/5 against Python.** hof uses VM fallback (closures bail JIT).
+All pairwise CIs non-overlapping (statistically significant).

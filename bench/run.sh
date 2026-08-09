@@ -149,7 +149,9 @@ for line in sys.stdin:
     done
 
     echo "vm ${vm_samples[*]}"
-    echo "jit ${jit_samples[*]}"
+    if [ ${#jit_samples[@]} -gt 0 ]; then
+        echo "jit ${jit_samples[*]}"
+    fi
 }
 
 # ── Results store ─────────────────────────────────────────────────────────────
