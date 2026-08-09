@@ -5179,7 +5179,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {
                 if *b == 0.0 {
-                    Err(RuntimeError::new("ILO-R003", format!("mod by zero: {} % {}", a, b)))
+                    Err(RuntimeError::new(
+                        "ILO-R003",
+                        format!("mod by zero: {} % {}", a, b),
+                    ))
                 } else {
                     Ok(Value::Number(a % b))
                 }
@@ -8535,10 +8538,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut decompressed = String::new();
         match decoder.read_to_string(&mut decompressed) {
             Ok(_) => return Ok(Value::Text(Arc::new(decompressed))),
-            Err(e) => return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("zgunzip: decompression failed: {}", e),
-            )),
+            Err(e) => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("zgunzip: decompression failed: {}", e),
+                ));
+            }
         }
     }
 
@@ -9974,9 +9979,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             if let Some(ref pol) = policy {
                 if let Some(crate::interpreter::Value::Text(url)) = args.first() {
                     if let Err(msg) = pol.check_domain(url) {
-                        return Ok(Value::Err(Box::new(Value::Text(
-                            std::sync::Arc::new(msg)
-                        ))));
+                        return Ok(Value::Err(Box::new(Value::Text(std::sync::Arc::new(msg)))));
                     }
                 }
             }
@@ -11080,7 +11083,11 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                     None if *safe => Ok(Value::Nil),
                     None => Err(RuntimeError::new(
                         "ILO-R005",
-                        format!("no field '{}' on record (fields: {:?})", field, fields.keys().collect::<Vec<_>>()),
+                        format!(
+                            "no field '{}' on record (fields: {:?})",
+                            field,
+                            fields.keys().collect::<Vec<_>>()
+                        ),
                     )),
                 },
                 // World field access: .net .read .write .run → Bool
@@ -11415,7 +11422,10 @@ fn eval_binop(op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
         (BinOp::Multiply, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
         (BinOp::Divide, Value::Number(a), Value::Number(b)) => {
             if *b == 0.0 {
-                Err(RuntimeError::new("ILO-R003", format!("division by zero: {}/{}", a, b)))
+                Err(RuntimeError::new(
+                    "ILO-R003",
+                    format!("division by zero: {}/{}", a, b),
+                ))
             } else {
                 Ok(Value::Number(a / b))
             }
@@ -14320,7 +14330,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: inner_body,
@@ -14334,7 +14345,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![
@@ -14408,7 +14420,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Err(Box::new(
@@ -14424,7 +14437,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: unwrap_body("c"),
@@ -14438,7 +14452,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: unwrap_body("b"),
@@ -18207,11 +18222,23 @@ mod tests {
     #[test]
     fn interpret_round_with_digits() {
         // rou x digits: round to N decimal places (ILO-535)
-        let r1 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(3.14159), Value::Number(2.0)]);
+        let r1 = run_str(
+            "f x:n y:n>n;rou x y",
+            Some("f"),
+            vec![Value::Number(3.14159), Value::Number(2.0)],
+        );
         assert_eq!(r1, Value::Number(3.14));
-        let r2 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(3.14159), Value::Number(4.0)]);
+        let r2 = run_str(
+            "f x:n y:n>n;rou x y",
+            Some("f"),
+            vec![Value::Number(3.14159), Value::Number(4.0)],
+        );
         assert_eq!(r2, Value::Number(3.1416));
-        let r3 = run_str("f x:n y:n>n;rou x y", Some("f"), vec![Value::Number(2.5), Value::Number(0.0)]);
+        let r3 = run_str(
+            "f x:n y:n>n;rou x y",
+            Some("f"),
+            vec![Value::Number(2.5), Value::Number(0.0)],
+        );
         assert_eq!(r3, Value::Number(3.0));
     }
 

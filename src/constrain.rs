@@ -32,7 +32,7 @@
 //!   the actual parser state, including arity tables and context.
 
 use crate::lexer::Token;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ── Token vocabulary ───────────────────────────────────────────────────────
 
@@ -46,11 +46,11 @@ use serde_json::{json, Value};
 #[repr(u8)]
 pub enum TokenCat {
     // ── Keywords ──
-    Type,       // `type`
-    Tool,       // `tool`
-    Use,        // `use`
-    With,       // `with`
-    By,         // `by`
+    Type, // `type`
+    Tool, // `tool`
+    Use,  // `use`
+    With, // `with`
+    By,   // `by`
     // ── Type sigils ──
     ListType,   // `L`
     ResultType, // `R`
@@ -63,54 +63,54 @@ pub enum TokenCat {
     U64Type,    // `U64`
     I64Type,    // `I64`
     // ── Literals ──
-    True,       // `true`
-    False,      // `false`
-    Nil,        // `nil`
-    Number,    // any numeric literal
-    Text,       // any string literal
+    True,   // `true`
+    False,  // `false`
+    Nil,    // `nil`
+    Number, // any numeric literal
+    Text,   // any string literal
     // ── Identifiers ──
     Ident,      // any lowercase identifier
     Underscore, // `_`
     // ── Multi-char operators ──
-    GreaterEq,  // `>=`
-    LessEq,     // `<=`
-    NotEq,      // `!=`
-    PlusEq,     // `+=`
-    PipeOp,     // `>>`
+    GreaterEq,   // `>=`
+    LessEq,      // `<=`
+    NotEq,       // `!=`
+    PlusEq,      // `+=`
+    PipeOp,      // `>>`
     NilCoalesce, // `??`
-    BangBang,   // `!!`
-    DotDot,     // `..`
+    BangBang,    // `!!`
+    DotDot,      // `..`
     DotQuestion, // `.?`
     // ── Single-char operators ──
-    Plus,       // `+`
-    Minus,      // `-`
-    Star,       // `*`
-    Slash,      // `/`
-    Greater,    // `>`
-    Less,       // `<`
-    Eq,         // `=` or `==`
-    Amp,        // `&`
-    Pipe,       // `|`
-    Question,   // `?`
-    At,         // `@`
-    Bang,       // `!`
-    Caret,      // `^`
-    Tilde,      // `~`
-    Dollar,     // `$`
+    Plus,     // `+`
+    Minus,    // `-`
+    Star,     // `*`
+    Slash,    // `/`
+    Greater,  // `>`
+    Less,     // `<`
+    Eq,       // `=` or `==`
+    Amp,      // `&`
+    Pipe,     // `|`
+    Question, // `?`
+    At,       // `@`
+    Bang,     // `!`
+    Caret,    // `^`
+    Tilde,    // `~`
+    Dollar,   // `$`
     // ── Punctuation ──
-    Colon,      // `:`
-    Semi,       // `;`
-    Dot,        // `.`
-    Comma,      // `,`
-    LBrace,     // `{`
-    RBrace,     // `}`
-    LParen,     // `(`
-    RParen,     // `)`
-    LBracket,   // `[`
-    RBracket,   // `]`
+    Colon,    // `:`
+    Semi,     // `;`
+    Dot,      // `.`
+    Comma,    // `,`
+    LBrace,   // `{`
+    RBrace,   // `}`
+    LParen,   // `(`
+    RParen,   // `)`
+    LBracket, // `[`
+    RBracket, // `]`
     // ── Control ──
-    Newline,     // `\n`
-    Eof,         // end of input
+    Newline, // `\n`
+    Eof,     // end of input
 }
 
 impl TokenCat {
@@ -310,8 +310,13 @@ impl TokenCat {
             Token::RBracket => TokenCat::RBracket,
             Token::Newline => TokenCat::Newline,
             // Reserved-keyword tokens from other languages — not valid output.
-            Token::KwIf | Token::KwReturn | Token::KwLet | Token::KwFn
-            | Token::KwDef | Token::KwVar | Token::KwConst => return None,
+            Token::KwIf
+            | Token::KwReturn
+            | Token::KwLet
+            | Token::KwFn
+            | Token::KwDef
+            | Token::KwVar
+            | Token::KwConst => return None,
             // Reserved words for tool-decl fields — not valid in code output.
             Token::Timeout | Token::Retry => return None,
         })
@@ -489,9 +494,7 @@ impl ParseState {
             ],
 
             // After `use` keyword — expecting a module path (ident).
-            ParseState::AfterUse => &[
-                (TokenCat::Ident, ParseState::AfterIdent),
-            ],
+            ParseState::AfterUse => &[(TokenCat::Ident, ParseState::AfterIdent)],
 
             // Function header: after the name, expecting `<` type params,
             // `:` for param type, or `>` for return type (no-param case).
@@ -509,9 +512,7 @@ impl ParseState {
             ],
 
             // After a param name — expecting `:` for type annotation.
-            ParseState::ParamName => &[
-                (TokenCat::Colon, ParseState::ParamType),
-            ],
+            ParseState::ParamName => &[(TokenCat::Colon, ParseState::ParamType)],
 
             // After `:` in a param — expecting a type.
             ParseState::ParamType => &[
@@ -577,30 +578,30 @@ impl ParseState {
 
             // Statement start: bindings, loops, match, return, break, continue, expressions.
             ParseState::StmtStart => &[
-                (TokenCat::Ident, ParseState::AfterIdent),    // binding or call
-                (TokenCat::At, ParseState::AfterAt),          // foreach/for-range
+                (TokenCat::Ident, ParseState::AfterIdent), // binding or call
+                (TokenCat::At, ParseState::AfterAt),       // foreach/for-range
                 (TokenCat::Question, ParseState::AfterQuestion), // match or ternary
-                (TokenCat::LBrace, ParseState::StmtStart),   // brace block or destructure
-                (TokenCat::LBracket, ParseState::ListElem),   // list literal
+                (TokenCat::LBrace, ParseState::StmtStart), // brace block or destructure
+                (TokenCat::LBracket, ParseState::ListElem), // list literal
                 (TokenCat::Number, ParseState::AfterNumber),
                 (TokenCat::Text, ParseState::AfterText),
                 (TokenCat::True, ParseState::AfterIdent),
                 (TokenCat::False, ParseState::AfterIdent),
                 (TokenCat::Nil, ParseState::AfterIdent),
-                (TokenCat::Minus, ParseState::AfterOp),       // negative number
+                (TokenCat::Minus, ParseState::AfterOp), // negative number
                 (TokenCat::Underscore, ParseState::AfterIdent), // `_=expr` discard
-                (TokenCat::Tilde, ParseState::AfterTilde),    // `~v` Ok constructor
+                (TokenCat::Tilde, ParseState::AfterTilde), // `~v` Ok constructor
                 (TokenCat::Caret, ParseState::AfterCaretMatch), // `^e` Err constructor
-                (TokenCat::Bang, ParseState::AfterBang),       // `!` auto-unwrap
-                (TokenCat::Dollar, ParseState::AfterIdent),    // `$` special
-                (TokenCat::Semi, ParseState::StmtStart),       // empty statement
-                (TokenCat::RBrace, ParseState::End),           // end of body
+                (TokenCat::Bang, ParseState::AfterBang), // `!` auto-unwrap
+                (TokenCat::Dollar, ParseState::AfterIdent), // `$` special
+                (TokenCat::Semi, ParseState::StmtStart), // empty statement
+                (TokenCat::RBrace, ParseState::End),    // end of body
                 (TokenCat::Eof, ParseState::End),
             ],
 
             // After `@` — expecting loop variable (ident) or range start (number).
             ParseState::AfterAt => &[
-                (TokenCat::Ident, ParseState::AfterIdent),  // loop var name
+                (TokenCat::Ident, ParseState::AfterIdent), // loop var name
                 (TokenCat::Number, ParseState::AfterNumber), // range start
             ],
 
@@ -612,7 +613,7 @@ impl ParseState {
                 (TokenCat::True, ParseState::AfterIdent),
                 (TokenCat::False, ParseState::AfterIdent),
                 (TokenCat::LBracket, ParseState::ListElem),
-                (TokenCat::Bang, ParseState::AfterBang),  // `?!expr` unwrap then ternary
+                (TokenCat::Bang, ParseState::AfterBang), // `?!expr` unwrap then ternary
                 (TokenCat::Tilde, ParseState::AfterTilde),
                 (TokenCat::Caret, ParseState::AfterCaretMatch),
             ],
@@ -630,8 +631,8 @@ impl ParseState {
                 (TokenCat::Star, ParseState::AfterOp),
                 (TokenCat::Slash, ParseState::AfterOp),
                 (TokenCat::LBracket, ParseState::ListElem),
-                (TokenCat::LParen, ParseState::ExprStart),  // parenthesised expression/lambda
-                (TokenCat::LBrace, ParseState::StmtStart),   // brace lambda or block
+                (TokenCat::LParen, ParseState::ExprStart), // parenthesised expression/lambda
+                (TokenCat::LBrace, ParseState::StmtStart), // brace lambda or block
                 (TokenCat::Tilde, ParseState::AfterTilde),
                 (TokenCat::Caret, ParseState::AfterCaretMatch),
                 (TokenCat::Bang, ParseState::AfterBang),
@@ -648,7 +649,7 @@ impl ParseState {
                 (TokenCat::True, ParseState::AfterIdent),
                 (TokenCat::False, ParseState::AfterIdent),
                 (TokenCat::Nil, ParseState::AfterIdent),
-                (TokenCat::Minus, ParseState::AfterOp),    // nested prefix
+                (TokenCat::Minus, ParseState::AfterOp), // nested prefix
                 (TokenCat::Plus, ParseState::AfterOp),
                 (TokenCat::Star, ParseState::AfterOp),
                 (TokenCat::Slash, ParseState::AfterOp),
@@ -678,15 +679,15 @@ impl ParseState {
                 (TokenCat::PlusEq, ParseState::AfterOp),
                 (TokenCat::PipeOp, ParseState::AfterPipe),
                 (TokenCat::NilCoalesce, ParseState::AfterOp),
-                (TokenCat::Bang, ParseState::AfterBang),  // `ident!expr` unwrap
+                (TokenCat::Bang, ParseState::AfterBang), // `ident!expr` unwrap
                 (TokenCat::BangBang, ParseState::AfterBang), // `ident!!` panic unwrap
                 (TokenCat::Dot, ParseState::AfterDot),
                 (TokenCat::DotQuestion, ParseState::AfterDot),
-                (TokenCat::DotDot, ParseState::AfterOp),  // range
+                (TokenCat::DotDot, ParseState::AfterOp), // range
                 // Statement/body terminators
                 (TokenCat::Semi, ParseState::StmtStart),
                 (TokenCat::RBrace, ParseState::End),
-                (TokenCat::Comma, ParseState::ExprStart),  // in arg list or list
+                (TokenCat::Comma, ParseState::ExprStart), // in arg list or list
                 (TokenCat::RParen, ParseState::AfterIdent), // closing paren expr
                 (TokenCat::RBracket, ParseState::AfterIdent), // closing list
                 (TokenCat::Eof, ParseState::End),
@@ -730,22 +731,20 @@ impl ParseState {
 
             // Match arm: expecting a pattern.
             ParseState::MatchArm => &[
-                (TokenCat::Text, ParseState::MatchArmBody),     // literal pattern
+                (TokenCat::Text, ParseState::MatchArmBody), // literal pattern
                 (TokenCat::Number, ParseState::MatchArmBody),
                 (TokenCat::True, ParseState::MatchArmBody),
                 (TokenCat::False, ParseState::MatchArmBody),
                 (TokenCat::Nil, ParseState::MatchArmBody),
-                (TokenCat::Tilde, ParseState::AfterTilde),       // `~v` ok-bind
-                (TokenCat::Caret, ParseState::AfterCaretMatch),  // `^e` err-bind
-                (TokenCat::Ident, ParseState::MatchArmBody),    // named pattern
+                (TokenCat::Tilde, ParseState::AfterTilde), // `~v` ok-bind
+                (TokenCat::Caret, ParseState::AfterCaretMatch), // `^e` err-bind
+                (TokenCat::Ident, ParseState::MatchArmBody), // named pattern
                 (TokenCat::Underscore, ParseState::MatchArmBody), // wildcard
-                (TokenCat::Pipe, ParseState::MatchArm),         // or-pattern
+                (TokenCat::Pipe, ParseState::MatchArm),    // or-pattern
             ],
 
             // After a match arm pattern — expecting `:` then body.
-            ParseState::MatchArmBody => &[
-                (TokenCat::Colon, ParseState::ExprStart),
-            ],
+            ParseState::MatchArmBody => &[(TokenCat::Colon, ParseState::ExprStart)],
 
             // After `~` (Ok bind) in match arm.
             ParseState::AfterTilde => &[
@@ -766,12 +765,12 @@ impl ParseState {
                 (TokenCat::False, ParseState::AfterIdent),
                 (TokenCat::Nil, ParseState::AfterIdent),
                 (TokenCat::Minus, ParseState::AfterOp),
-                (TokenCat::LBracket, ParseState::ListElem),  // nested list
+                (TokenCat::LBracket, ParseState::ListElem), // nested list
                 (TokenCat::LParen, ParseState::ExprStart),
                 (TokenCat::Tilde, ParseState::AfterTilde),
                 (TokenCat::Caret, ParseState::AfterCaretMatch),
-                (TokenCat::RBracket, ParseState::AfterIdent),  // close list
-                (TokenCat::Comma, ParseState::ListElem),       // next element
+                (TokenCat::RBracket, ParseState::AfterIdent), // close list
+                (TokenCat::Comma, ParseState::ListElem),      // next element
                 (TokenCat::Bang, ParseState::AfterBang),
             ],
 
@@ -783,14 +782,12 @@ impl ParseState {
             ],
 
             // After `>>` pipe operator — expecting a function name.
-            ParseState::AfterPipe => &[
-                (TokenCat::Ident, ParseState::AfterIdent),
-            ],
+            ParseState::AfterPipe => &[(TokenCat::Ident, ParseState::AfterIdent)],
 
             // After `!` — auto-unwrap or start of `!!`.
             ParseState::AfterBang => &[
                 (TokenCat::Ident, ParseState::AfterIdent),
-                (TokenCat::Bang, ParseState::AfterBang),  // `!!` panic-unwrap
+                (TokenCat::Bang, ParseState::AfterBang), // `!!` panic-unwrap
             ],
 
             // After a number literal.
@@ -847,9 +844,7 @@ impl ParseState {
             ],
 
             // End state — only EOF.
-            ParseState::End => &[
-                (TokenCat::Eof, ParseState::End),
-            ],
+            ParseState::End => &[(TokenCat::Eof, ParseState::End)],
         }
     }
 
@@ -909,7 +904,10 @@ pub fn state_machine_json() -> Value {
 
 /// Build the token vocabulary as a JSON array of strings.
 pub fn vocabulary_json() -> Value {
-    let vocab: Vec<String> = TokenCat::ALL.iter().map(|c| c.as_str().to_string()).collect();
+    let vocab: Vec<String> = TokenCat::ALL
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
     Value::Array(vocab.into_iter().map(Value::String).collect())
 }
 
@@ -1004,7 +1002,11 @@ pub fn completions_at_cursor(source: &str, line: usize, col: usize) -> Value {
     }
 
     // Get valid next tokens at the current state.
-    let valid: Vec<String> = state.valid_tokens().iter().map(|c| c.as_str().to_string()).collect();
+    let valid: Vec<String> = state
+        .valid_tokens()
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
 
     json!({
         "schemaVersion": 1,

@@ -1098,15 +1098,34 @@ impl Builtin {
         use crate::ast::Effect;
         match self {
             // HTTP builtins
-            Builtin::Get | Builtin::Post | Builtin::GetMany | Builtin::GetTo
-            | Builtin::Getx | Builtin::GetStream | Builtin::GetStreamH
-            | Builtin::PostStream | Builtin::PostStreamH
-            | Builtin::Del | Builtin::Hed | Builtin::Opt | Builtin::Pstx
-            | Builtin::Put | Builtin::Pat => Some(Effect::Http),
+            Builtin::Get
+            | Builtin::Post
+            | Builtin::GetMany
+            | Builtin::GetTo
+            | Builtin::Getx
+            | Builtin::GetStream
+            | Builtin::GetStreamH
+            | Builtin::PostStream
+            | Builtin::PostStreamH
+            | Builtin::Del
+            | Builtin::Hed
+            | Builtin::Opt
+            | Builtin::Pstx
+            | Builtin::Put
+            | Builtin::Pat => Some(Effect::Http),
             // Filesystem builtins
-            Builtin::Rd | Builtin::RdJson | Builtin::Rdl | Builtin::Rdjl | Builtin::Rdb
-            | Builtin::Wr | Builtin::Wrl | Builtin::Ls | Builtin::Walk | Builtin::Glob
-            | Builtin::Isfile | Builtin::Isdir => Some(Effect::Fs),
+            Builtin::Rd
+            | Builtin::RdJson
+            | Builtin::Rdl
+            | Builtin::Rdjl
+            | Builtin::Rdb
+            | Builtin::Wr
+            | Builtin::Wrl
+            | Builtin::Ls
+            | Builtin::Walk
+            | Builtin::Glob
+            | Builtin::Isfile
+            | Builtin::Isdir => Some(Effect::Fs),
             // Console / env I/O
             Builtin::Prnt | Builtin::Env | Builtin::EnvOr | Builtin::EnvAll => Some(Effect::Io),
             // Time builtins
@@ -1114,7 +1133,9 @@ impl Builtin {
             // Random builtins
             Builtin::Rnd | Builtin::Rndn => Some(Effect::Rand),
             // Process / external execution
-            Builtin::Run | Builtin::Run2 | Builtin::RunFullEnv | Builtin::Run2FullEnv => Some(Effect::Net),
+            Builtin::Run | Builtin::Run2 | Builtin::RunFullEnv | Builtin::Run2FullEnv => {
+                Some(Effect::Net)
+            }
             // Everything else is pure
             _ => None,
         }

@@ -3,6 +3,7 @@ use crate::interpreter::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+#[cfg(feature = "tools")]
 use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Deserialize)]

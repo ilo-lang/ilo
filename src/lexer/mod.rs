@@ -1109,7 +1109,8 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
                     }
                     if scan_end > span.start {
                         // Merge: replace the last Ident token with the full name
-                        let full_name = normalized[tokens.last().unwrap().1.start..scan_end].to_string();
+                        let full_name =
+                            normalized[tokens.last().unwrap().1.start..scan_end].to_string();
                         let full_span = tokens.last().unwrap().1.start..scan_end;
                         let bump = scan_end.saturating_sub(span.end);
                         if bump > 0 {
@@ -1403,8 +1404,13 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
                 // After a dot, keywords like `with`, `type`, `use` are field-name
                 // fragments (e.g. `d.overlap_with_ilo`, `r.user_type`).
                 // Merge them into the snake_case run.
-                Token::With | Token::Type | Token::Use | Token::Tool
-                | Token::Timeout | Token::Retry | Token::Policy => {
+                Token::With
+                | Token::Type
+                | Token::Use
+                | Token::Tool
+                | Token::Timeout
+                | Token::Retry
+                | Token::Policy => {
                     has_underscore = true;
                     j += 2;
                 }

@@ -311,7 +311,7 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
         Decl::Use { .. } => {}           // resolved before codegen — skip
         Decl::VersionPragma { .. } => {} // pragma — no Python output
         Decl::Error { .. } => {}         // poison node — skip
-        Decl::Test { .. } => {}         // shadow test block — skip
+        Decl::Test { .. } => {}          // shadow test block — skip
     }
 }
 
@@ -2278,7 +2278,8 @@ mod tests {
                     ty: Type::Text,
                 }],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {

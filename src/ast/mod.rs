@@ -233,7 +233,10 @@ fn extract_url_host(url: &str) -> String {
     } else {
         url
     };
-    rest.split(['/', '?', '#']).next().unwrap_or(rest).to_string()
+    rest.split(['/', '?', '#'])
+        .next()
+        .unwrap_or(rest)
+        .to_string()
 }
 
 /// True if `pattern` matches `host`.
@@ -1591,7 +1594,8 @@ mod tests {
             name: "f".to_string(),
             params: vec![],
             return_type: Type::Number,
-            effect_set: None, effect_sigils: vec![],
+            effect_set: None,
+            effect_sigils: vec![],
             precondition: None,
             postcondition: None,
             body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(
@@ -1628,7 +1632,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::While {
@@ -1680,7 +1685,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Return(Expr::Call {
@@ -1714,7 +1720,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Destructure {
@@ -1755,7 +1762,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Break(Some(Expr::Call {
@@ -1789,7 +1797,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![
@@ -1816,7 +1825,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::NilCoalesce {
@@ -1864,7 +1874,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Record {
@@ -1907,7 +1918,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
@@ -1961,7 +1973,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::With {
@@ -2015,7 +2028,8 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
@@ -2043,7 +2057,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Match {
@@ -2086,7 +2101,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {

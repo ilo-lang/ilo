@@ -2572,10 +2572,14 @@ fn mcp_cmd() -> i32 {
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": {"code": -32601, "message": "method not found"}
-            })
+            }),
         };
 
-        println!("{}", serde_json::to_string(&response).unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".into()));
+        println!(
+            "{}",
+            serde_json::to_string(&response)
+                .unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".into())
+        );
     }
     0
 }
@@ -2587,15 +2591,18 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
             let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
             let (diags, _) = run_check_internal(source);
             let clean = diags.is_empty();
-            let diag_json: Vec<_> = diags.iter().map(diag_to_json).collect();
+            let _diag_json: Vec<_> = diags.iter().map(diag_to_json).collect();
             let text = if clean {
                 format!("OK: program is valid ({} diagnostics)", diags.len())
             } else {
-                let lines: Vec<_> = diags.iter().map(|d| {
-                    let code = d.code.unwrap_or("");
-                    let msg = &d.message;
-                    format!("{}: {}", code, msg)
-                }).collect();
+                let lines: Vec<_> = diags
+                    .iter()
+                    .map(|d| {
+                        let code = d.code.unwrap_or("");
+                        let msg = &d.message;
+                        format!("{}: {}", code, msg)
+                    })
+                    .collect();
                 lines.join("\n")
             };
             serde_json::json!({
@@ -2606,9 +2613,14 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
         "run" => {
             let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("");
             let func = args.get("func").and_then(|v| v.as_str()).unwrap_or("main");
-            let cli_args: Vec<String> = args.get("args")
+            let cli_args: Vec<String> = args
+                .get("args")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             // Write source to temp file, run it
@@ -2621,13 +2633,17 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
             }
 
             let mut cmd_args = vec![path.to_string_lossy().to_string()];
-            if func != "main" { cmd_args.push(func.to_string()); }
+            if func != "main" {
+                cmd_args.push(func.to_string());
+            }
             cmd_args.extend(cli_args);
 
             // Use the existing run pipeline
-            let output = std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| "ilo".into()))
-                .args(&cmd_args)
-                .output();
+            let output = std::process::Command::new(
+                std::env::current_exe().unwrap_or_else(|_| "ilo".into()),
+            )
+            .args(&cmd_args)
+            .output();
 
             let _ = std::fs::remove_file(&path);
 
@@ -2650,7 +2666,7 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
                 Err(e) => serde_json::json!({
                     "content": [{"type": "text", "text": format!("Failed to spawn: {}", e)}],
                     "isError": true
-                })
+                }),
             }
         }
         "explain" => {
@@ -2658,21 +2674,35 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
             // Reuse the explain lookup
             let text = match diagnostic::registry::lookup(code) {
                 Some(entry) => entry.long.to_string(),
-                None => format!("Unknown error code: {}. Codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.", code),
+                None => format!(
+                    "Unknown error code: {}. Codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.",
+                    code
+                ),
             };
             serde_json::json!({
                 "content": [{"type": "text", "text": text}]
             })
         }
         "constrain" => {
-            let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("states");
+            let mode = args
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("states");
             // Export grammar — reuse the constrain logic
             let result = match mode {
                 "masks" => ilo::constrain::logit_masks_json(),
                 "completions" => {
                     let file = args.get("file").and_then(|v| v.as_str());
-                    let line = args.get("line").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(1);
-                    let col = args.get("col").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(1);
+                    let line = args
+                        .get("line")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .unwrap_or(1);
+                    let col = args
+                        .get("col")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .unwrap_or(1);
                     if let Some(f) = file {
                         if let Ok(source) = std::fs::read_to_string(f) {
                             ilo::constrain::completions_at_cursor(&source, line, col)
@@ -2682,7 +2712,7 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
                     } else {
                         serde_json::json!({"error": "file required for completions mode"})
                     }
-                },
+                }
                 _ => ilo::constrain::state_machine_json(),
             };
             let text = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
@@ -2702,7 +2732,10 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
             }
 
             let (diags_before, _) = run_check_internal(source);
-            let fixable: Vec<_> = diags_before.iter().filter(|d| d.fix_plan.is_some()).collect();
+            let fixable: Vec<_> = diags_before
+                .iter()
+                .filter(|d| d.fix_plan.is_some())
+                .collect();
             let fixes_applied = fixable.len();
 
             // Apply fixes to the temp file content
@@ -2725,13 +2758,23 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
             })
         }
         "skill" => {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("list");
             let name = args.get("name").and_then(|v| v.as_str());
             match action {
                 "list" => {
-                    let items: Vec<_> = SKILLS.iter().map(|s| {
-                        format!("- {}: {}", s.name, &s.description[..s.description.len().min(80)])
-                    }).collect();
+                    let items: Vec<_> = SKILLS
+                        .iter()
+                        .map(|s| {
+                            format!(
+                                "- {}: {}",
+                                s.name,
+                                &s.description[..s.description.len().min(80)]
+                            )
+                        })
+                        .collect();
                     serde_json::json!({
                         "content": [{"type": "text", "text": items.join("\n")}]
                     })
@@ -2752,13 +2795,13 @@ fn mcp_handle_tool(name: &str, args: &serde_json::Value) -> serde_json::Value {
                 _ => serde_json::json!({
                     "content": [{"type": "text", "text": "Unknown action. Use 'list' or 'get'."}],
                     "isError": true
-                })
+                }),
             }
         }
         _ => serde_json::json!({
             "content": [{"type": "text", "text": format!("Unknown tool: {}", name)}],
             "isError": true
-        })
+        }),
     }
 }
 
@@ -3374,7 +3417,10 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
         ast::Decl::TypeDef { name, .. } => Some(name),
         ast::Decl::Alias { name, .. } => Some(name),
         ast::Decl::SumType { name, .. } => Some(name),
-        ast::Decl::Use { .. } | ast::Decl::VersionPragma { .. } | ast::Decl::Error { .. } | ast::Decl::Test { .. } => None,
+        ast::Decl::Use { .. }
+        | ast::Decl::VersionPragma { .. }
+        | ast::Decl::Error { .. }
+        | ast::Decl::Test { .. } => None,
     }
 }
 
@@ -4106,10 +4152,16 @@ fn maybe_autoinstall_skills() {
     ];
 
     for dir in &targets {
-        if dir.join("SKILL.md").exists() { continue; }
+        if dir.join("SKILL.md").exists() {
+            continue;
+        }
         let parent = dir.parent().unwrap_or(Path::new("."));
-        if !parent.exists() { continue; }
-        if fs::create_dir_all(dir).is_err() { continue; }
+        if !parent.exists() {
+            continue;
+        }
+        if fs::create_dir_all(dir).is_err() {
+            continue;
+        }
         let _ = fs::write(dir.join("SKILL.md"), include_str!("../skills/ilo/SKILL.md"));
         for skill in SKILLS {
             let fname = format!("{}.md", skill.name);
@@ -5065,7 +5117,15 @@ fn run_check_internal(source_arg: &str) -> (Vec<Diagnostic>, bool) {
 
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
 
     let (mut program, parse_errors) = parser::parse(token_spans);
@@ -5119,7 +5179,10 @@ fn run_check_internal(source_arg: &str) -> (Vec<Diagnostic>, bool) {
 /// Apply structured fix_plan edits from diagnostics to source files.
 fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
     if !std::path::Path::new(source_arg).is_file() {
-        eprintln!("Error: {} is not a file. ilo fix requires a file path.", source_arg);
+        eprintln!(
+            "Error: {} is not a file. ilo fix requires a file path.",
+            source_arg
+        );
         return 2;
     }
 
@@ -5138,7 +5201,10 @@ fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
         } else {
             eprintln!("No fixable diagnostics found.");
             if !diags.is_empty() {
-                eprintln!("{} diagnostic(s) remain (no structured fix plans available).", diags.len());
+                eprintln!(
+                    "{} diagnostic(s) remain (no structured fix plans available).",
+                    diags.len()
+                );
             }
         }
         return if diags.is_empty() { 0 } else { 1 };
@@ -5168,10 +5234,10 @@ fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
             }
 
             // Apply the replacement: find `before` in the line range, replace with `after`
-            let region: String = modified_lines[line_start..=line_end.min(modified_lines.len() - 1)]
-                .join("\n");
+            let region: String =
+                modified_lines[line_start..=line_end.min(modified_lines.len() - 1)].join("\n");
 
-            if let Some(idx) = region.find(&edit.before) {
+            if let Some(_idx) = region.find(&edit.before) {
                 let new_region = region.replacen(&edit.before, &edit.after, 1);
                 let new_lines: Vec<&str> = new_region.split('\n').collect();
 
@@ -5212,7 +5278,10 @@ fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
 
     // Re-check to count remaining diagnostics
     let (post_diags, post_had_errors) = run_check_internal(source_arg);
-    let remaining = post_diags.iter().filter(|d| d.severity == Severity::Error).count();
+    let remaining = post_diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
 
     if mode == OutputMode::Json {
         println!(
@@ -5234,7 +5303,11 @@ fn fix_cmd(source_arg: &str, write: bool, mode: OutputMode) -> i32 {
         report_diagnostic(d, mode);
     }
 
-    if remaining > 0 || post_had_errors { 1 } else { 0 }
+    if remaining > 0 || post_had_errors {
+        1
+    } else {
+        0
+    }
 }
 
 fn check_cmd(
@@ -5386,20 +5459,30 @@ fn check_cmd(
     // function through the tree interpreter and comparing the result.
     if !had_errors {
         for d in &program.declarations {
-            let ast::Decl::Test { fn_name, assertions, .. } = d else {
+            let ast::Decl::Test {
+                fn_name,
+                assertions,
+                ..
+            } = d
+            else {
                 continue;
             };
             for assertion in assertions {
                 let (afn, args, is_err, expected_lit) = match assertion {
-                    ast::TestAssertion::Ok { fn_name, args, expected, .. } => {
-                        (fn_name, args, false, expected)
-                    }
-                    ast::TestAssertion::Err { fn_name, args, expected_err, .. } => {
-                        (fn_name, args, true, expected_err)
-                    }
+                    ast::TestAssertion::Ok {
+                        fn_name,
+                        args,
+                        expected,
+                        ..
+                    } => (fn_name, args, false, expected),
+                    ast::TestAssertion::Err {
+                        fn_name,
+                        args,
+                        expected_err,
+                        ..
+                    } => (fn_name, args, true, expected_err),
                 };
-                let values: Vec<interpreter::Value> =
-                    args.iter().map(literal_to_value).collect();
+                let values: Vec<interpreter::Value> = args.iter().map(literal_to_value).collect();
                 let arg_desc: String = args
                     .iter()
                     .map(format_literal)
@@ -5433,7 +5516,9 @@ fn check_cmd(
                                         &enrich(
                                             Diagnostic::error(format!(
                                                 "test '{}': expected error ^{} but got {}",
-                                                fn_name, format_literal(expected_lit), result
+                                                fn_name,
+                                                format_literal(expected_lit),
+                                                result
                                             ))
                                             .with_code("ILO-T050"),
                                         ),
@@ -5778,7 +5863,7 @@ fn dispatch_run(
             );
         }
         2
-        } else if r.dense {
+    } else if r.dense {
         println!(
             "{}",
             codegen::fmt::format(&program, codegen::fmt::FmtMode::Dense)
@@ -8498,7 +8583,8 @@ mod tests {
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
-            effect_set: None, effect_sigils: vec![],
+            effect_set: None,
+            effect_sigils: vec![],
             precondition: None,
             postcondition: None,
             body: vec![],
@@ -8908,7 +8994,8 @@ mod tests {
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
-            effect_set: None, effect_sigils: vec![],
+            effect_set: None,
+            effect_sigils: vec![],
             precondition: None,
             postcondition: None,
             body: vec![],
@@ -9458,7 +9545,8 @@ mod tests {
                 ast::Expr::Literal(ast::Literal::Number(42.0)),
             ))],
             span: ast::Span::UNKNOWN,
-            effect_set: None, effect_sigils: vec![],
+            effect_set: None,
+            effect_sigils: vec![],
             precondition: None,
             postcondition: None,
         };
@@ -9516,7 +9604,8 @@ mod tests {
                 unwrap: ast::UnwrapMode::None,
             }))],
             span: ast::Span::UNKNOWN,
-            effect_set: None, effect_sigils: vec![],
+            effect_set: None,
+            effect_sigils: vec![],
             precondition: None,
             postcondition: None,
         };
@@ -10333,11 +10422,7 @@ mod tests {
     #[test]
     fn cli_check_failing_shadow_test_exits_nonzero() {
         let file = std::env::temp_dir().join("ilo_shadow_fail_test.ilo");
-        std::fs::write(
-            &file,
-            "add a:n b:n>n;+a b\ntest add { ok add 2 3 99 }\n",
-        )
-        .unwrap();
+        std::fs::write(&file, "add a:n b:n>n;+a b\ntest add { ok add 2 3 99 }\n").unwrap();
         let out = std::process::Command::new(ilo_bin())
             .args(["check", file.to_str().unwrap()])
             .output()
@@ -10365,11 +10450,7 @@ mod tests {
     #[test]
     fn cli_check_passing_shadow_test_exits_zero() {
         let file = std::env::temp_dir().join("ilo_shadow_pass_test.ilo");
-        std::fs::write(
-            &file,
-            "add a:n b:n>n;+a b\ntest add { ok add 2 3 5 }\n",
-        )
-        .unwrap();
+        std::fs::write(&file, "add a:n b:n>n;+a b\ntest add { ok add 2 3 5 }\n").unwrap();
         let out = std::process::Command::new(ilo_bin())
             .args(["check", file.to_str().unwrap()])
             .output()
@@ -10913,7 +10994,8 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![],
