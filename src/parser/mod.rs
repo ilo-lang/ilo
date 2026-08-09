@@ -93,6 +93,12 @@ pub struct Parser {
     /// a malformed header on line N reports its error span on line N+1 or
     /// later, sending personas to bisect the wrong function.
     decl_boundary: Vec<Option<Span>>,
+    /// Set by `parse_atom_body` when the atom it just produced was an
+    /// adjacent-paren call (`f(x)`), consumed by `parse_call_or_atom` to
+    /// decide whether trailing operands may extend the argument list
+    /// (ILO-544: `fmt2(x)2` ≡ `fmt2(x) 2` ≡ `fmt2 (x) 2`). Read with
+    /// `mem::take` so it never leaks across atoms.
+    paren_call_atom: bool,
     /// Known function arities, populated with builtins at construction
     /// and extended with user-function headers as they're parsed.
     fn_arity: HashMap<String, usize>,
@@ -199,6 +205,7 @@ impl Parser {
             depth: 0,
             max_depth: max_depth.max(1),
             decl_boundary,
+            paren_call_atom: false,
             fn_arity,
             fn_param_is_fn,
             fn_param_names,
@@ -527,8 +534,11 @@ impl Parser {
             {
                 true
             }
-            // `alias` is a plain ident handled in `parse_decl_body`.
-            Some(Token::Ident(s)) if s == "alias" => true,
+            // `alias` and `test` (shadow tests) are plain idents handled in
+            // `parse_decl_body`. `test` was missed when script mode (main)
+            // was merged into this branch, so `test add { ... }` fell into
+            // script-statement collection and died as an undefined call.
+            Some(Token::Ident(s)) if s == "alias" || s == "test" => true,
             // Foreign keywords that reach the parser as plain idents (the lexer
             // does not reserve them). Same reasoning as the `Kw*` arm above:
             // these are other languages' syntax, not ilo statements, and the
@@ -1043,9 +1053,7 @@ impl Parser {
                 // return type), it's a top-level call expression like
                 // `prnt tri 10`. Redirect to P102 (wrap in main>_;) instead
                 // of falling through to parse_fn_decl which emits P011.
-                if Builtin::is_builtin(ident_str)
-                    && !self.line_has_return_type_marker()
-                {
+                if Builtin::is_builtin(ident_str) && !self.line_has_return_type_marker() {
                     let name = ident_str.to_string();
                     return Err(self.error_hint(
                         "ILO-P102",
@@ -1668,35 +1676,38 @@ statement boundary; bind the chain to a local first. For example, split \
                     n
                 }
                 Some(Token::RBrace) => break,
-                _ => return Err(self.error(
-                    "ILO-P016",
-                    "expected policy field name (domain, tokens, or rate)".into(),
-                )),
+                _ => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        "expected policy field name (domain, tokens, or rate)".into(),
+                    ));
+                }
             };
             self.expect(&Token::Colon)?;
             match key.as_str() {
-                "domain" => {
-                    match self.peek() {
-                        Some(Token::Text(s)) => {
-                            domain = Some(s.clone());
-                            self.advance();
-                        }
-                        _ => return Err(self.error(
-                            "ILO-P016",
-                            "policy domain must be a text string".into(),
-                        )),
+                "domain" => match self.peek() {
+                    Some(Token::Text(s)) => {
+                        domain = Some(s.clone());
+                        self.advance();
                     }
-                }
+                    _ => {
+                        return Err(
+                            self.error("ILO-P016", "policy domain must be a text string".into())
+                        );
+                    }
+                },
                 "tokens" => {
                     tokens = Some(self.parse_number()?);
                 }
                 "rate" => {
                     rate = Some(self.parse_number()?);
                 }
-                _ => return Err(self.error(
-                    "ILO-P016",
-                    format!("unknown policy field '{key}' (expected domain, tokens, or rate)"),
-                )),
+                _ => {
+                    return Err(self.error(
+                        "ILO-P016",
+                        format!("unknown policy field '{key}' (expected domain, tokens, or rate)"),
+                    ));
+                }
             }
             if self.peek() == Some(&Token::Comma) {
                 self.advance();
@@ -1895,7 +1906,8 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             _ => Err(self.error(
                 "ILO-P003",
-                "expected a literal (number, string, true, false, nil) in test assertion".to_string(),
+                "expected a literal (number, string, true, false, nil) in test assertion"
+                    .to_string(),
             )),
         }
     }
@@ -3190,7 +3202,9 @@ statement boundary; bind the chain to a local first. For example, split \
             // when only two operands follow. Restricting the keyword reading
             // to the literal ident `h` keeps every other bool-named subject
             // (`?ready a b`, `?ok 1 0`, …) unambiguous and unchanged.
-            if matches!(subj, Expr::Ref(n) if n == "h") && (self.can_start_operand() || self.peek() == Some(&Token::Question)) {
+            if matches!(subj, Expr::Ref(n) if n == "h")
+                && (self.can_start_operand() || self.peek() == Some(&Token::Question))
+            {
                 // ILO-537: allow nested ternary in the else-branch.
                 // When the third operand starts with `?` (a nested ternary
                 // or match), parse it as a full expression instead of a
@@ -3200,13 +3214,19 @@ statement boundary; bind the chain to a local first. For example, split \
                     let stmt = self.parse_match_stmt()?;
                     match stmt {
                         Stmt::Expr(e) => e,
-                        _ => return Err(ParseError {
-                            code: "ILO-P009",
-                            position: self.peek_span().start,
-                            message: "expected expression after `?` in ternary else-branch".into(),
-                            hint: Some("use `?cond a b` for a flat ternary or `?x{...}` for match".into()),
-                            span: self.peek_span(),
-                        }),
+                        _ => {
+                            return Err(ParseError {
+                                code: "ILO-P009",
+                                position: self.peek_span().start,
+                                message: "expected expression after `?` in ternary else-branch"
+                                    .into(),
+                                hint: Some(
+                                    "use `?cond a b` for a flat ternary or `?x{...}` for match"
+                                        .into(),
+                                ),
+                                span: self.peek_span(),
+                            });
+                        }
                     }
                 } else {
                     self.parse_prefix_binop_operand()?
@@ -4422,13 +4442,15 @@ statement boundary; bind the chain to a local first. For example, split \
                 let stmt = self.parse_match_stmt()?;
                 match stmt {
                     Stmt::Expr(e) => e,
-                    _ => return Err(ParseError {
-                        code: "ILO-P009",
-                        position: self.peek_span().start,
-                        message: "expected expression in ternary else-branch".into(),
-                        hint: None,
-                        span: self.peek_span(),
-                    }),
+                    _ => {
+                        return Err(ParseError {
+                            code: "ILO-P009",
+                            position: self.peek_span().start,
+                            message: "expected expression in ternary else-branch".into(),
+                            hint: None,
+                            span: self.peek_span(),
+                        });
+                    }
                 }
             }
         } else {
@@ -4536,7 +4558,9 @@ statement boundary; bind the chain to a local first. For example, split \
             // to write `x=?h cn "a" "b"` without falling back to a helper or
             // the brace form when the condition is an expression rather than
             // a bare bool ref.
-            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && (self.can_start_operand() || self.peek() == Some(&Token::Question)) {
+            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h")
+                && (self.can_start_operand() || self.peek() == Some(&Token::Question))
+            {
                 // ILO-537: allow nested ternary in else-branch (same fix as
                 // parse_match_stmt and parse_prefix_ternary).
                 let third = if self.peek() == Some(&Token::Question) {
@@ -5082,6 +5106,38 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
     /// Also handles zero-arg calls: `func()`
     fn parse_call_or_atom(&mut self) -> Result<Expr> {
         let atom = self.parse_atom()?;
+        let was_paren_call = std::mem::take(&mut self.paren_call_atom);
+
+        // ILO-544: a paren group need not be the whole argument list. At
+        // expression head, `fmt2(x)2` / `fmt2(x) 2` keep collecting trailing
+        // operands with the same greedy loop the spaced form (`fmt2 (x) 2`)
+        // uses, so glued and spaced parse identically. Backwards compatible:
+        // an operand after a completed call here was previously a hard
+        // ILO-P001. Only fires when the atom is exactly the call — a
+        // field-chained result (`f(x).0`) is a value, not an open arg list.
+        if was_paren_call && self.can_start_operand() {
+            if let Expr::Call {
+                function,
+                mut args,
+                unwrap,
+            } = atom
+            {
+                let outer_arity_known = self.fn_arity.get(&function).copied();
+                while self.can_start_operand() {
+                    let arg_idx = args.len();
+                    let in_fn_pos = self.is_fn_ref_position(&function, arg_idx);
+                    let outer_ctx = outer_arity_known
+                        .filter(|&k| k > 0)
+                        .map(|k| (function.as_str(), k, arg_idx));
+                    args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
+                }
+                return Ok(Expr::Call {
+                    function,
+                    args,
+                    unwrap,
+                });
+            }
+        }
 
         // If atom is a Ref, check if it's a call or record construction
         if let Expr::Ref(ref name) = atom {
@@ -5950,9 +6006,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         // body absorbs `prnt quad 7` from the next line as extra call args.
         // A top-level newline always means "end of current function body";
         // any ident after it is a new declaration.
-        if self.boundary_at_cursor().is_some()
-            && matches!(self.peek(), Some(Token::Ident(_)))
-        {
+        if self.boundary_at_cursor().is_some() && matches!(self.peek(), Some(Token::Ident(_))) {
             return false;
         }
         // In script-mode statement collection every top-level line is its own
@@ -6282,7 +6336,13 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                         args,
                         unwrap: UnwrapMode::None,
                     };
-                    return self.parse_field_chain(call, None);
+                    let chained = self.parse_field_chain(call, None)?;
+                    // Mark for `parse_call_or_atom` (ILO-544): at expression
+                    // head this call's argument list may be extended by
+                    // trailing operands, exactly as the spaced postfix form
+                    // would collect them.
+                    self.paren_call_atom = true;
+                    return Ok(chained);
                 }
                 // Check for field access chain: ident.field.field...
                 let expr = Expr::Ref(name.clone());
