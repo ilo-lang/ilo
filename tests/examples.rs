@@ -108,7 +108,16 @@ fn examples() {
                 .unwrap_or_else(|e| panic!("failed to run ilo for {name}: {e}"));
 
             let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            // Strip advisory `hint:` lines (e.g. the `.ilo` extension
+            // deprecation) — same rule as src/cli/test_runner.rs, so `-- err:`
+            // assertions don't depend on the extension a file happens to use.
+            let stderr = String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("hint:"))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string();
 
             match case.expect {
                 Expect::Stdout => {

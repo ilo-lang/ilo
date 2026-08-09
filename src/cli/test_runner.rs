@@ -247,7 +247,17 @@ pub fn run(args: TestArgs) -> i32 {
                 };
 
                 let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                // Advisory `hint:` lines (e.g. the `.ilo` extension
+                // deprecation) are not part of a program's error output;
+                // matching on them would make every `-- err:` assertion
+                // depend on the file extension it happens to be run from.
+                let stderr = String::from_utf8_lossy(&out.stderr)
+                    .lines()
+                    .filter(|l| !l.trim_start().starts_with("hint:"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .trim()
+                    .to_string();
 
                 let (ok, detail) = match case.expect {
                     Expect::Stdout => {
