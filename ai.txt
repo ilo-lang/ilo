@@ -2,7 +2,7 @@ INTRO: ilo is a token-optimised, prefix-notation language for AI agents. Every t
 
 QUICK START: Function: `f x:n>n;+x 1`. Entry point: `main>_;prnt "hello"`. Types: n=number t=text b=bool _=any L n=list R n t=result. Prefix ops: `+a b` `*a b` `-a b` `/a b` `>a b` `=a b` `!b`. No infix needed. Semicolons separate statements. Last expression returns. Comments: `--`.
 
-SPACING: Every token needs whitespace. `90"A"` fails — write `90 "A"`. `func(x)2` fails — write `func (x) 2` or `func x 2`.
+SPACING: `90"A"` and `func(x)2` both parse (ILO-537/544): a paren group extends with trailing operands, so `func(x)2` ≡ `func(x) 2` ≡ `func x 2`. Prefer spaces for readability; they cost the same.
 
 MODULES: Load only what the task needs. Each module is 1-4K tokens.
   ilo skill get ilo-language      syntax, types, operators, guards, match, ternary, pipes, records
