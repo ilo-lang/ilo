@@ -5141,6 +5141,20 @@ pub fn compile(
 ) -> Option<JitFunction> {
     // Find the entry function index by matching chunk pointer
     let entry_idx = program.chunks.iter().position(|c| std::ptr::eq(c, chunk))?;
+
+    // ILO-540: if the entry function contains OP_CALL_DYN (closure calls),
+    // bail to VM. The JIT's per-closure-call overhead (fresh VM creation
+    // + tree-bridge) makes it 5x SLOWER than the VM for HOF-heavy code.
+    // Falling back to VM gives 188µs/call vs JIT's 1020µs/call on hof.
+    let entry_chunk = &program.chunks[entry_idx];
+    let has_closure_calls = entry_chunk.code.iter().any(|inst| {
+        let op = (inst >> 24) as u8;
+        op == super::OP_CALL_DYN || op == super::OP_MAKE_CLOSURE
+    });
+    if has_closure_calls {
+        return None; // NotEligible -> main.rs falls back to VM
+    }
+
     compile_program(program, entry_idx)
 }
 
