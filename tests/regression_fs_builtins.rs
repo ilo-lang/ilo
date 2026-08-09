@@ -82,7 +82,7 @@ fn run_err(engine: &str, src: &str, args: &[&str]) -> String {
 fn ls_basic_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t>R (L t) t;lsd d";
+    let src = "f d:t>R (L t) t /fs;lsd d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         assert_eq!(out, "[a.txt, b.txt, sub]", "{engine}: ls basic");
@@ -94,7 +94,7 @@ fn ls_basic_cross_engine() {
 fn ls_empty_dir_cross_engine() {
     let dir = tempdir().unwrap();
     let root = dir.path().to_str().unwrap();
-    let src = "f d:t>R (L t) t;lsd d";
+    let src = "f d:t>R (L t) t /fs;lsd d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         assert_eq!(out, "[]", "{engine}: ls empty");
@@ -106,7 +106,7 @@ fn ls_empty_dir_cross_engine() {
 /// the exit code is non-zero — same shape as `rd` on a missing file.
 #[test]
 fn ls_missing_dir_cross_engine() {
-    let src = "f d:t>R (L t) t;lsd d";
+    let src = "f d:t>R (L t) t /fs;lsd d";
     for engine in ENGINES_ALL {
         let out = run_err(
             engine,
@@ -127,7 +127,7 @@ fn ls_missing_dir_cross_engine() {
 fn walk_recursive_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t>R (L t) t;walk d";
+    let src = "f d:t>R (L t) t /fs;walk d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         // Sort order is lexicographic on the relative paths.
@@ -141,7 +141,7 @@ fn walk_recursive_cross_engine() {
 /// `walk` on a non-existent root surfaces as Err.
 #[test]
 fn walk_missing_dir_cross_engine() {
-    let src = "f d:t>R (L t) t;walk d";
+    let src = "f d:t>R (L t) t /fs;walk d";
     for engine in ENGINES_ALL {
         let out = run_err(
             engine,
@@ -161,7 +161,7 @@ fn walk_missing_dir_cross_engine() {
 fn glob_star_single_segment_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t p:t>R (L t) t;glob d p";
+    let src = "f d:t p:t>R (L t) t /fs;glob d p";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root, "*.txt"]);
         assert_eq!(out, "[a.txt, b.txt]", "{engine}: glob *.txt");
@@ -175,7 +175,7 @@ fn glob_star_single_segment_cross_engine() {
 fn glob_double_star_recursive_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t p:t>R (L t) t;glob d p";
+    let src = "f d:t p:t>R (L t) t /fs;glob d p";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root, "**/*.txt"]);
         // Sorted lexicographically; nested e.txt appears, d.log does not.
@@ -191,7 +191,7 @@ fn glob_double_star_recursive_cross_engine() {
 fn glob_char_class_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t p:t>R (L t) t;glob d p";
+    let src = "f d:t p:t>R (L t) t /fs;glob d p";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root, "[ab].txt"]);
         assert_eq!(out, "[a.txt, b.txt]", "{engine}: glob [ab].txt");
@@ -201,7 +201,7 @@ fn glob_char_class_cross_engine() {
 /// `glob` on a non-existent root surfaces as Err — same shape as `walk`.
 #[test]
 fn glob_missing_dir_cross_engine() {
-    let src = "f d:t p:t>R (L t) t;glob d p";
+    let src = "f d:t p:t>R (L t) t /fs;glob d p";
     for engine in ENGINES_ALL {
         let out = run_err(
             engine,
@@ -221,7 +221,7 @@ fn glob_missing_dir_cross_engine() {
 fn glob_no_matches_returns_empty_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t p:t>R (L t) t;glob d p";
+    let src = "f d:t p:t>R (L t) t /fs;glob d p";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root, "no-such-pattern-*.xyzzy"]);
         assert_eq!(out, "[]", "{engine}: glob empty match");
@@ -235,7 +235,7 @@ fn glob_no_matches_returns_empty_cross_engine() {
 fn walk_single_file_cross_engine() {
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("only.txt"), "x").unwrap();
-    let src = "f d:t>R (L t) t;walk d";
+    let src = "f d:t>R (L t) t /fs;walk d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", dir.path().to_str().unwrap()]);
         assert_eq!(out, "[only.txt]", "{engine}: walk single file");
@@ -296,7 +296,7 @@ fn restore_perm_fixture(fix: &tempfile::TempDir) {
 fn walk_skips_permission_denied_subdir_cross_engine() {
     let fix = make_perm_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t>R (L t) t;walk d";
+    let src = "f d:t>R (L t) t /fs;walk d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         assert_eq!(
@@ -315,7 +315,7 @@ fn walk_skips_permission_denied_subdir_cross_engine() {
 fn glob_skips_permission_denied_subdir_cross_engine() {
     let fix = make_perm_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t p:t>R (L t) t;glob d p";
+    let src = "f d:t p:t>R (L t) t /fs;glob d p";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root, "**/*.txt"]);
         assert_eq!(
@@ -342,7 +342,7 @@ fn walk_unreadable_root_is_err_cross_engine() {
     perm.set_mode(0o000);
     fs::set_permissions(&locked, perm).unwrap();
 
-    let src = "f d:t>R (L t) t;walk d";
+    let src = "f d:t>R (L t) t /fs;walk d";
     for engine in ENGINES_ALL {
         let out = run_err(engine, src, &["f", locked.to_str().unwrap()]);
         assert!(
