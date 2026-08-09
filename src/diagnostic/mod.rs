@@ -180,11 +180,13 @@ use crate::ast::SourceMap;
 /// that replaces the primary span with X.
 fn derive_typo_rename(d: &Diagnostic, source: &str) -> Option<FixPlan> {
     let hint = d.suggestion.as_deref()?;
-    // Match: did you mean 'X'?
-    let after = hint
-        .strip_prefix("did you mean '")?
-        .strip_suffix("'?")?
-        .to_string();
+    // Match: did you mean 'X'? — take the first quoted name rather than
+    // anchoring on the string end, because advisories may be appended after
+    // the question (the ILO-504 hoisting note broke the old
+    // `strip_suffix("'?")` parse and silently nulled every T003/T004/T005
+    // fix_plan).
+    let rest = hint.strip_prefix("did you mean '")?;
+    let after = rest[..rest.find('\'')?].to_string();
 
     let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
     if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
@@ -742,7 +744,10 @@ mod tests {
     fn from_vm_runtime_error() {
         use crate::ast::Span;
         let e = crate::vm::VmRuntimeError {
-            error: crate::vm::VmError::DivisionByZero { dividend: 10.0, divisor: 0.0 },
+            error: crate::vm::VmError::DivisionByZero {
+                dividend: 10.0,
+                divisor: 0.0,
+            },
             span: Some(Span { start: 3, end: 6 }),
             call_stack: vec!["g".to_string()],
         };
@@ -798,7 +803,10 @@ mod tests {
 
     #[test]
     fn from_vm_error_division_by_zero() {
-        let e = crate::vm::VmError::DivisionByZero { dividend: 10.0, divisor: 0.0 };
+        let e = crate::vm::VmError::DivisionByZero {
+            dividend: 10.0,
+            divisor: 0.0,
+        };
         let d = Diagnostic::from(&e);
         assert_eq!(d.code, Some("ILO-R003"));
         assert!(d.message.contains("division by zero"));
@@ -1124,8 +1132,10 @@ mod test_ilo501 {
             .derive_fix_plan();
         let plan = d.fix_plan.expect("fix_plan should be derived for T005");
         assert_eq!(
-            plan.edits.len(), 2,
-            "should find both occurrences of lenh, found {}", plan.edits.len()
+            plan.edits.len(),
+            2,
+            "should find both occurrences of lenh, found {}",
+            plan.edits.len()
         );
     }
 }
