@@ -1,0 +1,23 @@
+-- foreach-vs-map.ilo — `@x xs{...}` vs `map (x:_>_;...) xs`.
+--
+-- Both compute the same result. The `@x xs{...}` foreach form is preferred
+-- because it costs fewer tokens AND reads more naturally as "for each x in
+-- xs do ...". Use `map` when you need to build a list from a transformation;
+-- use `@x` when you're folding into an accumulator or doing side effects.
+
+-- Preferred: @x foreach with explicit accumulator. 4 tokens after the
+-- function header.
+sum-foreach xs:L n>n
+  total=0
+  @x xs{total=+total x}
+  total
+
+-- Equivalent: build a list of zeros and reduce, or use fld directly. fld
+-- is shorter (and the right choice when you don't need an accumulator
+-- visible by name), but the foreach above generalises to side effects.
+sum-fld xs:L n>n;fld (acc:n x:n>n;+acc x) xs 0
+
+-- run: sum-foreach [1 2 3 4 5]
+-- out: 15
+-- run: sum-fld [1 2 3 4 5]
+-- out: 15
