@@ -953,20 +953,23 @@ impl Parser {
             ));
         }
         // Any other builtin name used as binding LHS: `flat=...`, `frq=...`,
-        // `map=...`, etc. Personas hit this constantly (pdf-analyst rerun3 #6:
-        // `flat=cat ls " "` then `spl flat ". "` mis-dispatched to the builtin
-        // and surfaced as `arity mismatch: 'flat' expects 1 args, got 0`).
-        // Mirrors `parse_fn_decl`'s existing `Builtin::is_builtin` rejection.
+        // `map=...`, etc. Previously a hard error (ILO-P011); now allowed
+        // because the model (LLM) naturally reaches for these names and the
+        // 5-retry repair loop can't fix them reliably. The local binding
+        // shadows the builtin in value position (`rev` alone → local var).
+        // In call position (`rev xs`) the builtin is still dispatched.
+        // This mirrors Python's `sum = 5` shadowing behavior.
+        //
+        // The risk: if code later writes `rev args` intending the variable,
+        // it silently calls the builtin. For LLM-generated code this is
+        // vanishingly rare — the model writes `[n rev]` or `prnt rev`,
+        // never `rev something` after binding `rev`.
         if let Some(Token::Ident(name)) = self.peek()
             && self.token_at(self.pos + 1) == Some(&Token::Eq)
             && Builtin::is_builtin(name)
         {
-            let name = name.clone();
-            return Err(self.error_hint(
-                "ILO-P011",
-                format!("`{name}` is a builtin and cannot be used as a binding name"),
-                format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
-            ));
+            // Silently allow — the binding proceeds normally.
+            // The verifier resolves `rev` as a local in value position.
         }
         // Generic top-level `name=expr` shape: a binding written at the top
         // level without a `main>_;` wrapper (or any function header). The
@@ -2884,23 +2887,11 @@ statement boundary; bind the chain to a local first. For example, split \
                 if self.pos + 1 < self.tokens.len()
                     && self.token_at(self.pos + 1) == Some(&Token::Eq)
                 {
-                    // Reject builtin-named binding LHS: `flat=...`, `frq=...`,
-                    // `map=...`, etc. Without this, the local binding is
-                    // silently accepted but any later use in operand position
-                    // resolves to the builtin (the verifier checks
-                    // `is_builtin` before locals), surfacing as a misleading
-                    // `ILO-T006 arity mismatch` (pdf-analyst rerun3 #6).
-                    // Mirrors `parse_fn_decl`'s precedent (PR #245).
-                    if let Some(Token::Ident(name)) = self.peek()
-                        && Builtin::is_builtin(name)
-                    {
-                        let name = name.clone();
-                        return Err(self.error_hint(
-                            "ILO-P011",
-                            format!("`{name}` is a builtin and cannot be used as a binding name"),
-                            format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
-                        ));
-                    }
+                    // Builtin-named binding LHS: `rev=...`, `avg=...`, etc.
+                    // Previously a hard error (ILO-P011); now allowed (ILO-540b).
+                    // The local binding shadows the builtin in value position.
+                    // In call position the builtin is still dispatched.
+                    // This mirrors Python's `sum = 5` shadowing behavior.
                     // Builtin alias used as binding name (`rng`, `head`,
                     // `length`, etc.). The alias resolver later rewrites the
                     // call to the canonical builtin, so the binding is
@@ -5048,7 +5039,21 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 ident_span.end > 0 && bang_span.start == ident_span.end
             };
             if !(is_record || is_field || is_zero_arg_call || is_unwrap) {
-                let inner_name = name.clone();
+                // ILO-540b: if NO operands follow this known-arity name,
+                // create a Ref (not a 0-arg Call). This lets local bindings
+                // that shadow builtins (rev=5; prnt rev) resolve to the
+                // local variable instead of a mis-dispatched builtin call.
+                let inner_name = name.clone(); // break borrow before pos manipulation
+                let next_starts_operand = {
+                    let saved = self.pos;
+                    self.pos = saved + 1;
+                    let result = self.can_start_operand();
+                    self.pos = saved;
+                    result
+                };
+                if !next_starts_operand {
+                    return self.parse_operand();
+                }
                 self.advance(); // consume the inner function ident
                 let mut inner_args = Vec::with_capacity(arity);
                 for i in 0..arity {
