@@ -1506,8 +1506,10 @@ fn builtin_check_args(
             }
             (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
-        "abs" | "flr" | "cel" | "rou" | "sqrt" | "log" | "exp" | "sin" | "cos" | "tan"
-        | "log10" | "log2" | "asin" | "acos" | "atan" => {
+        "abs" | "flr" | "cel" | "sqrt" | "log" | "exp" | "sin" | "cos" | "tan" | "log10"
+        | "log2" | "asin" | "acos" | "atan" | "rou"
+            if !(name == "rou" && arg_types.len() == 2) =>
+        {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Number)
             {
@@ -5640,9 +5642,10 @@ impl VerifyContext {
                             format!(
                                 "call to '{function}' may violate precondition {precond_str} — add a guard"
                             ),
-                            Some(format!(
+                            Some(
                                 "guard before the call: negate the condition (e.g. for req b!=0, add `=b 0 ^\"...\"` before the call) or wrap in a match on R"
-                            )),
+                                    .to_string(),
+                            ),
                             Some(span),
                         );
                     }
@@ -6591,9 +6594,7 @@ impl VerifyContext {
                             "pst" | "put" | "pat" | "pstx" | "wr" | "padl" | "padr"
                         ) {
                             "2 or 3".to_string()
-                        } else if callee == "min" || callee == "max" {
-                            "1 or 2".to_string()
-                        } else if callee == "rou" {
+                        } else if matches!(callee.as_str(), "min" | "max" | "rou") {
                             "1 or 2".to_string()
                         } else if callee == "run" || callee == "run2" {
                             "2 or 3".to_string()

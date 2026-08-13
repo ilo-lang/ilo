@@ -5529,7 +5529,7 @@ fn check_cmd(
                             }
                         } else {
                             let exp_val = literal_to_value(expected_lit);
-                            if &result != &exp_val {
+                            if result != exp_val {
                                 report_diagnostic(
                                     &enrich(
                                         Diagnostic::error(format!(
