@@ -5063,11 +5063,59 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 ident_span.end > 0 && bang_span.start == ident_span.end
             };
             if !(is_record || is_field || is_zero_arg_call || is_unwrap) {
+                // Paren-form call as a call ARGUMENT: `prnt fmt2(3.14, 2)`,
+                // `prnt at([5 6 7], 1)`. The statement-head and operand
+                // positions already handle adjacent-paren calls (ILO-544);
+                // without the same branch here the arity-driven positional
+                // loop below parses `(3.14, 2)` as a grouped expression and
+                // dies on the comma with ILO-P003.
+                let inner_name = name.clone(); // break borrow before pos manipulation
+                if next == Some(&Token::LParen) {
+                    let paren_name = inner_name.clone();
+                    let saved = self.pos;
+                    self.advance(); // consume the inner function ident
+                    if self.is_adjacent_lparen() && !self.looks_like_inline_lambda() {
+                        let args = self.parse_paren_call_args_for(Some(&paren_name))?;
+                        let call = Expr::Call {
+                            function: paren_name,
+                            args,
+                            unwrap: UnwrapMode::None,
+                        };
+                        // ILO-544: the paren group need not be the whole
+                        // argument list — `at([5 6 7])1` glues the remaining
+                        // operand on. Extend inline up to the known arity
+                        // rather than via `paren_call_atom`, which is only
+                        // consumed by `parse_call_or_atom` and would leak
+                        // into an unrelated atom from here.
+                        let Expr::Call {
+                            function,
+                            mut args,
+                            unwrap,
+                        } = call
+                        else {
+                            unreachable!("just constructed a Call")
+                        };
+                        while args.len() < arity && self.can_start_operand() {
+                            let arg_idx = args.len();
+                            let in_fn_pos = self.is_fn_ref_position(&function, arg_idx);
+                            args.push(self.parse_call_arg(
+                                in_fn_pos,
+                                Some((&function.clone(), arity, arg_idx)),
+                            )?);
+                        }
+                        let call = Expr::Call {
+                            function,
+                            args,
+                            unwrap,
+                        };
+                        return self.parse_field_chain(call, None);
+                    }
+                    self.pos = saved;
+                }
                 // ILO-540b: if NO operands follow this known-arity name,
                 // create a Ref (not a 0-arg Call). This lets local bindings
                 // that shadow builtins (rev=5; prnt rev) resolve to the
                 // local variable instead of a mis-dispatched builtin call.
-                let inner_name = name.clone(); // break borrow before pos manipulation
                 let next_starts_operand = {
                     let saved = self.pos;
                     self.pos = saved + 1;

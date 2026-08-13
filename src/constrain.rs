@@ -891,8 +891,7 @@ pub fn state_machine_json() -> Value {
             )
         })
         .collect();
-    let states_map: serde_json::Map<String, Value> =
-        states.into_iter().map(|(k, v)| (k, v)).collect();
+    let states_map: serde_json::Map<String, Value> = states.into_iter().collect();
 
     json!({
         "schemaVersion": 1,
@@ -1118,7 +1117,6 @@ mod tests {
     #[test]
     fn logit_masks_toplevel_has_valid_tokens() {
         let lm = logit_masks_json();
-        let vocab = lm["vocabulary"].as_array().unwrap();
         let mask = lm["masks"]["TopLevel"].as_array().unwrap();
         let count: usize = mask.iter().map(|v| v.as_u64().unwrap() as usize).sum();
         assert!(count > 0, "TopLevel must have at least one valid token");
@@ -1244,7 +1242,6 @@ mod tests {
 
     #[test]
     fn completions_after_fn_name() {
-        let result = completions_at_cursor("fn add ", 1, 8);
         // `fn` is a reserved keyword that the parser rejects, but the state
         // machine should still track it — `fn` doesn't have a TokenCat, so it's
         // skipped and we stay at TopLevel.  Use `add` (an ident) instead.
