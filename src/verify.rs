@@ -255,6 +255,16 @@ struct VerifyContext {
     /// binding is at the top (last element). Used by ILO-T048 to detect
     /// `x=+x 1`-style rebinds of the loop iterator variable inside `@x` loops.
     loop_bindings: Vec<String>,
+    /// Names bound by top-level `Let` statements in `main`'s body. Used by
+    /// the ILO-T004 hint (ILO-546): when an undefined variable inside
+    /// another function is actually a main/script-level binding, the model
+    /// almost always glued a top-level statement onto that function's line
+    /// (script mode collects own-line statements into main; same-line
+    /// statements join the preceding body). Naming the real fix beats the
+    /// generic enclosing-fn lambda advisory, which sends the model the
+    /// wrong way for this shape (grade-calculator failed 3/3 on it in the
+    /// ILO-364 N=5 benchmark).
+    main_bindings: std::collections::HashSet<String>,
     /// Function names whose declaration failed to parse. Populated from
     /// `Program.parse_failed_fns` at the start of `verify`. Two effects:
     ///   1. We skip type-checking the body of any function in this set (its
@@ -4800,6 +4810,7 @@ impl VerifyContext {
             errors: Vec::new(),
             in_loop: false,
             loop_bindings: Vec::new(),
+            main_bindings: std::collections::HashSet::new(),
             parse_failed_fns: HashMap::new(),
             glued_eq_binding_sites: std::collections::HashSet::new(),
             suppressed_undef_reported: std::collections::HashSet::new(),
@@ -4844,6 +4855,19 @@ impl VerifyContext {
 
     /// Phase 1: collect all declarations, check for duplicates and undefined Named types.
     fn collect_declarations(&mut self, program: &Program) {
+        // ILO-546: record main's top-level Let names for the T004 glue hint.
+        for decl in &program.declarations {
+            if let Decl::Function { name, body, .. } = decl
+                && name == "main"
+            {
+                for s in body {
+                    if let crate::ast::Stmt::Let { name: n, .. } = &s.node {
+                        self.main_bindings.insert(n.clone());
+                    }
+                }
+            }
+        }
+
         // Pass 0: collect type aliases (before types so aliases can be used in type fields)
         let builtin_type_names = ["n", "t", "b", "L", "R"];
         let mut raw_aliases: HashMap<String, Type> = HashMap::new();
@@ -6451,14 +6475,27 @@ impl VerifyContext {
                                 closest_match(name, candidates.iter())
                                     .map(|s| format!("did you mean '{s}'?"))
                             });
-                        // ILO-504: append hoisting advisory for all undefined
-                        // variables. Nested fn declarations are silently
-                        // hoisted to siblings in single-line form; if the
-                        // model intended a capture, the undefined-variable
-                        // error is the only signal.
-                        base_hint.map(|h| format!(
-                            "{h} (or if '{name}' is from an enclosing fn, use an inline lambda: `(x:n>n;...{name}...)`)"
-                        ))
+                        // ILO-546: if the name IS a main/script-level binding,
+                        // the statement referencing it was almost certainly
+                        // glued onto this function's line — script mode only
+                        // collects statements that start their own top-level
+                        // line. Name the one-edit fix instead of the generic
+                        // lambda advisory, which sends the model the wrong way
+                        // for this shape.
+                        if func != "main" && self.main_bindings.contains(name) {
+                            Some(format!(
+                                "'{name}' is bound at top level, but this statement is glued into '{func}''s body — put it on its own line (unindented) so script mode runs it in main"
+                            ))
+                        } else {
+                            // ILO-504: append hoisting advisory for all undefined
+                            // variables. Nested fn declarations are silently
+                            // hoisted to siblings in single-line form; if the
+                            // model intended a capture, the undefined-variable
+                            // error is the only signal.
+                            base_hint.map(|h| format!(
+                                "{h} (or if '{name}' is from an enclosing fn, use an inline lambda: `(x:n>n;...{name}...)`)"
+                            ))
+                        }
                     };
                     self.err(
                         "ILO-T004",
