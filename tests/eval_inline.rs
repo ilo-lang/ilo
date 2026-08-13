@@ -895,18 +895,22 @@ fn help_ai_and_ai_flag_produce_same_output() {
 }
 
 #[test]
-fn help_ai_contains_no_blank_lines() {
+fn help_ai_is_bootstrap_index_sized() {
+    // ILO-538: `help ai` serves a hand-maintained bootstrap index (language
+    // kernel + `ilo skill get` module table), not the SPEC-compacted
+    // monolith. The old no-blank-lines invariant belonged to the compactor;
+    // the invariant that matters now is the token budget. Cap generously in
+    // bytes (~3K tokens) so the index cannot silently regrow toward the
+    // ~180KB monolith this replaced.
     let out = ilo()
         .args(["help", "ai"])
         .output()
         .expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for line in stdout.lines() {
-        assert!(
-            !line.trim().is_empty(),
-            "unexpected blank line in compact spec"
-        );
-    }
+    let n = out.stdout.len();
+    assert!(
+        n < 12_000,
+        "bootstrap index has regrown to {n} bytes — it replaced a 180KB monolith for a reason (ILO-538)"
+    );
 }
 
 #[test]
@@ -947,11 +951,20 @@ fn help_ai_preserves_key_content() {
         .output()
         .expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // Core syntax constructs must be present
-    assert!(stdout.contains("fac n:n>n"), "missing factorial pattern");
-    assert!(stdout.contains("FUNCTIONS:"), "missing FUNCTIONS section");
-    assert!(stdout.contains("TYPES:"), "missing TYPES section");
-    assert!(stdout.contains("OPERATORS:"), "missing OPERATORS section");
+    // ILO-538 bootstrap-index contract: the kernel one-pager plus the
+    // module-loading instructions must be present. Content details live in
+    // the modular skills, so we pin the index's load-bearing parts, not
+    // section names from the retired SPEC compactor.
+    assert!(stdout.contains("QUICK START"), "missing kernel quick start");
+    assert!(stdout.contains("MODULES"), "missing module table");
+    assert!(
+        stdout.contains("ilo skill get"),
+        "missing module load instructions"
+    );
+    assert!(
+        stdout.contains("RESERVED NAMES"),
+        "missing reserved-names warning"
+    );
 }
 
 #[test]

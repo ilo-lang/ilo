@@ -2552,7 +2552,10 @@ impl RegCompiler {
                     is_defer_fn.push(body_has_defer(body));
                 }
                 Decl::Tool {
-                    name, return_type, policy, ..
+                    name,
+                    return_type,
+                    policy,
+                    ..
                 } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
@@ -9507,7 +9510,10 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         let dv = cv.as_number();
                         if dv == 0.0 {
-                            vm_err!(VmError::DivisionByZero { dividend: bv.as_number(), divisor: dv });
+                            vm_err!(VmError::DivisionByZero {
+                                dividend: bv.as_number(),
+                                divisor: dv
+                            });
                         }
                         reg_set!(a, NanVal::number(bv.as_number() / dv));
                     } else {
@@ -11001,9 +11007,8 @@ impl<'a> VM<'a> {
                         if let Some(Some(pol)) = self.program.tool_policies.get(func_idx as usize) {
                             if let Some(Value::Text(url)) = value_args.first() {
                                 if let Err(msg) = pol.check_domain(url) {
-                                    let result = Value::Err(Box::new(Value::Text(
-                                        std::sync::Arc::new(msg)
-                                    )));
+                                    let result =
+                                        Value::Err(Box::new(Value::Text(std::sync::Arc::new(msg))));
                                     let nan_result = NanVal::from_value(&result);
                                     reg_set!(base + a as usize, nan_result);
                                     continue;
@@ -11017,7 +11022,9 @@ impl<'a> VM<'a> {
                                 if let Some(rt) = self.tokio_runtime {
                                     rt.block_on(_provider.call(_tool_name, value_args))
                                         .unwrap_or_else(|e| {
-                                            Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))
+                                            Value::Err(Box::new(Value::Text(Arc::new(
+                                                e.to_string(),
+                                            ))))
                                         })
                                 } else {
                                     let _ = value_args;
@@ -11736,7 +11743,10 @@ impl<'a> VM<'a> {
                     let kv = unsafe { *nan_consts.get_unchecked(c) };
                     let dv = kv.as_number();
                     if dv == 0.0 {
-                        vm_err!(VmError::DivisionByZero { dividend: reg!(b).as_number(), divisor: dv });
+                        vm_err!(VmError::DivisionByZero {
+                            dividend: reg!(b).as_number(),
+                            divisor: dv
+                        });
                     }
                     let result = NanVal::number(reg!(b).as_number() / dv);
                     unsafe {
@@ -11789,7 +11799,10 @@ impl<'a> VM<'a> {
                     // SAFETY: same as OP_SUB_NN.
                     let dv = reg!(c).as_number();
                     if dv == 0.0 {
-                        vm_err!(VmError::DivisionByZero { dividend: reg!(b).as_number(), divisor: dv });
+                        vm_err!(VmError::DivisionByZero {
+                            dividend: reg!(b).as_number(),
+                            divisor: dv
+                        });
                     }
                     let result = NanVal::number(reg!(b).as_number() / dv);
                     unsafe {
@@ -16047,8 +16060,18 @@ pub(crate) extern "C" fn jit_mul(a: u64, b: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_raise_divzero(dividend_boxed: u64, span_bits: u64) -> u64 {
     let dv = NanVal(dividend_boxed);
-    let dividend = if dv.is_number() { dv.as_number() } else { f64::NAN };
-    jit_set_runtime_error_with_span(VmError::DivisionByZero { dividend, divisor: 0.0 }, span_bits);
+    let dividend = if dv.is_number() {
+        dv.as_number()
+    } else {
+        f64::NAN
+    };
+    jit_set_runtime_error_with_span(
+        VmError::DivisionByZero {
+            dividend,
+            divisor: 0.0,
+        },
+        span_bits,
+    );
     TAG_NIL
 }
 
@@ -16060,7 +16083,13 @@ pub(crate) extern "C" fn jit_div(a: u64, b: u64, span_bits: u64) -> u64 {
     if av.is_number() && bv.is_number() {
         let dv = bv.as_number();
         if dv == 0.0 {
-            jit_set_runtime_error_with_span(VmError::DivisionByZero { dividend: av.as_number(), divisor: dv }, span_bits);
+            jit_set_runtime_error_with_span(
+                VmError::DivisionByZero {
+                    dividend: av.as_number(),
+                    divisor: dv,
+                },
+                span_bits,
+            );
             return TAG_NIL;
         }
         return NanVal::number(av.as_number() / dv).0;
@@ -24291,7 +24320,8 @@ mod tests {
                 params,
                 body: vec![],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 span: Span::UNKNOWN,
@@ -36331,7 +36361,7 @@ f>n;r=mk 10 20;+r.x r.y";
                 is_defer_fn: vec![false],
                 ast: None,
                 defer_fns: std::collections::HashSet::new(),
-            tool_policies: Vec::new(),
+                tool_policies: Vec::new(),
             };
             let result = run(&program, Some("f"), vec![]).expect("math op on nil should not error");
             match result {

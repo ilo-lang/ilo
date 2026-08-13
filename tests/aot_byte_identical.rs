@@ -116,7 +116,16 @@ fn cranelift_aot_object_file_byte_identical_to_baselines() {
     let mut ok = 0;
 
     for entry in &entries {
-        let example = format!("examples/{}.ilo", entry.name);
+        // Examples migrated to the canonical `.@` extension; fall back to
+        // `.ilo` for any stragglers so the corpus survives the rename.
+        let example = {
+            let at = format!("examples/{}.@", entry.name);
+            if Path::new(&at).exists() {
+                at
+            } else {
+                format!("examples/{}.ilo", entry.name)
+            }
+        };
         if !Path::new(&example).exists() {
             missing.push(entry.name.clone());
             continue;

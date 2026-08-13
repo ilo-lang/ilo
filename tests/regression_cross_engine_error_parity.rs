@@ -136,9 +136,11 @@ fn lst_oob_has_rich_message_and_r009_on_every_engine() {
 // `vm_error_call_stack_drops_tail_caller` in src/vm/mod.rs tests.
 #[test]
 fn call_stack_notes_match_across_engines_two_levels() {
+    // NOTE: the `.@` rename once duplicated this pair with a shadowing
+    // second version whose call to `g` was a bare tail call — which is
+    // exactly the documented TCO shape that drops "called from 'main'".
+    // Keep the single non-tail form.
     let src = "g xs:L n>n;at xs 99\nmain>n;xs=[1,2,3];r=g xs;+ r 0\n";
-    let path = write_src(src, "callstack_two_levels.ilo");
-    let src = "g xs:L n>n;at xs 99\nmain>n;xs=[1,2,3];g xs\n";
     let path = write_src(src, "callstack_two_levels.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
@@ -162,9 +164,9 @@ fn call_stack_notes_match_across_engines_two_levels() {
 // already non-tail (the original `a=g xs;+ a 1` shape).
 #[test]
 fn call_stack_notes_match_across_engines_three_levels() {
+    // Same shadowing-duplicate history as two_levels above — keep the
+    // single non-tail form so main's frame survives TCO.
     let src = "g xs:L n>n;at xs 99\nh xs:L n>n;a=g xs;+ a 1\nmain>n;xs=[1,2,3];r=h xs;+ r 0\n";
-    let path = write_src(src, "callstack_three_levels.ilo");
-    let src = "g xs:L n>n;at xs 99\nh xs:L n>n;a=g xs;+ a 1\nmain>n;xs=[1,2,3];h xs\n";
     let path = write_src(src, "callstack_three_levels.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         for expected in [

@@ -59,7 +59,8 @@ pub fn lower(ast: &ast::Program, _verify_out: &VerifyResult) -> Result<Program, 
                 params,
                 return_type,
                 body,
-                span, ..
+                span,
+                ..
             } => {
                 let lowered_body = lower_function_body(body);
                 decls.push(Decl::Function {
@@ -84,7 +85,8 @@ pub fn lower(ast: &ast::Program, _verify_out: &VerifyResult) -> Result<Program, 
                 return_type,
                 timeout,
                 retry,
-                span, ..
+                span,
+                ..
             } => {
                 decls.push(Decl::Tool {
                     name: name.clone(),
@@ -101,7 +103,9 @@ pub fn lower(ast: &ast::Program, _verify_out: &VerifyResult) -> Result<Program, 
             ast::Decl::Alias { .. } | ast::Decl::Use { .. } => continue,
             // Parse-recovery poison. A correctly sequenced caller verified the
             // program first and bailed on errors; reaching us is a bug.
-            ast::Decl::Test { .. } | ast::Decl::VersionPragma { .. } | ast::Decl::SumType { .. } => continue,
+            ast::Decl::Test { .. }
+            | ast::Decl::VersionPragma { .. }
+            | ast::Decl::SumType { .. } => continue,
             ast::Decl::Error { .. } => return Err(LowerError::PoisonDecl),
         }
     }
@@ -226,7 +230,8 @@ fn lower_stmt(stmt: &ast::Spanned<ast::Stmt>) -> Stmt {
             start,
             end,
             body,
-         .. } => Stmt::ForRange {
+            ..
+        } => Stmt::ForRange {
             binding: binding.clone(),
             start: lower_expr(start),
             end: lower_expr(end),
@@ -253,7 +258,11 @@ fn lower_stmt(stmt: &ast::Spanned<ast::Stmt>) -> Stmt {
         ast::Stmt::Continue => Stmt::Continue { span },
 
         ast::Stmt::Defer { .. } => Stmt::Expr {
-            value: Expr::Ref { name: "nil".to_string(), ty: Ty::Unknown, span },
+            value: Expr::Ref {
+                name: "nil".to_string(),
+                ty: Ty::Unknown,
+                span,
+            },
             span,
         },
         ast::Stmt::Destructure { bindings, value } => Stmt::Destructure {
@@ -445,7 +454,11 @@ fn lower_expr(e: &ast::Expr) -> Expr {
             ty: Ty::Unknown,
             span,
         },
-        _ => Expr::Ref { name: "nil".to_string(), ty: Ty::Unknown, span },
+        _ => Expr::Ref {
+            name: "nil".to_string(),
+            ty: Ty::Unknown,
+            span,
+        },
     }
 }
 

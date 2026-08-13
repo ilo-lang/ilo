@@ -62,27 +62,23 @@ fn guard_satisfies(guards: &[GuardPattern], precond: &Expr) -> bool {
                 _ => return false,
             };
             match op {
-                BinOp::NotEquals => {
-                    guards.iter().any(|g| matches!(g, GuardPattern::NotEqual(v, va) if *v == var && *va == val))
-                }
-                BinOp::GreaterOrEqual => {
-                    guards.iter().any(|g| {
-                        matches!(g, GuardPattern::GreaterEq(v, va) if *v == var && *va == val)
-                            || matches!(g, GuardPattern::Greater(v, va) if *v == var && *va == val)
-                    })
-                }
-                BinOp::GreaterThan => {
-                    guards.iter().any(|g| matches!(g, GuardPattern::Greater(v, va) if *v == var && *va == val))
-                }
-                BinOp::LessOrEqual => {
-                    guards.iter().any(|g| {
-                        matches!(g, GuardPattern::LessEq(v, va) if *v == var && *va == val)
-                            || matches!(g, GuardPattern::Less(v, va) if *v == var && *va == val)
-                    })
-                }
-                BinOp::LessThan => {
-                    guards.iter().any(|g| matches!(g, GuardPattern::Less(v, va) if *v == var && *va == val))
-                }
+                BinOp::NotEquals => guards
+                    .iter()
+                    .any(|g| matches!(g, GuardPattern::NotEqual(v, va) if *v == var && *va == val)),
+                BinOp::GreaterOrEqual => guards.iter().any(|g| {
+                    matches!(g, GuardPattern::GreaterEq(v, va) if *v == var && *va == val)
+                        || matches!(g, GuardPattern::Greater(v, va) if *v == var && *va == val)
+                }),
+                BinOp::GreaterThan => guards
+                    .iter()
+                    .any(|g| matches!(g, GuardPattern::Greater(v, va) if *v == var && *va == val)),
+                BinOp::LessOrEqual => guards.iter().any(|g| {
+                    matches!(g, GuardPattern::LessEq(v, va) if *v == var && *va == val)
+                        || matches!(g, GuardPattern::Less(v, va) if *v == var && *va == val)
+                }),
+                BinOp::LessThan => guards
+                    .iter()
+                    .any(|g| matches!(g, GuardPattern::Less(v, va) if *v == var && *va == val)),
                 _ => false,
             }
         }
@@ -333,7 +329,12 @@ fn collect_stmt_effects(
         Stmt::Return(expr) => {
             collect_expr_effects(expr, fn_effects, functions, out);
         }
-        Stmt::Guard { condition, body, else_body, .. } => {
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
             collect_expr_effects(condition, fn_effects, functions, out);
             for s in body {
                 collect_stmt_effects(&s.node, fn_effects, functions, out);
@@ -354,7 +355,9 @@ fn collect_stmt_effects(
                 }
             }
         }
-        Stmt::ForEach { collection, body, .. } => {
+        Stmt::ForEach {
+            collection, body, ..
+        } => {
             collect_expr_effects(collection, fn_effects, functions, out);
             for s in body {
                 collect_stmt_effects(&s.node, fn_effects, functions, out);
@@ -369,7 +372,13 @@ fn collect_stmt_effects(
         Stmt::Destructure { value, .. } => {
             collect_expr_effects(value, fn_effects, functions, out);
         }
-        Stmt::ForRange { start, end, step, body, .. } => {
+        Stmt::ForRange {
+            start,
+            end,
+            step,
+            body,
+            ..
+        } => {
             collect_expr_effects(start, fn_effects, functions, out);
             collect_expr_effects(end, fn_effects, functions, out);
             if let Some(s) = step {
@@ -460,7 +469,11 @@ fn collect_expr_effects(
                 collect_expr_effects(v, fn_effects, functions, out);
             }
         }
-        Expr::Ternary { condition, then_expr, else_expr } => {
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_expr_effects(condition, fn_effects, functions, out);
             collect_expr_effects(then_expr, fn_effects, functions, out);
             collect_expr_effects(else_expr, fn_effects, functions, out);
@@ -5056,7 +5069,7 @@ impl VerifyContext {
                 Decl::Use { .. } => {}           // resolved before verify — skip
                 Decl::VersionPragma { .. } => {} // pragma — no verification needed
                 Decl::Error { .. } => {}         // poison node — skip silently
-                Decl::Test { .. } => {}         // shadow test block — skip during verify
+                Decl::Test { .. } => {}          // shadow test block — skip during verify
             }
         }
 
@@ -5334,13 +5347,25 @@ impl VerifyContext {
         // Build a map of function name -> declared effect sigils for transitive checks.
         let mut fn_effects: HashMap<String, HashSet<Effect>> = HashMap::new();
         for decl in &program.declarations {
-            if let Decl::Function { name, effect_sigils, .. } = decl {
+            if let Decl::Function {
+                name,
+                effect_sigils,
+                ..
+            } = decl
+            {
                 fn_effects.insert(name.clone(), effect_sigils.iter().copied().collect());
             }
         }
 
         for decl in &program.declarations {
-            let Decl::Function { name, body, effect_sigils, span, .. } = decl else {
+            let Decl::Function {
+                name,
+                body,
+                effect_sigils,
+                span,
+                ..
+            } = decl
+            else {
                 continue;
             };
             if self.parse_failed_fns.contains_key(name) {
@@ -5420,7 +5445,12 @@ impl VerifyContext {
         // Build a map of function name → precondition expression.
         let mut preconds: HashMap<String, &Expr> = HashMap::new();
         for decl in &program.declarations {
-            if let Decl::Function { name, precondition: Some(pc), .. } = decl {
+            if let Decl::Function {
+                name,
+                precondition: Some(pc),
+                ..
+            } = decl
+            {
                 preconds.insert(name.clone(), pc);
             }
         }
@@ -5429,16 +5459,16 @@ impl VerifyContext {
         }
 
         for decl in &program.declarations {
-            if let Decl::Function { name: caller_name, body, .. } = decl {
+            if let Decl::Function {
+                name: caller_name,
+                body,
+                ..
+            } = decl
+            {
                 if self.parse_failed_fns.contains_key(caller_name) {
                     continue;
                 }
-                self.check_preconditions_in_stmts(
-                    caller_name,
-                    body,
-                    &preconds,
-                    &[],
-                );
+                self.check_preconditions_in_stmts(caller_name, body, &preconds, &[]);
             }
         }
     }
@@ -5455,92 +5485,109 @@ impl VerifyContext {
         let mut guards: Vec<GuardPattern> = prior_guards.to_vec();
         for spanned in stmts {
             match &spanned.node {
-                Stmt::Guard { condition, body: guard_body, braceless: true, .. } => {
+                Stmt::Guard {
+                    condition,
+                    body: guard_body,
+                    braceless: true,
+                    ..
+                } => {
                     // Braceless guard: `=b 0 ^"..."` — extracts a guard pattern
                     if let Some(gp) = extract_guard_pattern(condition) {
                         guards.push(gp);
                     }
                     // Also scan the guard body for calls
-                    self.check_preconditions_in_stmts(
-                        caller, guard_body, preconds, &guards,
-                    );
+                    self.check_preconditions_in_stmts(caller, guard_body, preconds, &guards);
                 }
-                Stmt::Guard { condition: _, body: guard_body, .. } => {
+                Stmt::Guard {
+                    condition: _,
+                    body: guard_body,
+                    ..
+                } => {
                     // Braced guard — condition is conditional, not early-return.
                     // Doesn't establish a guard for subsequent statements.
-                    self.check_preconditions_in_stmts(
-                        caller, guard_body, preconds, &guards,
-                    );
+                    self.check_preconditions_in_stmts(caller, guard_body, preconds, &guards);
                 }
                 Stmt::Let { value, .. } => {
                     self.check_preconditions_in_expr(
-                        caller, value, spanned.span, preconds, &guards,
+                        caller,
+                        value,
+                        spanned.span,
+                        preconds,
+                        &guards,
                     );
                 }
                 Stmt::Expr(expr) => {
                     // Bare expression as statement (e.g. return value)
-                    self.check_preconditions_in_expr(
-                        caller, expr, spanned.span, preconds, &guards,
-                    );
+                    self.check_preconditions_in_expr(caller, expr, spanned.span, preconds, &guards);
                 }
                 Stmt::Return(expr) => {
-                    self.check_preconditions_in_expr(
-                        caller, expr, spanned.span, preconds, &guards,
-                    );
+                    self.check_preconditions_in_expr(caller, expr, spanned.span, preconds, &guards);
                 }
                 Stmt::Break(Some(expr)) => {
-                    self.check_preconditions_in_expr(
-                        caller, expr, spanned.span, preconds, &guards,
-                    );
+                    self.check_preconditions_in_expr(caller, expr, spanned.span, preconds, &guards);
                 }
                 Stmt::Destructure { value, .. } => {
                     self.check_preconditions_in_expr(
-                        caller, value, spanned.span, preconds, &guards,
+                        caller,
+                        value,
+                        spanned.span,
+                        preconds,
+                        &guards,
                     );
                 }
                 Stmt::Match { subject, arms, .. } => {
                     if let Some(s) = subject {
                         self.check_preconditions_in_expr(
-                            caller, s, spanned.span, preconds, &guards,
+                            caller,
+                            s,
+                            spanned.span,
+                            preconds,
+                            &guards,
                         );
                     }
                     for arm in arms {
-                        self.check_preconditions_in_stmts(
-                            caller, &arm.body, preconds, &guards,
-                        );
+                        self.check_preconditions_in_stmts(caller, &arm.body, preconds, &guards);
                     }
                 }
-                Stmt::ForEach { collection, body, .. } => {
+                Stmt::ForEach {
+                    collection, body, ..
+                } => {
                     self.check_preconditions_in_expr(
-                        caller, collection, spanned.span, preconds, &guards,
+                        caller,
+                        collection,
+                        spanned.span,
+                        preconds,
+                        &guards,
                     );
-                    self.check_preconditions_in_stmts(
-                        caller, body, preconds, &guards,
-                    );
+                    self.check_preconditions_in_stmts(caller, body, preconds, &guards);
                 }
-                Stmt::ForRange { start, end, body, .. } => {
+                Stmt::ForRange {
+                    start, end, body, ..
+                } => {
                     self.check_preconditions_in_expr(
-                        caller, start, spanned.span, preconds, &guards,
+                        caller,
+                        start,
+                        spanned.span,
+                        preconds,
+                        &guards,
                     );
-                    self.check_preconditions_in_expr(
-                        caller, end, spanned.span, preconds, &guards,
-                    );
-                    self.check_preconditions_in_stmts(
-                        caller, body, preconds, &guards,
-                    );
+                    self.check_preconditions_in_expr(caller, end, spanned.span, preconds, &guards);
+                    self.check_preconditions_in_stmts(caller, body, preconds, &guards);
                 }
-                Stmt::While { condition, body, .. } => {
+                Stmt::While {
+                    condition, body, ..
+                } => {
                     self.check_preconditions_in_expr(
-                        caller, condition, spanned.span, preconds, &guards,
+                        caller,
+                        condition,
+                        spanned.span,
+                        preconds,
+                        &guards,
                     );
-                    self.check_preconditions_in_stmts(
-                        caller, body, preconds, &guards,
-                    );
+                    self.check_preconditions_in_stmts(caller, body, preconds, &guards);
                 }
                 Stmt::Defer { expr, .. } => {
-                    self.check_preconditions_in_expr(
-                        caller, expr, spanned.span, preconds, &guards,
-                    );
+                    self.check_preconditions_in_expr(caller, expr, spanned.span, preconds, &guards);
                 }
                 // Stmt::Continue, Stmt::Break(None) — no expressions to check
                 _ => {}
@@ -6399,10 +6446,11 @@ impl VerifyContext {
                              '(x:t>t;{name} x)' (paren form) or '{{x> {name} x}}' (brace form)"
                         ))
                     } else {
-                        let base_hint = kebab_subtract_hint(name, candidates.iter()).or_else(|| {
-                            closest_match(name, candidates.iter())
-                                .map(|s| format!("did you mean '{s}'?"))
-                        });
+                        let base_hint =
+                            kebab_subtract_hint(name, candidates.iter()).or_else(|| {
+                                closest_match(name, candidates.iter())
+                                    .map(|s| format!("did you mean '{s}'?"))
+                            });
                         // ILO-504: append hoisting advisory for all undefined
                         // variables. Nested fn declarations are silently
                         // hoisted to siblings in single-line form; if the
@@ -9900,7 +9948,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt.clone(),
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
@@ -9916,7 +9965,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![
@@ -9962,7 +10012,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Number,
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("x".to_string())))],
@@ -9976,7 +10027,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Result(Box::new(Type::Number), Box::new(Type::Text)),
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
@@ -10015,7 +10067,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: rnt,
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
@@ -10031,7 +10084,8 @@ mod tests {
                         ty: Type::Number,
                     }],
                     return_type: Type::Number,
-                    effect_set: None, effect_sigils: vec![],
+                    effect_set: None,
+                    effect_sigils: vec![],
                     precondition: None,
                     postcondition: None,
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
@@ -12420,7 +12474,8 @@ mod tests {
                     ty: Type::List(Box::new(Type::Text)),
                 }],
                 return_type: Type::Text,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Match {
@@ -12658,7 +12713,8 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Number,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Match {
@@ -12705,7 +12761,8 @@ mod tests {
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Any,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Nil)))],
@@ -12740,7 +12797,8 @@ mod tests {
                     ty: Type::Number,
                 }],
                 return_type: Type::Text,
-                effect_set: None, effect_sigils: vec![],
+                effect_set: None,
+                effect_sigils: vec![],
                 precondition: None,
                 postcondition: None,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Ternary {

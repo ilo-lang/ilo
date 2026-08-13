@@ -377,10 +377,15 @@ fn check_json_p011_fix_plan_reserved_rename() {
     let plan = &p011["fix_plan"];
     assert!(!plan.is_null(), "ILO-P011 should carry a fix_plan");
     let edits = plan["edits"].as_array().expect("fix_plan.edits array");
-    assert_eq!(edits.len(), 1);
-    assert_eq!(edits[0]["before"], "var", "before is the reserved keyword");
-    assert_eq!(edits[0]["after"], "var2", "after is the renamed identifier");
-    assert!(edits[0]["line_range"].is_array());
+    // ILO-501: renames are occurrence-complete — `var=5;var` has two
+    // occurrences, so the plan carries two edits (the old single-edit
+    // contract left the program broken after applying the fix).
+    assert_eq!(edits.len(), 2, "one edit per occurrence");
+    for e in edits {
+        assert_eq!(e["before"], "var", "before is the reserved keyword");
+        assert_eq!(e["after"], "var2", "after is the renamed identifier");
+        assert!(e["line_range"].is_array());
+    }
 }
 
 /// ILO-T041 nil-coalesce on Result: fix_plan rewrites to `?val{~v:v;^_:default}`.

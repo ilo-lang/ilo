@@ -2044,6 +2044,18 @@ f(g(x), h(y))     -- nested paren-calls also work
 
 **Trailing commas are accepted:** `f(a, b,)` is valid (Rust/JS convention).
 
+**Trailing operands extend the call (ILO-544).** At expression head, a
+paren group need not be the whole argument list — operands after the `)`
+are collected exactly as the spaced postfix form would collect them, so
+all four spellings mean the same 2-arg call:
+
+```
+fmt2(x)2    fmt2(x) 2    fmt2(x, 2)    fmt2 (x) 2
+```
+
+A field/index chain closes the list: `f(x).0` is a value, and an operand
+after it is an error as before.
+
 **Postfix stays canonical.** `ilo fmt` does not rewrite paren-form to postfix; both styles are accepted everywhere.
 
 ### Call Arguments

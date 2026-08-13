@@ -108,3 +108,12 @@ the baselines disagree. Investigate the diff first.
 - Rust: stable matching `rust-toolchain` (Cargo.toml `rust-version = 1.85`)
 - Build: `cargo build --release --features cranelift`
 - Examples corpus: 220 `-- run:`-annotated files
+
+## Recapture 2026-08-09
+
+Corpus recaptured on `fix/paren-form-trailing-args` (base release/26.8
+96123cbb) after the typed-HIR/backend rework intentionally changed every
+object byte; the `.ilo` -> `.@` example rename had masked the drift as
+"missing" entries. A 3-example capture with the unmodified base binary
+matched this corpus byte-for-byte, so none of the drift comes from the
+ILO-544 parser changes. 136/136 compile OK, 0 failures.
