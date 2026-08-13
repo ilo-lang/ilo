@@ -180,19 +180,30 @@ fn check_normal_fn_decl_unaffected(engine: &str) {
     );
 }
 
-// --- Negative: a builtin-shadowing name keeps its precise ILO-P011 hint ----
+// --- Negative: a builtin-shadowing name is a normal binding, not P102 -----
 //
-// `map=...` at the top level still hits the existing ILO-P011 guard for
-// builtin shadowing — the P102 generic guard must not eclipse it.
+// `map=...` at the top level used to hit an ILO-P011 builtin-shadow guard;
+// 69565d44 made builtin names legal as bindings (they shadow in value
+// position). The point this test still carries is that the generic P102
+// top-level-chain guard must not swallow the shape: it is a plain script
+// binding and must simply run.
 
-const MAP_SHADOW: &str = "map=[1 2 3];prnt map";
+const MAP_SHADOW: &str = "map=[1 2 3]\nprnt map";
 
-fn check_builtin_shadow_keeps_p011(engine: &str) {
-    let (_ok, stdout, stderr) = run_capture(engine, MAP_SHADOW, "main");
-    let combined = format!("{stdout}{stderr}");
+fn check_builtin_shadow_runs(engine: &str) {
+    let (ok, stdout, stderr) = run_capture(engine, MAP_SHADOW, "main");
     assert!(
-        combined.contains("ILO-P011"),
-        "{engine}: `map=` should keep its builtin-shadow ILO-P011 hint, got: {combined}"
+        ok,
+        "{engine}: builtin-named binding should run. stderr={stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "[1, 2, 3]",
+        "{engine}: use site should resolve to the local. stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("ILO-P102"),
+        "{engine}: P102 must not fire on a plain script binding: {stderr}"
     );
 }
 
@@ -220,7 +231,7 @@ fn check_all(engine: &str) {
     check_slurp_into_prior_fn(engine);
     check_main_wrapper_runs(engine);
     check_normal_fn_decl_unaffected(engine);
-    check_builtin_shadow_keeps_p011(engine);
+    check_builtin_shadow_runs(engine);
 }
 
 #[test]

@@ -14,6 +14,11 @@
 //! every token span (and lex-error position) back to original-source
 //! coordinates before returning, so `SourceMap::lookup` and downstream
 //! span-consumers see offsets that match what the user typed.
+//!
+//! The fixtures use `fld` as the faulting binding because it is still a
+//! hard-reserved name (ILO-P011 with the fold-specific message). They used
+//! `rev` until 69565d44 made builtin names legal as bindings, which removed
+//! the error these span assertions ride on; `fld` keeps the same shape.
 
 use std::process::Command;
 
@@ -81,24 +86,24 @@ fn first_error_line_and_start(stderr: &str) -> (usize, usize) {
 }
 
 #[test]
-fn rev_binding_in_indented_main_body_lands_on_actual_line() {
-    // Canonical persona repro: `rev = ...` inside a multi-line main body.
+fn fld_binding_in_indented_main_body_lands_on_actual_line() {
+    // Canonical persona repro: `fld = ...` inside a multi-line main body.
     // Before the fix the ILO-P011 span anchored to line 5 (the first body
-    // statement after the header) regardless of how far down `rev =` lives.
-    let src = "helper p:_>R n t;\n  ~mget!! m p\n\nmain>R t t\n  s = \"x\"\n  a = 1\n  b = 2\n  c = 3\n  rev = mget!! m p\n  ~s\n";
-    let path = write_tmp("rev-in-body", src);
+    // statement after the header) regardless of how far down `fld =` lives.
+    let src = "helper p:_>R n t;\n  ~mget!! m p\n\nmain>R t t\n  s = \"x\"\n  a = 1\n  b = 2\n  c = 3\n  fld = mget!! m p\n  ~s\n";
+    let path = write_tmp("fld-in-body", src);
     let err = run_err_json_file(&path);
     let (line, start) = first_error_line_and_start(&err);
     assert_eq!(
         line, 9,
-        "ILO-P011 must point at the `rev =` line (9), got stderr:\n{err}"
+        "ILO-P011 must point at the `fld =` line (9), got stderr:\n{err}"
     );
-    // The span's start byte must sit inside the `rev` token in the
+    // The span's start byte must sit inside the `fld` token in the
     // original source — not on a `;` upstream.
-    let rev_off = src.find("rev =").expect("repro contains `rev =`");
+    let fld_off = src.find("fld =").expect("repro contains `fld =`");
     assert_eq!(
-        start, rev_off,
-        "ILO-P011 start byte must be the `r` of `rev` ({rev_off}), got {start}, stderr:\n{err}"
+        start, fld_off,
+        "ILO-P011 start byte must be the `r` of `fld` ({fld_off}), got {start}, stderr:\n{err}"
     );
 }
 
@@ -139,13 +144,13 @@ fn match_arm_body_parse_error_lands_on_offending_token() {
     // normalization as the rest of multi-line syntax, so the offset map
     // has to thread through here too. Without it, the ILO-P011 span
     // drifted forward to a downstream arm separator.
-    let src = "main>n\n  r = num \"1\"\n  y = ?r{\n    ~v:{\n      a = 2\n      rev = +a v\n      *a 3\n    }\n    ^er:0\n  }\n  y\n";
+    let src = "main>n\n  r = num \"1\"\n  y = ?r{\n    ~v:{\n      a = 2\n      fld = +a v\n      *a 3\n    }\n    ^er:0\n  }\n  y\n";
     let path = write_tmp("match-arm", src);
     let err = run_err_json_file(&path);
     let line = first_error_line(&err);
     assert_eq!(
         line, 6,
-        "ILO-P011 must land on `rev = +a v` (6), got stderr:\n{err}"
+        "ILO-P011 must land on `fld = +a v` (6), got stderr:\n{err}"
     );
 }
 
@@ -154,13 +159,13 @@ fn deeply_nested_body_span_does_not_drift() {
     // Two levels of nesting (foreach inside guard inside main) puts many
     // `;` rewrites between the start of main and the faulting binding.
     // Before the fix the span drifted by 4+ lines.
-    let src = "main>n\n  n = 3\n  acc = 0\n  >n 0{\n    @i 0..n{\n      t = +acc i\n      rev = t\n      acc = +acc 1\n    }\n  }\n  ~acc\n";
+    let src = "main>n\n  n = 3\n  acc = 0\n  >n 0{\n    @i 0..n{\n      t = +acc i\n      fld = t\n      acc = +acc 1\n    }\n  }\n  ~acc\n";
     let path = write_tmp("nested", src);
     let err = run_err_json_file(&path);
     let line = first_error_line(&err);
     assert_eq!(
         line, 7,
-        "ILO-P011 must land on `rev = t` (7), got stderr:\n{err}"
+        "ILO-P011 must land on `fld = t` (7), got stderr:\n{err}"
     );
 }
 
@@ -169,18 +174,18 @@ fn function_last_statement_parse_error_lands_on_last_line() {
     // Fault on the final statement of a long multi-line body. Drift
     // historically pushed the span back to an earlier statement because
     // each preceding line shed indent and gained a `;`.
-    let src = "main>n\n  a = 1\n  b = 2\n  c = 3\n  d = 4\n  f = 5\n  rev = 6\n";
+    let src = "main>n\n  a = 1\n  b = 2\n  c = 3\n  d = 4\n  f = 5\n  fld = 6\n";
     let path = write_tmp("last-stmt", src);
     let err = run_err_json_file(&path);
     let (line, start) = first_error_line_and_start(&err);
     assert_eq!(
         line, 7,
-        "ILO-P011 must land on the last `rev = 6` line (7), got stderr:\n{err}"
+        "ILO-P011 must land on the last `fld = 6` line (7), got stderr:\n{err}"
     );
-    let rev_off = src.find("rev = 6").expect("repro contains `rev = 6`");
+    let fld_off = src.find("fld = 6").expect("repro contains `fld = 6`");
     assert_eq!(
-        start, rev_off,
-        "span start ({start}) must equal byte offset of `rev` ({rev_off}), stderr:\n{err}"
+        start, fld_off,
+        "span start ({start}) must equal byte offset of `fld` ({fld_off}), stderr:\n{err}"
     );
 }
 
@@ -190,17 +195,17 @@ fn comment_stripping_does_not_shift_following_line_span() {
     // emitting `;`/`\n`. Without the offset map the bytes after the
     // comment line shift backward by `comment.len()`, so a fault on the
     // very next line landed at column 0 of a phantom earlier offset.
-    let src = "main>n\n  a = 1\n  -- explanatory comment text that is long\n  rev = 2\n  ~a\n";
+    let src = "main>n\n  a = 1\n  -- explanatory comment text that is long\n  fld = 2\n  ~a\n";
     let path = write_tmp("comment", src);
     let err = run_err_json_file(&path);
     let (line, start) = first_error_line_and_start(&err);
     assert_eq!(
         line, 4,
-        "ILO-P011 must land on `rev = 2` (4), got stderr:\n{err}"
+        "ILO-P011 must land on `fld = 2` (4), got stderr:\n{err}"
     );
-    let rev_off = src.find("rev = 2").expect("repro contains `rev = 2`");
+    let fld_off = src.find("fld = 2").expect("repro contains `fld = 2`");
     assert_eq!(
-        start, rev_off,
+        start, fld_off,
         "span start must equal `r` byte, stderr:\n{err}"
     );
 }
@@ -210,14 +215,14 @@ fn single_line_body_span_unchanged() {
     // Sanity: when no newline rewriting happens, spans must stay
     // identical to pre-fix behaviour. This pins the no-drift case so a
     // future refactor that breaks the identity branch surfaces here.
-    let src = "main>n;rev = 1\n";
+    let src = "main>n;fld = 1\n";
     let path = write_tmp("single-line", src);
     let err = run_err_json_file(&path);
     let (line, start) = first_error_line_and_start(&err);
     assert_eq!(line, 1, "single-line fault on line 1, got stderr:\n{err}");
-    let rev_off = src.find("rev = 1").expect("repro contains `rev = 1`");
+    let fld_off = src.find("fld = 1").expect("repro contains `fld = 1`");
     assert_eq!(
-        start, rev_off,
+        start, fld_off,
         "span start must equal `r` byte, stderr:\n{err}"
     );
 }

@@ -169,7 +169,10 @@ fn fld_as_decl_name() {
 
 #[test]
 fn builtin_as_decl_name() {
-    fail_code("map=5", "ILO-P011");
+    // 69565d44 made builtin names legal as BINDINGS: the local shadows the
+    // builtin in value position, matching Python. Only builtin FN names
+    // (`builtin_as_fn_name` below) and reserved words still fire ILO-P011.
+    ok("map=5");
 }
 
 #[test]
@@ -457,8 +460,10 @@ fn stmt_cnt_in_loop() {
 }
 
 #[test]
-fn stmt_builtin_let_rejected() {
-    fail_code("f>n;flat=5;flat", "ILO-P011");
+fn stmt_builtin_let_accepted() {
+    // Same shadowing rule inside a fn body (69565d44). Reserved words are
+    // still rejected there — see `stmt_var_in_body_rejected` below.
+    ok("f>n;flat=5;flat");
 }
 
 #[test]

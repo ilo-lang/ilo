@@ -57,30 +57,22 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
     stdout.trim().to_string()
 }
 
-// --- Repro: variadic builtin (fmt2) inside list literal -----------------
+// --- fmt2 now parses as a call: known arity, capped ---------------------
 //
-// The exact shape from data-wrangler rerun10: a CSV row built inline,
-// mixing locals (`k`, `c`) with a formatted-number column.
+// The original data-wrangler rerun10 shape. `fmt2` has since gained a known
+// arity (2), so the parser caps the element at `fmt2 rv 2` and the list gets
+// three elements - the outcome the agent meant. ILO-P101 no longer fires
+// here, and should not: the diagnostic exists for shapes that cannot be
+// parsed correctly, and this one now can. `fmt` (genuinely variadic) still
+// triggers it - see below.
 
 const FMT2_IN_LIST: &str = "f rv:n>L t;k=\"foo\";c=\"bar\";[k c fmt2 rv 2]";
 
-fn check_fmt2_hint(engine: &str) {
-    let (ok, stdout, stderr) = run_capture(engine, FMT2_IN_LIST, "f", &["3.14"]);
-    assert!(!ok, "fmt2 inside list literal must reject at parse time");
-    let combined = format!("{stdout}{stderr}");
-    assert!(
-        combined.contains("ILO-P101"),
-        "expected ILO-P101 in output, got: {combined}"
-    );
-    assert!(
-        combined.contains("fmt2"),
-        "diagnostic should name the offending builtin, got: {combined}"
-    );
-    // The hint should mention parens or bind-first - both shapes are
-    // documented in the registry entry.
-    assert!(
-        combined.contains("paren") || combined.contains("(") || combined.contains("bind"),
-        "diagnostic should suggest parens or bind-first, got: {combined}"
+fn check_fmt2_parses_as_call(engine: &str) {
+    let out = run_ok(engine, FMT2_IN_LIST, "f", &["3.14"]);
+    assert_eq!(
+        out, "[foo, bar, 3.14]",
+        "fmt2 with known arity should parse as one capped call element {engine}"
     );
 }
 
@@ -153,7 +145,7 @@ fn check_bare_locals_unchanged(engine: &str) {
 }
 
 fn check_all(engine: &str) {
-    check_fmt2_hint(engine);
+    check_fmt2_parses_as_call(engine);
     check_fmt_hint(engine);
     check_parens_workaround(engine);
     check_bind_workaround(engine);
