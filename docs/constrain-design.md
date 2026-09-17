@@ -129,6 +129,18 @@ contexts (soft-mask: allow with penalty), hard-mask elsewhere. The
 anomalies are published in the artifact (`oracleAnomalies`) — the day they
 disappear without explanation is the day to re-audit.
 
+## Strategy 1, observational v1 (shipped 2026-09-17)
+
+`Parser::advance` now records consumed transitions, and four direct
+dispatch points (`stmt`, `expr`, `atom`, `pattern`) mark
+`"<site>|after <prev>"` keys — production-path granularity, observed over
+the corpus. The empirical artifact carries a `sites` section alongside the
+bigram (e.g. `atom after !` → `[paren, ident, number, string]`).
+`parse_decl_body` and `parse_type_body` remain unmarked: their
+pre-processing blocks (reserved-word checks, boundary diagnostics) need
+per-site reading before a tag lands truthfully. Enabled only under
+`ILO_CONSTRAIN=1`; disabled cost is one branch in `advance`.
+
 **Why probing instead of a hand-written grammar:** the oracle reuses the
 real parser, so the mask inherits every grammar change by construction and
 can never drift from it. The instrumented per-site recorder (Strategy 1)

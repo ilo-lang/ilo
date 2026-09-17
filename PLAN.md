@@ -88,10 +88,12 @@ Acceptance:
 
 ### G3 — Constrained decoding for small models (P0) — **v0+v1 artifact shipped 2026-09-17**
 
-`ilo constrain` shipped: empirical bigram (schemaVersion 1) and probed
+`ilo constrain` shipped: empirical bigram (schemaVersion 1), probed
 context masks (`--probe`, schemaVersion 2: 405 contexts, 19k+ edges, 5
 published oracle anomalies / 873,480 probes — all prefix-binop chain
-states, tolerance-invariant). CI smoke replays the full examples corpus.
+states, tolerance-invariant), and Strategy-1 observational v1 (four
+dispatch sites recording `site|after prev` transitions; artifact `sites`
+section). CI smoke replays the full examples corpus.
 The August baseline says the retry term dominates cold cost. ilo's closed, LL(1)-ish grammar is *more* maskable than Axis's, which already ships `--constrain`/`--logit-masks`. This makes invalid ilo unemittable at decode time — the retry term attacked preventively instead of correctively.
 
 Acceptance:
