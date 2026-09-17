@@ -60,14 +60,22 @@ Acceptance:
 - One published run: `bench/closed-loop-<date>.json` + markdown with HONEST-NUMBERS-style caveats, including rows where ilo loses.
 - Reproduction: seeded, pinned model versions, commands in the writeup.
 
-### G2 — Bounded, layered, referenced spec (P0) — **SHIPPED 2026-09-17**
+### G2 — Bounded, layered, referenced spec (P0) — **SHIPPED 2026-09-17 (complete)**
 
 Shipped: `ilo-builtins-io/-text/-math` → `docs/reference/` (on-demand);
-distilled `ilo-builtins-sig` resident. Curated set (language + core + sig)
-= **4,095 tokens**, CI-enforced. Measured: personas **10/13 curated vs 8/13
-full**; naive 2-module truncation control 6.5/13 and 15× Python —
-curation, not size, is the lever (`bench/HONEST-NUMBERS.md`).
-Remaining: eviction-linkage in CI; `ai.txt` retirement.
+distilled `ilo-builtins-sig` resident; curated set (language + core + sig)
+= **4,095 tokens**, CI-enforced (token budgets + eviction-linkage gate).
+Measured: personas **10/13 curated vs 8/13 full**; naive 2-module
+truncation control 6.5/13 and 15× Python — curation, not size, is the
+lever (`bench/HONEST-NUMBERS.md`).
+
+Retired: `ilo -ai` now serves the curated spec (13,925 bytes, ~4.1k tok)
+instead of the 166,819-byte monolith — 12× smaller on the agent surface
+(4,066 tests pass). `ilo help ai` keeps the full compact spec as the
+reference surface; ai.txt/build.rs pipeline unchanged for it.
+
+Open: none. (Eviction-linkage gate shipped; ai.txt monolith no longer on
+the agent path.)
 
 Acceptance:
 - Core spec ≤ 4,000 tokens in-context; per-cluster reference files loaded on use (path-addressed referencing, @skills-style: one-line resident descriptions, bodies fetched on trigger — our own measurement: 2,225 resident tokens for 29 full installs is the failure mode to avoid).
