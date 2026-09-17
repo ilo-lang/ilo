@@ -1,68 +1,57 @@
-/target
-.cargo/
+
 !.cargo/config.toml
-npm/ilo.wasm
-.env
-__pycache__/
-/ilo
-*.png
-.playwright-mcp/
-.worktrees
-.claude/worktrees/
-# research/ is untracked by default (scratch space + private explorations).
-# Track the closed-loop benchmark explicitly - it is a publishable artefact.
-research/*
-!research/closed-loop-bench/
-!research/BENCHMARK-METHODOLOGY.md
-!research/finetune-comparison.md
-# PNGs in the benchmark charts/ are dataset artefacts and must be tracked.
-!research/closed-loop-bench/charts/*.png
-# Per-cell raw results and tool caches are reproducible from the driver -
-# don't bloat the repo with them.
-research/closed-loop-bench/results/raw/
-research/closed-loop-bench/.zero/
-research/closed-loop-bench/**/__pycache__/
-site/
-.DS_Store
-.astro/
-node_modules/
-rust_out
-
-# Research / scratch docs (subagents leave reports here; not tracked)
-docs/*
-!docs/deploying.md
-!docs/cadence/
-!docs/gates.md
 !docs/benchmark-invite.md
 !docs/caching.md
-!docs/constrain-design.md
-!docs/response-to-agentlanguages-critique.md
-!docs/reference/
-# Tracked documentation files are explicitly exempted below:
-!docs/deploying.md
 !docs/cadence/
-!docs/gates.md
-!docs/benchmark-invite.md
-!docs/caching.md
-!docs/response-to-agentlanguages-critique.md
 !docs/constrain-design.md
+!docs/deploying.md
+!docs/gates.md
 !docs/reference/
+!docs/response-to-agentlanguages-critique.md
 !docs/streaming.md
-
-# E2E test artefacts (subagent-produced logs; not tracked)
-tests/e2e/
-
-# CLAUDE.md is per-developer Claude Code context; AGENTS.md is the cross-tool tracked equivalent
-CLAUDE.md
-
-# Internal strategy and exploration (kept local, not public)
-zero-gap-specs/
+!research/BENCHMARK-METHODOLOGY.md
+!research/closed-loop-bench/
+!research/closed-loop-bench/charts/*.png
+!research/finetune-comparison.md
 !research/sigil-ab-results.md
 !research/sigil-ab/
 !research/sigil-ab/**
-.claude/commands/
-.env.example
-.zero/
-
+# CLAUDE.md is per-developer Claude Code context; AGENTS.md is the cross-tool tracked equivalent
+# E2E test artefacts (subagent-produced logs; not tracked)
+# Internal strategy and exploration (kept local, not public)
+# PNGs in the benchmark charts/ are dataset artefacts and must be tracked.
+# Per-cell raw results and tool caches are reproducible from the driver -
+# Research / scratch docs (subagents leave reports here; not tracked)
+# Track the closed-loop benchmark explicitly - it is a publishable artefact.
+# Tracked documentation files are explicitly exempted below:
+# don't bloat the repo with them.
+# research/ is untracked by default (scratch space + private explorations).
 # training artifacts\ bench/finetune/adapter/
+*.png
+.DS_Store
+.astro/
+.cargo/
+.claude/commands/
+.claude/worktrees/
+.env
+.env.example
+.playwright-mcp/
+.worktrees
+.zero/
+/ilo
+/target
+CLAUDE.md
+__pycache__/
+bench/comparators/src
 bench/finetune/adapter/
+docs/*
+node_modules/
+npm/ilo.wasm
+research/*
+research/closed-loop-bench/**/__pycache__/
+research/closed-loop-bench/.zero/
+research/closed-loop-bench/results/raw/
+rust_out
+site/
+tests/e2e/
+zero-gap-specs/
