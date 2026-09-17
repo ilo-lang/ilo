@@ -21,15 +21,17 @@ zero skills get language > /tmp/zero-docs-language.md
 zero skills get stdlib  > /tmp/zero-docs-stdlib.md
 cat /tmp/zero-docs-language.md /tmp/zero-docs-stdlib.md > /tmp/zero-docs.md
 
-python3 scripts/closed-loop-bench.py \
-    --model dsflash \
-    --cache warm \
-    --align \
-    --context curated \
-    --lang2-name zero \
-    --lang2-bin bench/zero/zero-bench.sh \
-    --lang2-ext .0 \
-    --lang2-docs /tmp/zero-docs.md \
-    --ilo ./target/release/ilo
+for arm in warm cold; do
+  python3 scripts/closed-loop-bench.py \
+      --model dsflash \
+      --cache $arm \
+      --align \
+      --context curated \
+      --lang2-name zero \
+      --lang2-bin bench/zero/zero-bench.sh \
+      --lang2-ext .0 \
+      --lang2-docs /tmp/zero-docs.md \
+      --ilo ./target/release/ilo
+done
 
-echo "Zero leg complete. For the cold arm rerun with --cache cold."
+echo "Zero leg complete (warm + cold)."
