@@ -1,0 +1,9 @@
+-- MCP text tools (G5.1, family 2). Resident-spec only: every builtin here
+-- is in ilo-builtins-sig, so the curated context suffices to author these.
+-- Verified with: ilo check mcp-tools/text.ilo
+
+-- count-matches: number of regex matches of pat in s
+count-matches pat:t s:t>n;n=len (rgxall pat s);n
+
+-- headline: trim, lower, capitalise first letter of each word
+headline s:t>t;words=spl (lwr trm s) " ";kept=flt (w:t>b;>len w 0) words;caps=map (w:t>t;cap w) kept;cat caps " "

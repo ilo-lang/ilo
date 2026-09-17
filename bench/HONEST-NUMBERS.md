@@ -99,10 +99,19 @@ overstate the gap by 2×.
 Files: `bench/variance/r{1,2,3}/` (full JSON per repeat),
 `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 `bench/persona-smoke-baseline-dsflash-align-curated.json`.
-Raw `*-warm-from-log.*` files are the first warm arm from the
-pre-fix filename bug, kept for provenance.
 
+**MCP generated-vs-handwritten schema cost (2026-09-17, G5.1):** seven
+tools across three families (`mcp-tools/`), schemas generated from AST
+signatures: **1,310 B ≈ 327 tokens** resident `tools/list` (~47 tok/tool).
+The same seven schemas hand-authored to MCP best-practice verbosity
+(descriptions on every tool and property,
+`bench/mcp-schema-handwritten.json`): **1,474 B — 1.1× the generated**.
+For scalar-param tools a careful human author is roughly size-neutral with
+the generator; ilo's advantages are zero authoring, verifier-exact types,
+and structural immunity to tool-count bloat (the jCodeMunch failure mode:
+27.5k resident tokens came from 91 tools, not verbose descriptions).
 
+Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 
 ## Claims we retract or refuse
 

@@ -1,0 +1,9 @@
+-- MCP numeric tools (G5.1, family 3). Resident-spec only. Verified with:
+-- ilo check mcp-tools/numbers.ilo
+
+-- percent: part of whole as a formatted percentage string
+percent part:n whole:n>t;p=/ part 100;fmt "{:.1f}%" (*p 100)
+
+-- between: is x within [lo, hi] inclusive (bool result surfaced as text by
+-- the caller when needed; the MCP layer returns the runtime output)
+between x:n lo:n hi:n>b;& (>=x lo) (>=hi x)

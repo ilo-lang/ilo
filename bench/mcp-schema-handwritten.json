@@ -1,0 +1,119 @@
+{
+  "_note": "Hand-written equivalent of the seven ilo-generated tool schemas, authored to MCP best-practice verbosity (descriptions on every tool and property, required arrays). Used by bench/HONEST-NUMBERS.md for the generated-vs-handwritten schema-cost delta. Not a working server — measurement fixture only.",
+  "tools": [
+    {
+      "name": "tri",
+      "description": "Calculate the triangular number of n — the sum of all integers from 1 to n inclusive. For example, triangular(10) = 55. Useful for cumulative counting problems and arithmetic series.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "number",
+            "description": "The upper bound of the summation. Must be a non-negative integer. Returns n*(n+1)/2."
+          }
+        },
+        "required": ["n"]
+      }
+    },
+    {
+      "name": "slug",
+      "description": "Convert arbitrary text into a URL-friendly slug: trimmed, lowercased, with runs of whitespace collapsed into single hyphens. Empty segments produced by repeated separators are dropped.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The free-form input text to slugify. Leading and trailing whitespace is ignored; internal whitespace becomes hyphens."
+          }
+        },
+        "required": ["text"]
+      }
+    },
+    {
+      "name": "stats-summary",
+      "description": "Compute descriptive statistics for an array of numbers: the count of elements, the arithmetic sum, and the median (linear-interpolated). Returns a JSON object.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "numbers_json": {
+            "type": "string",
+            "description": "A JSON-encoded array of numbers, e.g. \"[3,1,4,1,5]\". Malformed input yields a zero-count summary rather than an error."
+          }
+        },
+        "required": ["numbers_json"]
+      }
+    },
+    {
+      "name": "count-matches",
+      "description": "Count how many times a regular expression pattern occurs in the input string, scanning left to right for non-overlapping whole matches.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pat": {
+            "type": "string",
+            "description": "The regular expression pattern, e.g. \"[0-9]+\"."
+          },
+          "s": {
+            "type": "string",
+            "description": "The text to scan for matches."
+          }
+        },
+        "required": ["pat", "s"]
+      }
+    },
+    {
+      "name": "headline",
+      "description": "Normalise free text into a display headline: collapsed whitespace, lowercase, then capitalise the first letter of every remaining word.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "description": "The text to transform into headline case."
+          }
+        },
+        "required": ["s"]
+      }
+    },
+    {
+      "name": "percent",
+      "description": "Express a part-of-whole ratio as a percentage string with one decimal place, e.g. percent(54.17, 100) = \"54.2%\".",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "part": {
+            "type": "number",
+            "description": "The numerator."
+          },
+          "whole": {
+            "type": "number",
+            "description": "The denominator; must be non-zero."
+          }
+        },
+        "required": ["part", "whole"]
+      }
+    },
+    {
+      "name": "between",
+      "description": "Inclusive range check: returns true when x is greater than or equal to lo and less than or equal to hi.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "description": "The value to test."
+          },
+          "lo": {
+            "type": "number",
+            "description": "Inclusive lower bound."
+          },
+          "hi": {
+            "type": "number",
+            "description": "Inclusive upper bound."
+          }
+        },
+        "required": ["x", "lo", "hi"]
+      }
+    }
+  ]
+}

@@ -32,7 +32,10 @@ jobs:
       run: cargo build --release
     - name: MCP server end-to-end (G5.1)
       run: python3 scripts/test-mcp-server.py
-
+    - name: constrain artifact smoke (G3 v0)
+      run: |
+        ILO_CONSTRAIN=1 ./target/release/ilo constrain mcp-tools > /tmp/masks.json
+        python3 -c "import json; d=json.load(open('/tmp/masks.json')); assert d['schemaVersion']==1; assert d['transitions']"
   lint:
     runs-on: ubuntu-latest
     steps:
