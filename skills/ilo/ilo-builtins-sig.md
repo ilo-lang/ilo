@@ -1,6 +1,6 @@
 ---
 name: ilo-builtins-sig
-description: One-line io/text/math builtin signatures. Pair with ilo-language + ilo-builtins-core in curated contexts.
+description: Use this when calling io/text/math builtins beyond the core set. Compact one-line signatures for files, HTTP, JSON, env, dates, regex, format, crypto, stats, and linalg.
 ---
 
 # ilo builtins — signature reference

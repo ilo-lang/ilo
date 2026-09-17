@@ -27,13 +27,15 @@ fn repo_root() -> PathBuf {
     PathBuf::from(manifest)
 }
 
+// G2 cutover (2026-09-17): io/text/math deep-reference modules moved to
+// docs/reference/ (on-demand, not resident); their distilled signatures are
+// the resident `ilo-builtins-sig`. Structural checks cover both locations;
+// byte budgets cover the RESIDENT shelf only.
 const SKILL_NAMES: &[&str] = &[
     "ilo-language",
     "ilo-language-records",
     "ilo-builtins-core",
-    "ilo-builtins-math",
-    "ilo-builtins-io",
-    "ilo-builtins-text",
+    "ilo-builtins-sig",
     "ilo-errors",
     "ilo-tools",
     "ilo-engines",
@@ -41,6 +43,9 @@ const SKILL_NAMES: &[&str] = &[
     "ilo-examples",
     "ilo-edit-loop",
 ];
+
+const REFERENCE_NAMES: &[&str] =
+    &["ilo-builtins-io", "ilo-builtins-text", "ilo-builtins-math"];
 
 /// Conservative byte budget per module. cl100k_base averages ~3.4 bytes/token
 /// on dense reference-style markdown like ours, so 4_000 bytes ≈ 1,180 tokens
@@ -58,15 +63,31 @@ const BYTE_BUDGET_PER_MODULE: usize = 8_500;
 const BYTE_BUDGET_TOTAL: usize = 52_000;
 
 fn read_skill(name: &str) -> String {
-    let p = repo_root().join("skills/ilo").join(format!("{name}.md"));
-    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("failed to read {}: {e}", p.display()))
+    for base in ["skills/ilo", "docs/reference"] {
+        let p = repo_root().join(base).join(format!("{name}.md"));
+        if let Ok(s) = std::fs::read_to_string(&p) {
+            return s;
+        }
+    }
+    panic!("failed to read skill {name} from skills/ilo or docs/reference")
+}
+
+fn skill_path(name: &str) -> PathBuf {
+    let resident = repo_root().join("skills/ilo").join(format!("{name}.md"));
+    if resident.exists() {
+        return resident;
+    }
+    repo_root().join("docs/reference").join(format!("{name}.md"))
 }
 
 #[test]
 fn every_skill_file_exists() {
-    for n in SKILL_NAMES {
-        let p = repo_root().join("skills/ilo").join(format!("{n}.md"));
-        assert!(p.exists(), "missing skill file: {}", p.display());
+    for n in SKILL_NAMES.iter().chain(REFERENCE_NAMES) {
+        assert!(
+            skill_path(n).exists(),
+            "missing skill file: {}",
+            skill_path(n).display()
+        );
     }
 }
 
@@ -97,7 +118,7 @@ fn every_skill_has_valid_frontmatter() {
 
 #[test]
 fn every_description_starts_with_use_this_when() {
-    for n in SKILL_NAMES {
+    for n in SKILL_NAMES.iter().chain(REFERENCE_NAMES) {
         let s = read_skill(n);
         let line = s
             .lines()
@@ -115,7 +136,7 @@ fn every_description_starts_with_use_this_when() {
 
 #[test]
 fn every_skill_name_matches_filename() {
-    for n in SKILL_NAMES {
+    for n in SKILL_NAMES.iter().chain(REFERENCE_NAMES) {
         let s = read_skill(n);
         let name_line = s
             .lines()
@@ -158,7 +179,7 @@ fn total_byte_budget_respected() {
 fn marketplace_lists_every_skill() {
     let mp = repo_root().join(".claude-plugin/marketplace.json");
     let raw = std::fs::read_to_string(&mp).expect("marketplace.json present");
-    for n in SKILL_NAMES {
+    for n in SKILL_NAMES.iter().chain(REFERENCE_NAMES) {
         assert!(raw.contains(n), "marketplace.json must list skill {n}");
     }
 }
