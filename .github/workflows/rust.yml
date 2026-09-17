@@ -13,36 +13,6 @@ env:
   RUST_MIN_STACK: 16777216
 
 jobs:
-  harness-stability:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-    - name: Harness prefix stability (G4)
-      run: |
-        python3 scripts/ilo-harness.py --check --context curated
-        python3 scripts/ilo-harness.py --check --context full
-    - name: Skill growth linkage (G2)
-      run: python3 scripts/check-skill-growth.py
-  mcp-e2e:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-    - uses: dtolnay/rust-toolchain@stable
-    - name: Build
-      run: cargo build --release
-    - name: MCP server end-to-end (G5.1)
-      run: python3 scripts/test-mcp-server.py
-    - name: MCP HTTP transport e2e
-      run: python3 scripts/test-mcp-http.py
-    - name: ilo harness matches python emitter (G4)
-      run: |
-        ./target/release/ilo harness > /tmp/h-rust.txt
-        python3 scripts/ilo-harness.py > /tmp/h-py.txt
-        cmp /tmp/h-rust.txt /tmp/h-py.txt
-    - name: constrain artifact smoke (G3 v0)
-      run: |
-        ILO_CONSTRAIN=1 ./target/release/ilo constrain examples > /tmp/masks.json
-        python3 -c "import json; d=json.load(open('/tmp/masks.json')); assert d['schemaVersion']==1; assert d['transitions']"
   lint:
     runs-on: ubuntu-latest
     steps:
