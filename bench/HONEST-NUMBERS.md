@@ -134,6 +134,20 @@ Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 | Any per-task dollar figure published before 2026-09-17 | Unsupported; the first measured figures are the tables above |
 ## Comparator status
 
+- **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
+  the five bench tasks were hand-authored as .0 projections and all run
+  correctly through `bench/zero/zero-bench.sh` (init → import → run;
+  outputs 55 / 28 / 41 / hello world / 5,0). Notable toolchain facts: For
+  loops are unsupported in the typed-MIR executable path (use while);
+  i32 division truncates; borrow rules force split output buffers.
+  The LLM comparison itself is **blocked: the DeepSeek key ran out of
+  balance (−$0.42) mid-session**; rerun
+  `closed-loop-bench.py --lang2-name zero --lang2-bin bench/zero/zero-bench.sh
+  --lang2-ext .0 --lang2-docs <zero language+stdlib skills>` when funded.
+  Zero's own agent docs (language + stdlib skills) are 98,999 bytes
+  (~24.7k tokens) — 6× ilo's curated resident spec, which is itself a
+  finding about the G2 thesis.
+
 - **Python**: measured (first cross-language rows, 2026-09-17).
 - **Mog**: attempt parked — standalone toolchain blockers (int printing
   garbage, f-string segfault, async getenv typing). Findings and reproduce
