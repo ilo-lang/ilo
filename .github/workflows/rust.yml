@@ -159,3 +159,42 @@ jobs:
         fail_ci_if_error: false
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  plan-gates:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Build
+      run: cargo build --release
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: '3.12'
+    - name: G4 harness prefix stability
+      run: |
+        python3 scripts/ilo-harness.py --check --context curated
+        python3 scripts/ilo-harness.py --check --context full
+    - name: G2 skill growth linkage
+      run: python3 scripts/check-skill-growth.py
+    - name: G3 constrain artifact smoke
+      run: |
+        ILO_CONSTRAIN=1 ./target/release/ilo constrain mcp-tools > /tmp/masks.json
+        python3 -c "
+import json; d=json.load(open('/tmp/masks.json'))
+assert d['schemaVersion']==1 and len(d['transitions'])>0
+print(f'constrain smoke: {len(d[\"transitions\"])} transitions')
+        "
+    - name: G3 constrain full corpus probe
+      run: |
+        ILO_CONSTRAIN=1 ./target/release/ilo constrain examples --probe > /tmp/probed.json
+        python3 -c "
+import json; d=json.load(open('/tmp/probed.json'))
+assert d['schemaVersion']==2 and d['kind']=='probed-context-masks'
+assert len(d['contexts'])>0 and len(d.get('siteAlternatives',{}))>0
+print(f'probe: {len(d[\"contexts\"])} contexts, {d[\"stats\"][\"prefixesProbed\"]} prefixes')
+        "
+    - name: G5.1 MCP server e2e
+      run: python3 scripts/test-mcp-server.py --ilo ./target/release/ilo
+    - name: G5.1 MCP HTTP transport e2e
+      run: python3 scripts/test-mcp-http.py --ilo ./target/release/ilo
