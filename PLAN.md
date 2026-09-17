@@ -27,7 +27,7 @@ ilo has not moved with it:
 | agentlanguages.dev critique | Spec grew against thesis; 1/13 cold-start baseline; benchmark unpublished; adoption minimal; roadmap private. |
 | Our articles (`tokenizers-dont-care`, `65-percent-and-8-percent`, `spec-budgets`, `most-of-a-system-prompt`, `graft-vs-jcodemunch`, `referencing-a-skill`, `session-logs`) | Abbreviation saves characters, not tokens; benchmark shape = tokens/attempt × attempts/success; 4k layered spec proposal; resident-cost accounting; 2,225 resident tokens for 29 installed skills; per-message cost already in session logs. |
 | Language landscape (42 repos) | Sustained engineering clusters on verification + diagnostics (aver, vow, zerolang, hale, nanolang); pure-syntax sprints die (codong, pact, tacit); Axis ships logit masks; Mog bounds the spec; Zero pairs small surface with repair-plan diagnostics and has distribution (Vercel); AILANG runs agent-driven sprints at 4.5k commits/6mo. |
-| Token-opt research | Lever hierarchy: don't generate (ponytail −22% tokens, 100% safety) > don't load (context editing −84%; tool search −85%) > cache (0.1× reads; ~84% on the dominant prefix) > compress (caveman: 65% prose / 8.5% agentic; TOON 2–18% net in agents). Caveman's HONEST-NUMBERS discipline is the trust standard. Constrained decoding makes schema-guaranteed output table stakes (Jev); calibration + cost is the differentiator. |
+| Token-opt research | Lever hierarchy: don't generate (ponytail −22% tokens, 100% safety) > don't load (context editing −84%; tool search −85%) > cache (0.1× reads; ~84% on the dominant prefix) > compress (caveman: 65% prose / 8.5% agentic; TOON 2–18% net in agents). Caveman's measurements discipline is the trust standard. Constrained decoding makes schema-guaranteed output table stakes (Jev); calibration + cost is the differentiator. |
 | Caveman wrap benchmark | Reading-side compression: −33.2% on reading-heavy cases, oracle-checked; +9.9% where nothing compresses. Red rows stay red. |
 ### 1.3 Diagnosis, one line
 
@@ -57,7 +57,7 @@ The critique's sharpest point is our largest opportunity: **nobody in the field 
 Acceptance:
 - `scripts/closed-loop-bench.py` extended: `--cold` arm (fresh context per attempt) alongside warm; price tables; `$/task`; Python wired in via existing `--lang2` plumbing as the default baseline; Mog and Zero invited as comparators.
 - Task set drawn from `examples/` (369 programs doubling as the regression suite), tiered simple/medium/hard.
-- One published run: `bench/closed-loop-<date>.json` + markdown with HONEST-NUMBERS-style caveats, including rows where ilo loses.
+- One published run: `bench/closed-loop-<date>.json` + markdown with measurements-style caveats, including rows where ilo loses.
 - Reproduction: seeded, pinned model versions, commands in the writeup.
 - Comparator status: Python measured; Mog attempt parked on standalone
   toolchain blockers (`bench/mog-comparator-findings.md`); Zero deferred
@@ -70,7 +70,7 @@ distilled `ilo-builtins-sig` resident; curated set (language + core + sig)
 = **4,095 tokens**, CI-enforced (token budgets + eviction-linkage gate).
 Measured: personas **10/13 curated vs 8/13 full**; naive 2-module
 truncation control 6.5/13 and 15× Python — curation, not size, is the
-lever (`bench/HONEST-NUMBERS.md`).
+lever (`bench/measurements.md`).
 
 Retired: `ilo -ai` now serves the curated spec (13,925 bytes, ~4.1k tok)
 instead of the 166,819-byte monolith — 12× smaller on the agent surface
@@ -179,7 +179,7 @@ Acceptance:
 
 | Phase | Window | Work | Exit criterion |
 |---|---|---|---|
-| 0 | ✅ Done | HONEST-NUMBERS.md in-repo (every published number, sourced, with caveats — including the tokenizer result and the 1/13 baseline); resume persona pipeline; repo note answering the critique point-by-point | Page merged; fleet running |
+| 0 | ✅ Done | measurements.md in-repo (every published number, sourced, with caveats — including the tokenizer result and the 1/13 baseline); resume persona pipeline; repo note answering the critique point-by-point | Page merged; fleet running |
 | 1 | ✅ Done | G1 benchmark v1 (cold+warm, pricing, Python); G2 4k core spec experiment | Published run + layered-spec verdict |
 | 2 | ✅ Done (no-mask rerun done; masked rerun = host-side) | G3 constrained-decoding spike + persona rerun; G4 `ilo harness` + `--cache` reporting | Masked Haiku delta published; cache-aligned default |
 | 3 | 🔄 In progress | G5 MCP runtime + decision-gate docs + 3–5 tools; distribution parity (skills/npm/plugin packaging; MCP server in the plugin) | External user runs an ilo tool or gate in a real harness |

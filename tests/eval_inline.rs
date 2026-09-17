@@ -889,7 +889,7 @@ fn ai_flag_exits_success() {
 // builtins + signature reference, ~4.1k tokens) while `help ai` serves the
 // full compact spec (~48k tokens) as the reference surface. Intentionally
 // different now: the agent-facing surface must not carry the monolith.
-// See PLAN.md G2 and bench/HONEST-NUMBERS.md.
+// See PLAN.md G2 and bench/measurements.md.
 #[test]
 fn help_ai_and_ai_flag_are_intentionally_different() {
     let out1 = ilo()

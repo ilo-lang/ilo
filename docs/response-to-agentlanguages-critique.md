@@ -41,7 +41,7 @@ Response: PLAN.md G1, shipped 2026-09-16 as code: `closed-loop-bench.py` now
 reports tokens per attempt, attempts to success, provider-cache hit/miss, and
 $/successful-task, across cold (cache-busted) and warm arms, with Python as
 the default baseline and any second CLI pluggable. First results are in
-`bench/`, caveats in `bench/HONEST-NUMBERS.md`. The harness is offered as a
+`bench/`, caveats in `bench/measurements.md`. The harness is offered as a
 neutral instrument: run your language against it and publish.
 
 ## 4. "Adoption is minimal"
@@ -61,7 +61,7 @@ published cadence.
 ## What we are not doing
 
 - Arguing the spec is fine. It isn't; it is being cut by measurement.
-- Hiding rows. `bench/HONEST-NUMBERS.md` keeps unsupported claims in a
+- Hiding rows. `bench/measurements.md` keeps unsupported claims in a
   retracted table, including our own.
 - Treating the catalogue as hostile. The entry cites our own strategy docs
   and baselines more faithfully than our marketing did. That is the standard

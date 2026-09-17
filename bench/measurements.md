@@ -1,4 +1,4 @@
-# ilo — Honest Numbers
+# ilo — Measurements
 
 Every published ilo number, its source, and its limits. Numbers the project
 cannot yet support are listed as unsupported, not softened. Where a row is
@@ -209,6 +209,13 @@ model at the edge of its capacity.
 
 ## Comparator status
 
+- **Bash**: leg wired 2026-09-18 — reference solutions authored for all
+  8 tasks (`bench/closed-loop/references-bash/`), each validated against
+  the expected outputs; runner path (`run_lang2` with
+  `/usr/bin/bash` + `.sh`) verified against `simple-function`. Rationale:
+  agents emit as much bash as Python for glue tasks and bash is
+  pretraining-native — **0 resident-spec tokens** — making it the honest
+  cost floor ilo competes against. LLM-run leg awaits funded key.
 - **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
   the five bench tasks were hand-authored as .0 projections and all run
   correctly through `bench/zero/zero-bench.sh` (init → import → run;

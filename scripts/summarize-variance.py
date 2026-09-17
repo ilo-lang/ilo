@@ -57,7 +57,7 @@ def main() -> int:
               f"{sd:>8.4f} {s['first']:>6}/{s['n']}")
     print()
     print("Quote medians when the sd approaches the mean — the mean is "
-          "tail-driven by retry-thrash runs (see HONEST-NUMBERS.md).")
+          "tail-driven by retry-thrash runs (see measurements.md).")
     return 0
 
 

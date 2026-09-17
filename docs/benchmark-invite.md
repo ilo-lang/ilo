@@ -48,9 +48,9 @@ SOTA claims (LoCoMo scores spanning 64–94 for competing products; token
 savings ranging 8.5%–65% for the same tool depending on who measured).
 A shared harness with cold/warm arms and published loss rows is the cheapest
 fix. ilo ships its own results first, red rows included — see
-[`bench/HONEST-NUMBERS.md`](../bench/HONEST-NUMBERS.md).
+[`bench/measurements.md`](../bench/measurements.md).
 
 Status, caveats, and known limits of the harness are documented in
-`bench/HONEST-NUMBERS.md`. PRs against `scripts/closed-loop-bench.py` and
+`bench/measurements.md`. PRs against `scripts/closed-loop-bench.py` and
 `bench/closed-loop/tasks.json` welcome — especially task-set additions from
 languages whose strengths the current 5 tasks don't exercise.

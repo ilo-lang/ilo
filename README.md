@@ -266,7 +266,7 @@ in-repo tooling that measures and enforces it:
 | `scripts/closed-loop-bench.py` | Closed-loop $/successful-task vs Python (and any second CLI): warm + cold cache arms, per-attempt tokens, provider cache hit/miss |
 | `scripts/check-skill-tokens.ilo` + `scripts/check-skill-growth.py` | Resident spec budgets + eviction-linked growth gate (G2) |
 | `scripts/ilo-mcp-server.py` | Exposes ilo functions as MCP tools; inputSchema generated from the AST |
-| `bench/HONEST-NUMBERS.md` | Every published number, sourced, with limits — red rows stay red |
+| `bench/measurements.md` | Every published number, sourced, with limits — red rows stay red |
 
 Provider caching mechanics and break-even arithmetic: [`docs/caching.md`](docs/caching.md).
 Comparators welcome: [`docs/benchmark-invite.md`](docs/benchmark-invite.md).
