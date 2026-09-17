@@ -23,6 +23,7 @@ use super::super::lexer::{self, Token};
 
 thread_local! {
     static REC: RefCell<Option<Rec>> = const { RefCell::new(None) };
+    static LAST_SITE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 #[derive(Default)]
@@ -96,6 +97,7 @@ pub fn enabled() -> bool {
 /// the peeked token is the alternative the parser took. Observed over the
 /// corpus — same epistemics as the bigram, finer key.
 pub fn mark_site(site: &'static str, peek: Option<&Token>) {
+    LAST_SITE.with(|l| *l.borrow_mut() = Some(site.to_string()));
     if !enabled() {
         return;
     }
@@ -350,6 +352,7 @@ fn probe_cmd(corpus_dir: &str) -> i32 {
     }
     let candidates = probe_candidates();
     let mut contexts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut site_alts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut bigram: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut vocab: BTreeSet<String> = BTreeSet::new();
     for (_, name) in &candidates {
@@ -404,12 +407,24 @@ fn probe_cmd(corpus_dir: &str) -> i32 {
             for (cand_tok, cand_name) in &candidates {
                 prefix.push((cand_tok.clone(), crate::ast::Span::default()));
                 probes += 1;
-                if valid_prefix(&prefix, k + 1) {
+                let valid = valid_prefix(&prefix, k + 1);
+                // The innermost dispatch site that fired while parsing
+                // prefix+candidate — Strategy 1's production-path key,
+                // derived mechanically from the real parser.
+                let site = LAST_SITE.with(|l| l.borrow().clone());
+                if valid {
                     allowed.insert(cand_name.clone());
                     bigram
                         .entry(prev1.clone())
                         .or_default()
                         .insert(cand_name.clone());
+                    if let Some(site) = site {
+                        let key = format!("{site} after {prev1}");
+                        site_alts
+                            .entry(key)
+                            .or_default()
+                            .insert(cand_name.clone());
+                    }
                 }
                 prefix.pop();
             }
@@ -482,6 +497,7 @@ fn probe_cmd(corpus_dir: &str) -> i32 {
             vocab.iter().map(|t| serde_json::Value::String(t.clone())).collect(),
         ),
         "contexts": serde_json::Value::Object(to_edges(&contexts)),
+        "siteAlternatives": serde_json::Value::Object(to_edges(&site_alts)),
         "bigram": serde_json::Value::Object(to_edges(&bigram)),
         "stats": {
             "files": files,
