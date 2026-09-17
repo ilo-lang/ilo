@@ -169,11 +169,11 @@ Acceptance:
 
 | Phase | Window | Work | Exit criterion |
 |---|---|---|---|
-| 0 | Days | HONEST-NUMBERS.md in-repo (every published number, sourced, with caveats — including the tokenizer result and the 1/13 baseline); resume persona pipeline; repo note answering the critique point-by-point | Page merged; fleet running |
-| 1 | ~30d | G1 benchmark v1 (cold+warm, pricing, Python); G2 4k core spec experiment | Published run + layered-spec verdict |
-| 2 | 60–90d | G3 constrained-decoding spike + persona rerun; G4 `ilo harness` + `--cache` reporting | Masked Haiku delta published; cache-aligned default |
-| 3 | Quarter | G5 MCP runtime + decision-gate docs + 3–5 tools; distribution parity (skills/npm/plugin packaging; MCP server in the plugin) | External user runs an ilo tool or gate in a real harness |
-| 4 | Later | Fine-tune a small model on the 369-example corpus + spec to delete the spec term entirely (training is prompt caching with infinite TTL — the only true answer to Python-in-weights; the $8k/mo session-log corpus is training data). Arrow-typed tabular builtins for the three-plane pattern. | Spec-loading term ≈ 0 for tuned models |
+| 0 | ✅ Done | HONEST-NUMBERS.md in-repo (every published number, sourced, with caveats — including the tokenizer result and the 1/13 baseline); resume persona pipeline; repo note answering the critique point-by-point | Page merged; fleet running |
+| 1 | ✅ Done | G1 benchmark v1 (cold+warm, pricing, Python); G2 4k core spec experiment | Published run + layered-spec verdict |
+| 2 | ✅ Done (no-mask rerun done; masked rerun = host-side) | G3 constrained-decoding spike + persona rerun; G4 `ilo harness` + `--cache` reporting | Masked Haiku delta published; cache-aligned default |
+| 3 | 🔄 In progress | G5 MCP runtime + decision-gate docs + 3–5 tools; distribution parity (skills/npm/plugin packaging; MCP server in the plugin) | External user runs an ilo tool or gate in a real harness |
+| 4 | 🔄 Seed ready | Fine-tune a small model on the 369-example corpus + spec to delete the spec term entirely (training is prompt caching with infinite TTL — the only true answer to Python-in-weights; the $8k/mo session-log corpus is training data). Arrow-typed tabular builtins for the three-plane pattern. | Spec-loading term ≈ 0 for tuned models |
 
 Dependencies: G1 unblocks everything (it is the metric made real). G2 and G3 are independent; both feed G1's next run. G5 depends on G1 (claims need numbers) and G2 (resident cost is the selling point).
 

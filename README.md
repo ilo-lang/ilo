@@ -271,6 +271,9 @@ in-repo tooling that measures and enforces it:
 Provider caching mechanics and break-even arithmetic: [`docs/caching.md`](docs/caching.md).
 Comparators welcome: [`docs/benchmark-invite.md`](docs/benchmark-invite.md).
 
+**Decision gates** (typed, verifier-enforced routing): [`docs/gates.md`](docs/gates.md).
+**Constrained decoding** (grammar-state masks, probed transitions): [`docs/constrain-design.md`](docs/constrain-design.md).
+
 ## Key docs
 
 | | |
