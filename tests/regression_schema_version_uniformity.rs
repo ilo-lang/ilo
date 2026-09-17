@@ -259,11 +259,19 @@ fn spec_lang_json_has_schema_version_and_content() {
         ok,
         "spec lang --json should succeed\nstdout: {stdout}\nstderr: {stderr}"
     );
-    assert_eq!(v["schemaVersion"], 1);
-    assert_eq!(v["format"], "markdown");
+    // G2 (2026-09-17): spec lang serves the curated resident spec
+    // (schemaVersion 2, format curated-spec) with a pointer to the full
+    // SPEC.md reference. The 51k markdown monolith is off the agent path.
+    assert_eq!(v["schemaVersion"], 2);
+    assert_eq!(v["format"], "curated-spec");
+    assert_eq!(v["fullReference"], "SPEC.md");
     assert!(
         v["content"].is_string() && !v["content"].as_str().unwrap().is_empty(),
         "content should be a non-empty string"
+    );
+    assert!(
+        v["content"].as_str().unwrap().contains("name: ilo-language"),
+        "curated content must include the language module frontmatter"
     );
 }
 
