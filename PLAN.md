@@ -107,7 +107,22 @@ Acceptance:
 - `ilo bench --cache` reports effective tokens at 0.1× next to raw, both in benchmark output.
 - Docs: provider caching mechanics, break-even arithmetic, and the honest limit (caching narrows the spec-cost disadvantage vs Python-in-weights; it never reaches zero, and only within TTL windows).
 
-### G5 — Uses: verified agent-compute runtime (P1)
+### G5 — Uses: verified agent-compute runtime (P1) — **prototype shipped 2026-09-17**
+
+**G5.1 MCP tool runtime: working prototype.** `scripts/ilo-mcp-server.py`
+(MCP stdio, JSON-RPC 2.0) scans `mcp-tools/*.ilo`, generates each tool's
+JSON Schema from the AST via `ilo --ast` (Number/Text/Bool/List/Map/
+Optional/Result mapped; Fn params skip), and executes calls through the
+verifying compiler. Measured: **606 B (≈151 tokens) of resident `tools/list`
+schema for three tools** — the graft-vs-jCodeMunch measurement was 886 B
+vs 27,526 B for one server each; ilo's generated-schema path is the cheap
+end of that axis by construction. Wire test:
+`scripts/test-mcp-server.py` (initialize / list / 3 calls / typed error /
+unknown-tool), CI job `mcp-e2e`. Private (`_`-prefixed) functions don't
+leak. Arg names match hyphen/score-insensitively.
+
+Open: streamable-HTTP transport, `--json` tool-result contract hardening,
+publishing 2 more tool families with measured schema-vs-handwritten deltas.
 
 Stop competing for "the language agents write apps in." Aim ilo where verified density + determinism are load-bearing:
 

@@ -1,0 +1,15 @@
+-- MCP demo tools (G5.1). Each public function below is exposed as one MCP
+-- tool by scripts/ilo-mcp-server.py: name + typed params from the AST,
+-- description from this header comment. Verify with:
+--   ilo check mcp-tools/demo.ilo
+
+-- tri: triangular number of n (sum 1..n)
+tri n:n>n;s=+n 1;p=*s n;d=/p 2;d
+
+-- slug: lowercase text, runs of whitespace to single hyphens
+slug text:t>t;parts=spl (lwr trm text) " ";kept=flt (p:t>b;>len (trm p) 0) parts;cat kept "-"
+
+-- stats-summary: count/sum/median of a JSON array of numbers.
+-- Accepts numbers as a JSON-text parameter (CLI args arrive as text; the
+-- tool parses with jpar-list!) and returns a JSON object string.
+stats-summary numbers-json:t>t;xs=default-on-err (jpar-list numbers-json) [];c=len xs;<=c 0 "{\"count\":0}";s=sum xs;md=median xs;fmt "{\"count\":{},\"sum\":{:.2f},\"median\":{:.2f}}" c s md
