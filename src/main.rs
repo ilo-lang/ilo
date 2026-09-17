@@ -25,10 +25,22 @@ use diagnostic::{Diagnostic, ansi::AnsiRenderer, json};
 fn compact_spec() -> &'static str {
     include_str!("../ai.txt")
 }
+/// Curated agent spec: the G2 resident set (language + core builtins +
+/// signature reference) — ~4.1k tokens. This is what `ilo -ai` serves: the
+/// token-cost surface for LLM system prompts. The full 48k compact spec
+/// remains on `ilo help ai` as the human/reference surface.
+fn curated_spec() -> String {
+    let mut out = String::new();
+    for name in ["ilo-language", "ilo-builtins-core", "ilo-builtins-sig"] {
+        if let Some(s) = SKILLS.iter().find(|s| s.name == name) {
+            out.push_str(s.content);
+            out.push_str("\n\n");
+        }
+    }
+    out
+}
 
 // ── Modular agent skills ──────────────────────────────────────────────────────
-//
-// Eight skill modules carved out of the monolithic compact spec so agents can
 // load only the slice their current task needs (typical: 1-2 modules ≈ 2,000
 // tokens) instead of the whole 16,000-token `ai.txt`. Each module is embedded
 // into the binary via `include_str!` so they stay version-locked to the
@@ -67,22 +79,28 @@ const SKILLS: &[Skill] = &[
         content: include_str!("../skills/ilo/ilo-builtins-core.md"),
     },
     Skill {
+        name: "ilo-builtins-sig",
+        description: "One-line io/text/math builtin signatures. Pair with ilo-language + ilo-builtins-core in curated contexts.",
+        path: "skills/ilo/ilo-builtins-sig.md",
+        content: include_str!("../skills/ilo/ilo-builtins-sig.md"),
+    },
+    Skill {
         name: "ilo-builtins-math",
         description: "Use this when calling math builtins. Arithmetic, trig, constants (pi, tau, e), random, and statistics.",
-        path: "skills/ilo/ilo-builtins-math.md",
-        content: include_str!("../skills/ilo/ilo-builtins-math.md"),
+        path: "docs/reference/ilo-builtins-math.md",
+        content: include_str!("../docs/reference/ilo-builtins-math.md"),
     },
     Skill {
         name: "ilo-builtins-io",
         description: "Use this when calling I/O builtins. File read/write, HTTP, JSON, path ops, env, time, and process.",
-        path: "skills/ilo/ilo-builtins-io.md",
-        content: include_str!("../skills/ilo/ilo-builtins-io.md"),
+        path: "docs/reference/ilo-builtins-io.md",
+        content: include_str!("../docs/reference/ilo-builtins-io.md"),
     },
     Skill {
         name: "ilo-builtins-text",
         description: "Use this when calling text builtins. Manipulation, regex, formatting (fmt, fmt2), CSV/TSV, and date parsing.",
-        path: "skills/ilo/ilo-builtins-text.md",
-        content: include_str!("../skills/ilo/ilo-builtins-text.md"),
+        path: "docs/reference/ilo-builtins-text.md",
+        content: include_str!("../docs/reference/ilo-builtins-text.md"),
     },
     Skill {
         name: "ilo-errors",
@@ -3559,9 +3577,10 @@ fn main() {
         }
     }
 
-    // Special-case: `ilo -ai` (hidden alias for compact spec)
+    // Special-case: `ilo -ai` — serves the curated G2 resident set (~4.1k
+    // tokens). The full compact spec stays on `ilo help ai` / `ilo help --json ai`.
     if raw_args.get(1).map(|s| s.as_str()) == Some("-ai") {
-        print!("{}", compact_spec());
+        print!("{}", curated_spec());
         std::process::exit(0);
     }
 
@@ -3941,7 +3960,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     }
 
     if args[1] == "-ai" {
-        print!("{}", compact_spec());
+        print!("{}", curated_spec());
         return 0;
     }
 
