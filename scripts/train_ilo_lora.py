@@ -28,6 +28,15 @@ MAX_LEN = 2048
 SPEC_TAG = "<<ILO_SPEC_INTERNALIZED>>"
 
 
+
+def parse_args():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--epochs", type=int, default=3)
+    ap.add_argument("--out", default=None, help="override adapter output dir")
+    return ap.parse_args()
+
+EPOCHS = parse_args().epochs
 def main() -> int:
     rows = [json.loads(l) for l in TRAIN.read_text().splitlines() if l.strip()]
     print(f"train rows: {len(rows)}")
@@ -82,10 +91,10 @@ def main() -> int:
                 "attention_mask": torch.tensor(attn)}
 
     targs = TrainingArguments(
-        output_dir=str(OUT),
-        per_device_train_batch_size=1,
+        output_dir=str(OUT if parse_args().out is None
+                       else ROOT / parse_args().out),
         gradient_accumulation_steps=8,
-        num_train_epochs=3,
+        num_train_epochs=EPOCHS,
         learning_rate=2e-4,
         logging_steps=5,
         save_strategy="epoch",
