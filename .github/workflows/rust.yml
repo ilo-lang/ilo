@@ -34,6 +34,11 @@ jobs:
       run: python3 scripts/test-mcp-server.py
     - name: MCP HTTP transport e2e
       run: python3 scripts/test-mcp-http.py
+    - name: ilo harness matches python emitter (G4)
+      run: |
+        ./target/release/ilo harness > /tmp/h-rust.txt
+        python3 scripts/ilo-harness.py > /tmp/h-py.txt
+        cmp /tmp/h-rust.txt /tmp/h-py.txt
     - name: constrain artifact smoke (G3 v0)
       run: |
         ILO_CONSTRAIN=1 ./target/release/ilo constrain examples > /tmp/masks.json
