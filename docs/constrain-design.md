@@ -135,3 +135,18 @@ can never drift from it. The instrumented per-site recorder (Strategy 1)
 remains the end-state for host APIs that want true parse states rather
 than context keys.
 
+## Instrumentation note from the first implementation pass (2026-09-17)
+
+Strategy 1's site tagging is **not mechanical**. The six dispatch sites
+each carry idiosyncratic pre-processing before their `peek()` match:
+`parse_stmt_body` runs a reserved-keyword binding check that peeks
+`token_at(pos + 1)` for `=` and can emit ILO-P011 before the match;
+labelled-arg detection (`peek_labelled_arg_label`) and the
+`*/`-chain precedence logic similarly look ahead past the cursor. A site
+tag dropped naively at `fn parse_stmt_body` entry would mis-key states for
+those paths. Consequence: the recorder needs one deliberate
+state-emission point per site (after pre-processing, at the match), chosen
+by someone reading each site — a focused compiler session, not a
+sweep. The probed context masks shipped in this branch are the stand-in
+and cover the practical host need; per-site states remain the end-state
+for hosts that want production-path keys.

@@ -621,9 +621,9 @@ def main() -> int:
     parser.add_argument("--python", action="store_true",
                         help="Shorthand for --lang2-name python "
                              "--lang2-bin python3 --lang2-ext .py")
-    parser.add_argument("--align", action="store_true",
-                        help="Cache-aligned harness: spec in system message, "
-                             "append-only repair turns.")
+    parser.add_argument("--no-align", dest="align", action="store_false",
+                        help="Legacy harness shape (spec in user message, "
+                             "repair rewrites the turn). Aligned is the default.")
     parser.add_argument("--context", choices=["curated", "full", "core"], default="curated",
                         help="ilo skill module set (core = G2 experiment arm).")
     parser.add_argument("--task", metavar="ID",
