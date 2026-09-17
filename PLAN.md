@@ -59,6 +59,9 @@ Acceptance:
 - Task set drawn from `examples/` (369 programs doubling as the regression suite), tiered simple/medium/hard.
 - One published run: `bench/closed-loop-<date>.json` + markdown with HONEST-NUMBERS-style caveats, including rows where ilo loses.
 - Reproduction: seeded, pinned model versions, commands in the writeup.
+- Comparator status: Python measured; Mog attempt parked on standalone
+  toolchain blockers (`bench/mog-comparator-findings.md`); Zero deferred
+  (no public installable artifact).
 
 ### G2 — Bounded, layered, referenced spec (P0) — **SHIPPED 2026-09-17 (complete)**
 
@@ -111,7 +114,7 @@ Acceptance:
 - `ilo bench --cache` reports effective tokens at 0.1× next to raw, both in benchmark output.
 - Docs: provider caching mechanics, break-even arithmetic, and the honest limit (caching narrows the spec-cost disadvantage vs Python-in-weights; it never reaches zero, and only within TTL windows).
 
-### G5 — Uses: verified agent-compute runtime (P1) — **prototype shipped 2026-09-17**
+### G5 — Uses: verified agent-compute runtime (P1) — **prototype shipped 2026-09-17 (expanded)**
 
 **G5.1 MCP tool runtime: working prototype.** `scripts/ilo-mcp-server.py`
 (MCP stdio, JSON-RPC 2.0) scans `mcp-tools/*.ilo`, generates each tool's
@@ -120,10 +123,15 @@ Optional/Result mapped; Fn params skip), and executes calls through the
 verifying compiler. Measured: **606 B (≈151 tokens) of resident `tools/list`
 schema for three tools** — the graft-vs-jCodeMunch measurement was 886 B
 vs 27,526 B for one server each; ilo's generated-schema path is the cheap
-end of that axis by construction. Wire test:
-`scripts/test-mcp-server.py` (initialize / list / 3 calls / typed error /
-unknown-tool), CI job `mcp-e2e`. Private (`_`-prefixed) functions don't
-leak. Arg names match hyphen/score-insensitively.
+end of that axis by construction. Families: `demo`, `text`, `numbers`, `gates` — **10 tools, 4 families,
+1,861 B ≈ 465 tokens resident `tools/list`** (~47 tok/tool). Wire tests:
+`scripts/test-mcp-server.py` (stdio, 12 calls incl. gate family) and
+`scripts/test-mcp-http.py` (HTTP transport + session). CI job `mcp-e2e`
+runs both plus the constrain smoke. Private (`_`-prefixed) functions
+don't leak. Arg names match hyphen/score-insensitively. Honest schema
+delta vs hand-authored schemas: **1.1×** on scalar tools
+(`bench/mcp-schema-handwritten.json`) — the wins are zero authoring,
+verifier-exact types, and bloat immunity, not bytes.
 
 Shipped: streamable-HTTP transport (`--http --port`, JSON mode + Mcp-Session-Id, e2e-tested). Open: `--json` tool-result contract hardening,
 publishing 2 more tool families with measured schema-vs-handwritten deltas.
