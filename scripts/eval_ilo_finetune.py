@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -147,7 +148,10 @@ def main() -> int:
         rows.append({"i": i, "src": src, "check": c})
         print(f"  [base-spec {i + 1}/{len(tasks)}] "
               f"{'OK' if c['full_ok'] else 'fail'}", file=sys.stderr)
-    results["base-spec"] = {"check_ok": ok, "n": len(tasks), "rows": rows}
+    parse_ok = sum(1 for r in rows if r["check"]["parse_ok"])
+    full_ok = sum(1 for r in rows if r["check"]["full_ok"])
+    results["base-spec"] = {"parse_ok": parse_ok, "full_ok": full_ok,
+                            "n": len(tasks), "rows": rows}
     print(f"base-spec: {ok}/{len(tasks)} check-valid", file=sys.stderr)
 
     summary = {}
