@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ilo": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "scripts/ilo-mcp-server.py",
+        "--dir",
+        "mcp-tools",
+        "--ilo",
+        "./target/release/ilo"
+      ]
+    }
+  }
+}

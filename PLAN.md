@@ -112,7 +112,7 @@ Acceptance:
 - `ilo harness` emits the cache-aligned system prompt: spec-first, tools-first, task-last; `^26.5` pragma doubles as the cache key (version bump = the only invalidation event).
 - CI asserts byte-stable prefix per version.
 - `ilo bench --cache` reports effective tokens at 0.1× next to raw, both in benchmark output.
-- Docs: provider caching mechanics, break-even arithmetic, and the honest limit (caching narrows the spec-cost disadvantage vs Python-in-weights; it never reaches zero, and only within TTL windows).
+- [x] Docs: `docs/caching.md` — provider mechanics, break-even arithmetic, alignment rules, and the honest limit (caching narrows the spec-cost disadvantage vs Python-in-weights; it never reaches zero, and only within TTL windows).
 
 ### G5 — Uses: verified agent-compute runtime (P1) — **prototype shipped 2026-09-17 (expanded)**
 
