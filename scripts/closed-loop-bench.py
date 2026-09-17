@@ -467,6 +467,9 @@ def run_task(
         "input_cache_hit_tokens": total_in_hit,
         "input_cache_miss_tokens": total_in_miss,
         "cost_usd": round(cost_usd, 6),
+        "cache_savings_usd": round(
+            (total_in_hit * model_cfg["pricing"]["in_miss"]
+             - total_in_hit * model_cfg["pricing"]["in_hit"]) / 1e6, 6),
         "repair_tokens_by_turn": repair_tokens_by_turn,
         "attempts_to_success": attempts_to_success,
         "attempts_total": attempts,

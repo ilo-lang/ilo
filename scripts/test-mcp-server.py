@@ -85,8 +85,21 @@ def main() -> int:
         unknown = rpc(7, "tools/call", {"name": "nope", "arguments": {}})
         assert unknown["error"]["code"] == -32602, unknown
 
+        gates_asap = rpc(8, "tools/call", {
+            "name": "gates:route-priority",
+            "arguments": {"subject": "ASAP: refund request"}})
+        assert gates_asap["result"]["content"][0]["text"] == "priority-normal", gates_asap
+        gates_urgent = rpc(9, "tools/call", {
+            "name": "gates:route-priority",
+            "arguments": {"subject": "urgent: refund request"}})
+        assert gates_urgent["result"]["content"][0]["text"] == "priority-high", gates_urgent
+        gate_no = rpc(10, "tools/call", {
+            "name": "gates:within-budget",
+            "arguments": {"requested": 120, "limit": 100}})
+        assert gate_no["result"]["content"][0]["text"] == "false", gate_no
+
         print("mcp e2e: OK "
-              "(initialize, tools/list, 3 calls, typed error, unknown-tool)")
+              "(initialize, list, tri/slug/stats, gate calls, typed error, unknown tool)")
         return 0
     finally:
         srv.kill()

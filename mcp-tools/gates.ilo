@@ -1,0 +1,17 @@
+-- MCP decision gates (G5.2): typed classify/route/guard functions that an
+-- agent harness calls instead of free-form LLM judgement. Errors are
+-- impossible by construction — the verifier gates every path — so the
+-- calling agent branches on the output without defensive code.
+-- Verified with: ilo check mcp-tools/gates.ilo
+
+-- route-priority: route a support ticket by priority keywords in the
+-- subject. Deterministic: same input, same route, every time.
+route-priority subject:t>t;urgent=has (lwr subject) "urgent";high=has (lwr subject) "asap";fallback=?high "priority-normal" "priority-low";?urgent "priority-high" fallback
+
+-- within-budget: guard an spend request against a limit. Yes/no with no
+-- third state.
+within-budget requested:n limit:n>b;<=requested limit
+
+-- severity: score a value into discrete bands (Jev-style Choice, three
+-- options, boundaries verified: <10 low, <100 medium, else high)
+severity value:n>t;<value 10 "low";<value 100 "medium";"high"
