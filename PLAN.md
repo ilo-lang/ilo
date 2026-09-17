@@ -86,7 +86,14 @@ Acceptance:
 - CI budget with eviction: no spec growth without a linked persona-transcript artifact (the existing ≥3-transcripts / >40-token criterion, now mechanical); deletions counted as wins.
 - `ai.txt` either regenerated from the core or retired — two "real specs" is how drift happened.
 
-### G3 — Constrained decoding for small models (P0) — **v0+v1 artifact shipped 2026-09-17**
+### G3 — Constrained decoding for small models (P0) — **CLOSED 2026-09-17 (ilo-side complete)**
+
+Verdict: static per-site masks are rejected (unbounded at expr-fallback
+sites); the probed context masks (v2) are the only sound representation
+ilo's grammar admits; the site-keyed recorder (6/6 dispatch points) ships
+production-path analytics. Remaining work is host-side only: a decoding
+harness that consumes the v2 artifact (masked persona rerun blocked on a
+mask-capable host + model key).
 
 `ilo constrain` shipped: empirical bigram (schemaVersion 1), probed
 context masks (`--probe`, schemaVersion 2: 405 contexts, 19k+ edges, 5
