@@ -29,7 +29,13 @@ node_modules/
 rust_out
 
 # Research / scratch docs (subagents leave reports here; not tracked)
-docs/
+docs/*
+!docs/deploying.md
+!docs/cadence/
+!docs/gates.md
+!docs/constrain-design.md
+!docs/response-to-agentlanguages-critique.md
+!docs/reference/
 # Tracked documentation files are explicitly exempted below:
 !docs/deploying.md
 !docs/cadence/
