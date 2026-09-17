@@ -480,8 +480,11 @@ fn help_shows_usage() {
     assert!(stdout.contains("--vm"), "expected --vm, got: {}", stdout);
 }
 
+// G2 (2026-09-17): `help lang` serves the curated resident spec with a
+// pointer to the full reference — the 51k SPEC.md monolith is off the
+// agent-facing path.
 #[test]
-fn help_lang_shows_spec() {
+fn help_lang_serves_curated_spec() {
     let out = ilo()
         .args(["help", "lang"])
         .output()
@@ -489,9 +492,20 @@ fn help_lang_shows_spec() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("ilo Language Spec"),
-        "expected spec header, got: {}",
-        stdout
+        stdout.contains("name: ilo-language"),
+        "expected curated frontmatter, got: {}",
+        &stdout[..200.min(stdout.len())]
+    );
+    assert!(
+        stdout.contains("Full specification"),
+        "expected the full-reference pointer footer"
+    );
+    // Budget: the curated resident set is ~4.1k tokens ≈ 16 KB; hard bound
+    // catches accidental re-growth.
+    assert!(
+        stdout.len() < 24_000,
+        "help lang grew to {} bytes; the curated spec has a budget",
+        stdout.len()
     );
 }
 
@@ -968,21 +982,30 @@ fn help_ai_preserves_key_content() {
 }
 
 #[test]
-fn help_ai_is_smaller_than_full_spec() {
+// G2 (2026-09-17): the surfaces split intentionally. `help lang` serves the
+// curated resident spec (~4.1k tok, the agent path); `help ai` serves the
+// full compact spec (~48k tok) as the reference surface. See PLAN.md G2.
+#[test]
+fn help_surfaces_follow_the_g2_split() {
     let full = ilo()
-        .args(["help", "lang"])
-        .output()
-        .expect("failed to run ilo");
-    let compact = ilo()
         .args(["help", "ai"])
         .output()
         .expect("failed to run ilo");
+    let curated = ilo()
+        .args(["help", "lang"])
+        .output()
+        .expect("failed to run ilo");
+    let full_len = full.stdout.len();
+    let curated_len = curated.stdout.len();
+    // The reference surface is much larger than the curated resident set.
     assert!(
-        compact.stdout.len() < full.stdout.len(),
-        "compact spec ({} bytes) should be smaller than full spec ({} bytes)",
-        compact.stdout.len(),
-        full.stdout.len()
+        full_len > curated_len * 2,
+        "help ai ({full_len} B) should be much larger than help lang ({curated_len} B)"
     );
+    // Both stay inside their G2 budgets: curated ≈ 4.1k tokens (~16 KB),
+    // reference has no curated budget but must not balloon.
+    assert!(curated_len < 24_000, "help lang grew: {curated_len} B");
+    assert!(full_len < 400_000, "help ai grew: {full_len} B");
 }
 
 // --- --version / -V flag ---

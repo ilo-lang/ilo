@@ -3778,15 +3778,20 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             let as_json = cli.global.explicit_json();
             match s.topic.as_deref() {
                 Some("lang") => {
+                    // G2: the agent-facing spec surface serves the curated
+                    // resident set (~4.1k tok). The full 51k reference stays
+                    // in SPEC.md (repo) and ilo-lang.ai/docs.
+                    let footer = "\n\n# Full specification\n\nThe complete reference lives in SPEC.md (repository) and https://ilo-lang.ai/docs — the curated spec above is the agent-facing surface (PLAN.md G2).\n";
                     if as_json {
                         let v = serde_json::json!({
-                            "schemaVersion": 1,
-                            "format": "markdown",
-                            "content": include_str!("../SPEC.md"),
+                            "schemaVersion": 2,
+                            "format": "curated-spec",
+                            "fullReference": "SPEC.md",
+                            "content": format!("{}{footer}", curated_spec()),
                         });
                         println!("{}", v);
                     } else {
-                        print!("{}", include_str!("../SPEC.md"));
+                        print!("{}{footer}", curated_spec());
                     }
                 }
                 Some("ai") => {
@@ -3978,7 +3983,11 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
 
     if args[1] == "help" || args[1] == "--help" || args[1] == "-h" {
         if args.len() > 2 && args[2] == "lang" {
-            print!("{}", include_str!("../SPEC.md"));
+            // G2: curated resident set; full reference = SPEC.md / docs site.
+            print!("{}", curated_spec());
+            print!("\n\n# Full specification\n\nThe complete reference lives \
+in SPEC.md (repository) and https://ilo-lang.ai/docs — the curated spec \
+above is the agent-facing surface (PLAN.md G2).\n");
         } else if args.len() > 2 && args[2] == "ai" {
             print!("{}", compact_spec());
         } else {
