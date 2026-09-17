@@ -161,6 +161,22 @@ The infrastructure is the deliverable: training script, 3-arm eval,
 deterministic split, val-gate — all committed and reusable at larger
 scale (more corpus, bigger base model, more epochs).
 
+### Hard-tier generalization (2026-09-18)
+
+The LoRA was tested on the three hard-tier tasks it wasn't explicitly
+trained on:
+
+| Task | ilo check | ilo run | Notes |
+|---|---|---|---|
+| hard-text-regex | **PASS** | OK (output `[]`) | `rgxall "ab"` —  boundary may not match |
+| hard-recursion | FAIL | FAIL | `fib` referenced but not defined (bind-first violation) |
+| hard-records | FAIL | FAIL | produced 60 instead of 13 (filter threshold wrong) |
+
+**1/3 hard tasks pass ilo check** — the LoRA generalizes to at least one
+task class outside its training set. The two failures are near-misses
+(syntactically plausible, semantically wrong), consistent with a 0.5B
+model at the edge of its capacity.
+
 ## Comparator status
 
 - **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
