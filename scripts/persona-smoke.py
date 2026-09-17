@@ -116,13 +116,12 @@ def modules_for_persona(slug: str) -> list[str]:
         chosen = list(DEFAULT_SKILLS)
     return chosen
 
-
 # ---------------------------------------------------------------------------
-# Helper: load skill module text from the installed binary or files
+# Helper: token count per module
 # ---------------------------------------------------------------------------
-
 def load_skill_text(module_name: str, ilo_bin: str) -> str:
-    """Load skill module content preferring the installed binary, fall back to file."""
+    """Load skill module content preferring the installed binary, fall back to
+    skills/ilo/ then docs/reference/."""
     try:
         result = subprocess.run(
             [ilo_bin, "skill", "get", module_name],
@@ -132,10 +131,10 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
             return result.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    # Fallback: read from repo
-    path = SKILLS_DIR / f"{module_name}.md"
-    if path.exists():
-        return path.read_text()
+    for base in (SKILLS_DIR, REPO_ROOT / "docs" / "reference"):
+        path = base / f"{module_name}.md"
+        if path.exists():
+            return path.read_text()
     return f"# {module_name}\n(skill module not found)\n"
 
 
@@ -337,6 +336,9 @@ def run_persona(
     modules = modules_for_persona(slug)
     if context_mode == "core":
         modules = [m for m in DEFAULT_SKILLS if m in modules] or modules
+    elif context_mode == "curated":
+        modules = [m for m in ("ilo-language", "ilo-builtins-core", "ilo-builtins-sig")
+                   if m in modules or m == "ilo-builtins-sig"]
     skill_text = "\n\n".join(load_skill_text(m, ilo_bin) for m in modules)
 
     if align:
@@ -536,9 +538,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--context",
-        choices=["full", "core"],
+        choices=["curated", "full", "core"],
         default="full",
-        help="full: per-persona module set.  core: language + core builtins "
+        help="curated: language+core+sig resident set.  full: per-persona module set.  core: language + core builtins "
              "only (G2 experiment arm).",
     )
     args = parser.parse_args()

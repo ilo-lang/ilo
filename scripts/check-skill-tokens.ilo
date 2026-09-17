@@ -10,6 +10,11 @@
 -- tiktoken-rs tokeniser (ILO-47) will let us tighten these again.
 -- The aggregate across all modules must be <= 14,000.
 --
+-- 2026-09-17 (G2 cutover): ilo-builtins-io/-text/-math moved to
+-- docs/reference/ (on-demand deep reference, not resident); their distilled
+-- signatures live in ilo-builtins-sig. The gate now budgets the RESIDENT
+-- shelf only.
+--
 -- `tokcount` uses a bytes/3.4 approximation for cl100k_base (correct
 -- within ~5% for natural-language skill files). A follow-up (ILO-47)
 -- will replace the stub with a real BPE tokeniser.
@@ -25,20 +30,15 @@
 limit-for name:t>n
   ?name{"ilo-language":1950
         "ilo-builtins-core":1060
-        "ilo-builtins-math":1390
-        "ilo-builtins-io":2550
-        "ilo-builtins-text":1750
+        "ilo-builtins-sig":1450
         "ilo-agent":1700
         _:1000}
 
 -- Ordered list of skill module names (matches Python predecessor exactly).
 skill-names>L t
   ["ilo-language",
-   "ilo-language-records",
    "ilo-builtins-core",
-   "ilo-builtins-math",
-   "ilo-builtins-io",
-   "ilo-builtins-text",
+   "ilo-builtins-sig",
    "ilo-errors",
    "ilo-tools",
    "ilo-engines",

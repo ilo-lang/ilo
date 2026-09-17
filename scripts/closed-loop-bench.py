@@ -124,28 +124,34 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
             return result.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    path = SKILLS_DIR / f"{module_name}.md"
-    if path.exists():
-        text = path.read_text()
-        _SKILL_CACHE[module_name] = text
-        return text
+    for base in (SKILLS_DIR, REPO_ROOT / "docs" / "reference"):
+        path = base / f"{module_name}.md"
+        if path.exists():
+            text = path.read_text()
+            _SKILL_CACHE[module_name] = text
+            return text
     fallback = f"# {module_name}\n(skill module not found)\n"
     _SKILL_CACHE[module_name] = fallback
     return fallback
 
 
-def ilo_context(ilo_bin: str, context_mode: str = "full") -> str:
+def ilo_context(ilo_bin: str, context_mode: str = "curated") -> str:
     """Return the ilo skill documentation (cached).
 
-    full: the five module set the original benchmark shipped with (~9.5k tok).
-    core: language + core builtins only (~2.5k tok) -- the G2 core-spec
-    experiment arm.
+    curated: language + core builtins + signature reference (~4.1k tok) --
+    the G2 resident set.
+    full: curated + io/text/math deep-reference modules (~9.5k tok), loaded
+    from docs/reference/ -- the pre-G2 resident set.
+    core: language + core builtins only (~2.9k tok) -- the naive-truncation
+    control arm.
     """
     if context_mode == "core":
         mods = ["ilo-language", "ilo-builtins-core"]
+    elif context_mode == "curated":
+        mods = ["ilo-language", "ilo-builtins-core", "ilo-builtins-sig"]
     else:
-        mods = ["ilo-language", "ilo-builtins-core", "ilo-builtins-text",
-                "ilo-builtins-math", "ilo-builtins-io"]
+        mods = ["ilo-language", "ilo-builtins-core", "ilo-builtins-sig",
+                "ilo-builtins-io", "ilo-builtins-text", "ilo-builtins-math"]
     return "\n\n".join(load_skill_text(m, ilo_bin) for m in mods)
 
 
@@ -590,6 +596,7 @@ def write_markdown(results: list[dict[str, Any]], date_str: str, cache_mode: str
         f"adjust `--retry-cap` once flattening point is visible.",
     ]
 
+    out.write_text("\n".join(lines) + "\n")
     return out
 
 
@@ -614,7 +621,7 @@ def main() -> int:
     parser.add_argument("--align", action="store_true",
                         help="Cache-aligned harness: spec in system message, "
                              "append-only repair turns.")
-    parser.add_argument("--context", choices=["full", "core"], default="full",
+    parser.add_argument("--context", choices=["curated", "full", "core"], default="curated",
                         help="ilo skill module set (core = G2 experiment arm).")
     parser.add_argument("--task", metavar="ID",
                         help="Run only this task ID.")
@@ -739,7 +746,7 @@ def main() -> int:
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     label = args.cache + ("-align" if args.align else "") \
-        + ("-core" if args.context == "core" else "")
+        + ("-core" if args.context == "core" else ("-curated" if args.context == "curated" else ("-full" if args.context == "full" else "")))
     json_path = write_json(results, date_str, label)
     md_path = write_markdown(results, date_str, label)
 

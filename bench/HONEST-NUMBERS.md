@@ -70,11 +70,33 @@ canonical programs, not model output under a 9.5k unfamiliar-spec load).
    multi-k-token thrash (k-means: 37k gen tokens) where io/text builtins
    were missing. Same conclusion.
 
-Files: `bench/closed-loop-2026-09-17-warm-align{,-core}.json/.md`,
-`bench/closed-loop-2026-09-17-cold-align-core.json/.md`,
-`bench/persona-smoke-baseline-dsflash-align-core.json`.
+**G2 cutover (2026-09-17):** the naive-core result forced the structural
+fix. `ilo-builtins-io/-text/-math` moved to `docs/reference/` (on-demand,
+not resident); their distilled signatures are the new resident
+`ilo-builtins-sig` (1,163 tokens). Resident shelf: 14,236 → **8,855**;
+curated task set (language + core + sig): **4,095 tokens**, CI-enforced.
+**Curated validation (2026-09-17, `--context curated`):**
+
+| Metric | full spec (9.5k) | naive core (2.9k) | **curated (4.1k)** |
+|---|---|---|---|
+| Personas working (of 13) | 8 | 6 (+0.5 partial) | **10** |
+| Bench warm ilo mean $/task (2 runs) | $0.00138 | $0.0039 | $0.0015 / $0.0023 |
+| Bench warm ilo:Python | 4.1× | 15× | 3.9× / 6.4× |
+| Resident context tokens | 9,545 | 2,905 | **4,095** |
+
+**Reading:** the curated 4.1k set *beats the 9.5k full spec on persona
+success* (10 vs 8 of 13) while cutting resident context 57%. Bench $/task
+spans $0.0015–0.0023 across two runs (3.9–6.4× Python) — run-to-run
+variance is dominated by one task (`workflow-rollback`, whose single
+attempts ranged 677→5,994 generation tokens); per-cell n>1 is required
+before quoting ratios publicly. The naive-core control remains the
+cautionary tale: it is not the size, it is the selection.
+
+Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
+`bench/persona-smoke-baseline-dsflash-align-curated.json`.
 Raw `*-warm-from-log.*` files are the first warm arm from the
 pre-fix filename bug, kept for provenance.
+
 
 ## Claims we retract or refuse
 

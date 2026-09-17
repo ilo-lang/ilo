@@ -29,7 +29,6 @@ ilo has not moved with it:
 | Language landscape (42 repos) | Sustained engineering clusters on verification + diagnostics (aver, vow, zerolang, hale, nanolang); pure-syntax sprints die (codong, pact, tacit); Axis ships logit masks; Mog bounds the spec; Zero pairs small surface with repair-plan diagnostics and has distribution (Vercel); AILANG runs agent-driven sprints at 4.5k commits/6mo. |
 | Token-opt research | Lever hierarchy: don't generate (ponytail −22% tokens, 100% safety) > don't load (context editing −84%; tool search −85%) > cache (0.1× reads; ~84% on the dominant prefix) > compress (caveman: 65% prose / 8.5% agentic; TOON 2–18% net in agents). Caveman's HONEST-NUMBERS discipline is the trust standard. Constrained decoding makes schema-guaranteed output table stakes (Jev); calibration + cost is the differentiator. |
 | Caveman wrap benchmark | Reading-side compression: −33.2% on reading-heavy cases, oracle-checked; +9.9% where nothing compresses. Red rows stay red. |
-
 ### 1.3 Diagnosis, one line
 
 ilo owns verified density (generation + retry terms) but pays a resident tax (spec) it no longer controls, on a cold path it hasn't engineered for, with a measurement instrument built and never run.
@@ -51,7 +50,7 @@ Reported per task, per model tier (small / frontier), per language, with `tokens
 
 ## 3. Goals
 
-### G1 — Ship the closed-loop benchmark as a neutral instrument (P0)
+### G1 — Ship the closed-loop benchmark as a neutral instrument (P0) — **SHIPPED v1 2026-09-16/17**
 
 The critique's sharpest point is our largest opportunity: **nobody in the field has published this** — Mem0, Supermemory, MemOS, shadcn/lint, and TypeSafe all grade their own homework. A neutral, reproducible harness is a field asset that also happens to measure ilo.
 
@@ -61,7 +60,14 @@ Acceptance:
 - One published run: `bench/closed-loop-<date>.json` + markdown with HONEST-NUMBERS-style caveats, including rows where ilo loses.
 - Reproduction: seeded, pinned model versions, commands in the writeup.
 
-### G2 — Bounded, layered, referenced spec (P0)
+### G2 — Bounded, layered, referenced spec (P0) — **SHIPPED 2026-09-17**
+
+Shipped: `ilo-builtins-io/-text/-math` → `docs/reference/` (on-demand);
+distilled `ilo-builtins-sig` resident. Curated set (language + core + sig)
+= **4,095 tokens**, CI-enforced. Measured: personas **10/13 curated vs 8/13
+full**; naive 2-module truncation control 6.5/13 and 15× Python —
+curation, not size, is the lever (`bench/HONEST-NUMBERS.md`).
+Remaining: eviction-linkage in CI; `ai.txt` retirement.
 
 Acceptance:
 - Core spec ≤ 4,000 tokens in-context; per-cluster reference files loaded on use (path-addressed referencing, @skills-style: one-line resident descriptions, bodies fetched on trigger — our own measurement: 2,225 resident tokens for 29 full installs is the failure mode to avoid).
@@ -78,7 +84,14 @@ Acceptance:
 - Persona suite rerun on Haiku-class with masks in the harness: publish success-rate and $/task delta vs the 1/13 baseline.
 - If the delta is small, publish that too — it calibrates the constrained-decoding hype with ilo data.
 
-### G4 — Cache-native harness (P1)
+Design input in Appendix A.6: ~150–400 parser states; verifier-as-oracle replaces calibration; batched Choice decomposition only for coarse decisions.
+
+### G4 — Cache-native harness (P1) — **measured 2026-09-17**
+
+Alignment (spec in system + append-only repair) measured a **3.5× cost cut**
+vs the legacy shape (ilo $/task $0.0048 → $0.00138 warm, cache hits
+47,424 vs 0); `--align`/`--context curated` shipped in
+`closed-loop-bench.py`.
 
 Acceptance:
 - `ilo harness` emits the cache-aligned system prompt: spec-first, tools-first, task-last; `^26.5` pragma doubles as the cache key (version bump = the only invalidation event).

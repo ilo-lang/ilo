@@ -1,0 +1,161 @@
+{
+  "generated": "2026-09-17T08:24:13Z",
+  "model": "deepseek-flash",
+  "personas": {
+    "schedule-arithmetic": {
+      "persona": "schedule-arithmetic",
+      "outcome": "working",
+      "generation_tokens": 15425,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "event-chronology": {
+      "persona": "event-chronology",
+      "outcome": "working",
+      "generation_tokens": 4777,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "linear-regression": {
+      "persona": "linear-regression",
+      "outcome": "working",
+      "generation_tokens": 1790,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "k-means": {
+      "persona": "k-means",
+      "outcome": "working",
+      "generation_tokens": 21905,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "api-poller": {
+      "persona": "api-poller",
+      "outcome": "failed",
+      "generation_tokens": 12154,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "batch-http-fetch": {
+      "persona": "batch-http-fetch",
+      "outcome": "working",
+      "generation_tokens": 5480,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "csv-pipeline": {
+      "persona": "csv-pipeline",
+      "outcome": "failed",
+      "generation_tokens": 6858,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "log-scanner": {
+      "persona": "log-scanner",
+      "outcome": "working",
+      "generation_tokens": 3531,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "config-shaper": {
+      "persona": "config-shaper",
+      "outcome": "working",
+      "generation_tokens": 12136,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "record-transform": {
+      "persona": "record-transform",
+      "outcome": "working",
+      "generation_tokens": 30331,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "cron-explainer": {
+      "persona": "cron-explainer",
+      "outcome": "working",
+      "generation_tokens": 2134,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "text-mining": {
+      "persona": "text-mining",
+      "outcome": "failed",
+      "generation_tokens": 20624,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    },
+    "doc-discovery": {
+      "persona": "doc-discovery",
+      "outcome": "working",
+      "generation_tokens": 2809,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-sig"
+      ]
+    }
+  },
+  "module_tokens": {
+    "ilo-agent": 1392,
+    "ilo-builtins-core": 836,
+    "ilo-builtins-sig": 977,
+    "ilo-edit-loop": 513,
+    "ilo-engines": 396,
+    "ilo-errors": 806,
+    "ilo-examples": 449,
+    "ilo-language-records": 173,
+    "ilo-language": 1645,
+    "ilo-tools": 482
+  }
+}
