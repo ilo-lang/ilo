@@ -1,0 +1,886 @@
+{
+  "schemaVersion": 1,
+  "base": "Qwen/Qwen2.5-0.5B-Instruct",
+  "adapter": "bench/finetune/adapter",
+  "val_n": 35,
+  "summary": {
+    "ft-nospec": {
+      "parse_ok": 35,
+      "full_ok": 7,
+      "n": 35
+    },
+    "ft-spec": {
+      "parse_ok": 35,
+      "full_ok": 7,
+      "n": 35
+    },
+    "base-spec": {
+      "parse_ok": 35,
+      "full_ok": 0,
+      "n": 35
+    }
+  },
+  "results": {
+    "ft-nospec": {
+      "parse_ok": 35,
+      "full_ok": 7,
+      "n": 35,
+      "rows": [
+        {
+          "i": 0,
+          "src": "add x:n y:n>n;+x y\n\n-- Infix: bind a variable to an expression\nmul x:n n:n>n;*x n\n\n-- run: add 3 4\n-- out: 7\n-- run: mul 2 5\n-- out: 10",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 1,
+          "src": "drain-l t:L n>n;xs=tl t;~v=len xs;~v\n\n-- run: drain-l [1,2,3]\n-- out: 3\n\n-- run: drain-l []\n-- out: 0\n\n-- run: drain-l [1,2]\n-- out: 2\n\n-- run: drain-l [1]\n-- out: 0\n\n-- run: drain-l [1,2,3,4]\n-- out: 4\n\n-- run: drain-l [1,2,3,4,5]\n-- out: 5\n\n-- run: drain-l [1,2,3]\n-- out: 3\n\n-- run: drain-l [1,2,3,4]\n-- out: 4\n\n-- run: drain-l [1,2,3,4,5]\n-- out: 5\n\n-- run: drain-l [1,2,3,4,5,6]\n-- out: 6\n\n-- run: drain-l [1,2,3,4,5,6,7]\n-- out: 7\n\n-- run: drain-l [1,2,3,4,5,6,7,8]\n--",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 2,
+          "src": "count xs:L n>n;len xs\n\n-- run: count [1,2,3]\n-- out: 3\n\n-- run: count []\n-- out: 0\n\n-- run: window-view xs:L n L n w:n>L n;window_view xs w\n\n-- run: window-view [1,2,3] 2\n-- out: [[1, 2], [2, 3]]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 3,
+          "src": "build-all xs:L n>n;@i 0..len xs{xs=+=xs i};len xs\n\n-- run: build-all [1,2,3]\n-- out: 4\n-- run: build-all [9,8,7]\n-- out: 3\n-- run: build-all []\n-- out: 0",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 4,
+          "src": "last-idx xs:L n>n;slc xs -1 len xs\n\n-- drop-last xs:L n>n;drop -1 xs\n\n-- run: last-idx [10,20,30]\n-- out: 2\n-- run: drop-idx [10,20,30] 1\n-- out: [30]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 5,
+          "src": "keep x:n>n;>x 5\nnegate x:n>n;-x 5\n\n-- run: partition keep [1,2,3]\n-- out: [[1], [2, 3]]\n\n-- run: partition negate [1,2,3]\n-- out: [[-1], [-2, -3]]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 6,
+          "src": "by-dist xs:L n>n;srt (x:n>n;abs x) xs\n\n-- Sort words by length\nby-len ws:L t>t;srt (w:t>n;len w) ws\n\n-- Sort strings lexicographically\nby-lex s:t>L t;srt (t:s>t;cmp s t) [\"banana\" \"apple\" \"cherry\"]\n\n-- run: by-dist [3, 1, -2]\n-- out: [1, -2, 3]\n\n-- run: by-len [\"banana\",\"apple\",\"cherry\"]\n-- out: [apple, banana, cherry]\n\n-- run: by-lex \"banana\"\n-- out: banana",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 7,
+          "src": "inc-bin>L n;lst [1,2,3] 0 99\n\n-- run: inc-bin\n-- out: [1, 99, 3]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 8,
+          "src": "join-body ws:t>L t;fmt \"{}\" (flit ws)\n\n-- run: join-body [\"a\",\"b\",\"c\"]\n-- out: abcd\n\n-- run: join-body [1,2,3]\n-- out: 123\n\n-- run: join-body []\n-- err: wrong-lhs: builtin-named-binding-LHS must not have a shape\n-- out: ^wrong-lhs: builtin-named-binding-LHS must not have a shape",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 9,
+          "src": "main>n;c=mycnt();c\n\n-- run: main\n-- out: 10",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 10,
+          "src": "cr country:n name:t revenue:n>cr {c=country;c.name=name;c.revenue=revenue}\n\n-- run: cr \"US\" \"Alcatel-Lucent\" 1500000\n-- out: {\"country\": \"US\", \"name\": \"Alcatel-Lucent\", \"revenue\": 1500000}",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 11,
+          "src": "odd-med xs:L n>n;median xs\n\n-- Median of an even-length list is the average of the two middle values.\neven-med xs:L n>n;median (sort xs) 0\n\n-- Quantiles use linear interpolation between adjacent values.\nq1 xs:L n>p;quantile xs 0.25\nq3 xs:L n>p;quantile xs 0.75\n\n-- StDev computes the standard deviation using the formula:\n-- s^2 = \u03a3(x_i - \u03bc)^2 / N - 1\nstd-of xs:L n>n;sqr (mean xs) / mean xs\nsd-of xs:L n>n;sqr (std-of xs) / mean xs\n\n-- run: odd-med [1, 2, 3]\n-- out: 2\n-- run: even-med [1, 2, 3]\n-- out: 2\n-- run: q1 [1, 2, 3]\n-- out: 1.5\n-- run: q3 [1, 2, 3]\n-- out: 2.5\n-- run: sd-of [1, 2, 3]\n-- out: 1.414213",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 12,
+          "src": "dbl x:n>n;*x 2\n\n-- run: dbl 5\n-- out: 10\n-- run: dbl \"hi\"\n-- err: UndefinedFunction: dbl\n-- run: dbl 7\n-- err: UndefinedFunction: dbl\n\n-- run: call-fn\n-- out: 10\n-- run: call-fn\n-- err: UndefinedFunction: call-fn",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 13,
+          "src": "pick x:L n y:n>n;fld x y\n\n-- run: pick [1 2 3] 0\n-- out: 1\n-- run: pick [1 2 3] 1\n-- out: 2\n-- run: pick [1 2 3] 2\n-- out: 3",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 14,
+          "src": "parse xs:L t>R (L n) t;ns=mapr num xs;xs\n\n-- run: parse [1, 2, 3]\n-- out: [1, 2, 3]\n\n-- run: parse [\"a\", \"b\", \"c\"]\n-- out: [1, 2, 3]\n\n-- run: parse []\n-- err: ^e\n\n-- run: parse [1, \"two\", 3]\n-- err: ^e",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 15,
+          "src": "add-one xs:L n>n;s=map at xs + 1;len s\n\n-- run: add-one [1,2,3]\n-- out: 4\n\n-- run: add-one [9,8,7]\n-- out: 5\n\n-- run: add-one []\n-- out: 0\n\n-- run: add-one [10,-1,20]\n-- out: 6",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 16,
+          "src": "main x:n>n;@i [0,-1,x];*i 2\n\n-- run: main -3\n-- out: 6\n-- run: main 4\n-- out: 8\n-- run: main 5\n-- out: 10",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 17,
+          "src": "hdr>t;~\"hello\"\n\n-- run: hdr\n-- out: hello",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 18,
+          "src": "main>n;m=1;~str m\n\n-- run: main\n-- out: 1",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 19,
+          "src": "greet name:t>R n t;~^\"hi \" name\n\n-- run: greet hello\n-- out: hi hello\n\n-- run: greet world\n-- out: hi world",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 20,
+          "src": "sum-shape xs:L n>n;sum (x:n>b;?x{c:c;x}) xs\n\n-- run: sum-shape [1,2,3]\n-- out: 10\n-- run: sum-shape [4,5,6]\n-- out: 20\n-- run: sum-shape []\n-- out: 0",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 21,
+          "src": "parse-addr r:t>R n t;r.with \"street\" \"1234 Main St\";r.with \"city\" \"New York\"\n\n-- Destructure by name and value pairs.\nparse-addr2 r:t>R (n t) (n t);r.with \"street\" 1234;r.with \"city\" \"New York\"\n\n-- Bind a field in-place using `=`.\nbind-field r:t>R n t;r.with \"street\" 1234;r.city=\"Los Angeles\"\n\n-- run: parse-addr {\"street\":\"1234 Main St\",\"city\":\"New York\"}\n-- out: 1234\n-- run: parse-addr2 {\"street\":1234,\"city\":\"New York\"}\n-- out: Los Angeles\n-- run: bind-field {\"street\":\"1234 Main St\",\"city\":\"New York\"}\n-- out: New York",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 22,
+          "src": "period-from-two-cr tcr:n tcr2:n>n;per=*2 - tcr2 tcr\n\n-- Period from one zero-crossing time, then two more:\nperiod-from-one-cr tcr:n>tcr2 = +tcr 1;per=*2 - tcr2 tcr\n\n-- run: period-from-two-cr 0 5\n-- out: 10\n-- run: period-from-one-cr 0\n-- out: 9",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 23,
+          "src": "sq x:n>n;*x x\n\nabs x:n>n;-x 0\n\n-- run: map sq [1,2,3]\n-- out: [1, 4, 9]\n\n-- run: map abs [-5,-1,3] \n-- out: [5, 1, 3]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 24,
+          "src": "json-path>t;r=wr \"path/to/json\" {a:1 b:2 c:3};?r{~v:r;^_:nil}\n\n-- run: json-path\n-- out: 1\n\n-- run: json-path\n-- out: 2\n\n-- run: json-path\n-- out: 3\n\n-- run: json-path\n-- out: nil",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 25,
+          "src": "g-island>n;slc [1,2,3] 0 2\n\n-- run: g-island\n-- out: 3",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 26,
+          "src": "set-path>t;m=mset mmap \"PATH\" \"/bin:/usr/bin\";~=mget m \"PATH\"\n\n-- run: set-path\n-- out: true\n\n-- merge env over config: same shell, different input - both work!\nmerge-env>t;m=mset mmap \"MY_VAR\" \"foo\";~=mget m \"MY_VAR\";~=mget m \"MY_VAR2\" \"bar\";~=mget m \"MY_VAR3\" \"baz\";~=mget m \"MY_VAR4\" \"qux\";~=mget m \"MY_VAR5\" \"quux\";~=mget m \"MY_VAR6\" \"fizz\";~=mget m \"MY_VAR7\" \"buzz\";~=mget m \"MY_VAR8\" \"giz\";~=mget m \"MY_VAR9\" \"jaz\";~=mget m \"MY_VAR10\" \"kaz\";~=mget m \"MY_VAR11\" \"laz\";~=mget m \"MY_VAR12\" \"mos\";~=mget m \"MY_VAR13\" \"nobs\";~=mget m \"MY_VAR14\" \"ots\";~",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 27,
+          "src": "pair xs:L n ys:L n>L n;xs=zip xs ys;len xs\n\n-- run: pair [\"a\",\"b\"] [\"c\",\"d\"]\n-- out: 2\n\n-- run: pair [] []\n-- out: 0",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 28,
+          "src": "dbl n:n>n;*n 2\n\n-- run: dbl 7\n-- out: 14",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 29,
+          "src": "three-refs>L t;xs=[1 2 3];@[x:xs{~x}]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 30,
+          "src": "sum-idx xs:L n>n;s=0;j=0;i=0;while i<len xs{s=+s i;j=i;i=j};+s j\n\n-- run: sum-idx [1,2,3]\n-- out: 6\n-- run: sum-idx [10,20,30]\n-- out: 9",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 31,
+          "src": "main x:t>t;+x 1\n\n-- run: main 42\n-- out: 43",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 32,
+          "src": "big>L n;[1 2 3 4 5]\n\n-- A 10-element list literal that fits within the fast-path slot.\nsmall>L n;[97 98 99]\n\n-- run: big\n-- out: [1, 2, 3, 4, 5]\n-- run: small\n-- out: [97, 98, 99]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 33,
+          "src": "main>t;ilo \"add\" 1\n\n-- Two-param entry. Missing positional returns empty list.\nadd>t;ilo \"add\" 1 2\n\n-- Three-param entry. Missing positional returns empty list.\nsub>t;ilo \"sub\" 1 2 3\n\n-- run: main\n-- out: [1]\n-- run: add\n-- out: []\n-- run: sub\n-- out: []",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 34,
+          "src": "build-skip-rc>n;a=\"k1\";fmt \"{};{}\" a a\n\n-- run: build-skip-rc\n-- out: k1;k1",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        }
+      ]
+    },
+    "ft-spec": {
+      "parse_ok": 35,
+      "full_ok": 7,
+      "n": 35,
+      "rows": [
+        {
+          "i": 0,
+          "src": "add x:n y:n>n;+x y\n\n-- Infix: same shape, different operands\nmul x:n y:n>n;*x y\n\n-- Infix: same shape, different operands\ndiv x:n y:n>n;/x y\n\n-- Infix: same shape, different operands\nmod x:n y:n>n;mod x y\n\n-- Infix: same shape, different operands\nneg x:n>n;-x 1\n\n-- Infix: same shape, different operands\npos x:n>n;+x 1\n\n-- Infix: same shape, different operands\ngt x:n y:n>n;>x y\n\n-- Infix: same shape, different operands\nlt x:n y:n>n;<x y\n\n-- Infix: same shape, different operands\nge x:n y:n>n;>=x y\n\n-- Infix: same shape, different operands\nle x:n y:n>n;<=x y\n\n-- Infix: same shape, different operands\neq x:n y:n>n;==x y\n\n-- Infix: same shape, different operands\nneq x:n y:n>n;!=x y\n\n-- Infix: same shape, different operands\nshl x:n n>n",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 1,
+          "src": "drain xs:L n>t;len xs\ncount xs:L n>n;drain xs\n\n-- run: count [1,2,3]\n-- out: 3\n\n-- run: count []\n-- out: 0\n\n-- run: drain [1,2,3]\n-- out: [1, 2, 3]\n\n-- run: drain [1,2,3,4]\n-- out: [1, 2, 3]\n\n-- run: drain [1,2,3,4,5]\n-- out: [1, 2, 3, 4, 5]\n\n-- run: drain [1,2,3,4,5,6]\n-- out: [1, 2, 3, 4, 5, 6]\n\n-- run: drain [1,2,3,4,5,6,7]\n-- out: [1, 2, 3, 4, 5, 6, 7]\n\n-- run: drain [1,2,3,4,5,6,7,8]\n-- out: [1, 2, 3, 4, 5, 6, 7, ",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 2,
+          "src": "main>L n;\n  fib 10\n  fib 0\n\nfib n:n>n;\n  a=+n 1;b=*a n;+b 1\n\n-- run: main\n-- out: 55",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 3,
+          "src": "phase2b-example>n;xs=[];@i 0..10{xs=+=xs i};len xs\n\n-- Phase 2b.2: `linspace` \u2014 scalar input, O(n) runtime.\nphase2b-linspace-example>n;xs=[];@i 0..10{linspace 0 1 10};len xs\n\n-- Phase 2b.3: `ones` \u2014 scalar input, O(n) runtime.\nphase2b-ones-example>n;xs=[];@i 0..10{xs=+=xs 1};len xs\n\n-- Phase 2b.4: `rep` \u2014 scalar input, O(n) runtime.\nphase2b-rep-example>n;xs=[];@i 0..10{xs=+=xs i};len xs\n\n-- Phase 2b.5: `argsort` \u2014 scalar input, O(n) runtime.\nphase2b-sort-examples>n;xs=[];@i 0..10{xs=+=xs i};len xs\n\n-- Phase 2b.6: `lstsq` \u2014 matrix input, O(n\u00b2) runtime.\nphase2b-lstsq-example>n;m=[[",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 4,
+          "src": "take-n xs:L n n:n>L n;take -1 xs\ndrop-n xs:L n n:n>L n;drop -1 xs\n\n-- run: take-n [10,20,30]\n-- out: [10, 20]\n\n-- run: drop-n [10,20,30]\n-- out: [30]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 5,
+          "src": "keep-pass xs:L n>L n;fls=[true false];fls=flt fls xs;hd fls\n\nfail-fail xs:L n>L n;fls=[false true];fls=flt fls xs;hd fls\n\n-- run: keep-pass [1,2,3]\n-- out: [1, 2]\n-- run: fail-fail [1,2,3]\n-- out: [2, 3]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 6,
+          "src": "sort-numbs>L n;rs=srt (x:n>n;-x 0);rs\n\n-- Sort words by length.\nsort-words>L n;rs=srt (w:t>t;len w);rs\n\n-- Sort by a custom key function.\nsort-key>n;k=n;m=mset mmap k m;ks=map (k:n>n;*m k) ks;ks\n\n-- Run: sort-numbs\n-- Out: [0, 1, 2, 3]\n-- Run: sort-words\n-- Out: [apple, banana, cherry]\n-- Run: sort-key\n-- Out: apple",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 7,
+          "src": "inc xs:L n>L n;l=length xs;@i 0..l{xs=[xs 0];xs=+[xs i v];xs}\n\n-- run: inc [1,2,3]\n-- out: [1, 2, 3]\n\n-- run: inc [1,2,3,4]\n-- out: [1, 2, 3, 4]\n\n-- run: inc []\n-- err: runtime error: expected list found\n\n-- run: inc [10,20,30]\n-- out: [10, 20, 30]\n\n-- run: inc [1,2,3,4,5]\n-- out: [1, 2, 3, 4, 5]\n\n-- run: inc [1,2,3]\n-- err: runtime error: expected list found\n\n-- run: inc [1,2,3,4]\n-- out: [1, 2, 3, 4]\n\n-- run: inc [1,2,3,4,5]\n-- out: [1, 2, 3, 4, 5]\n\n-- run: inc [1,2,3,4,5",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 8,
+          "src": "split-text>t;ws=[\"a\",\"b\",\"c\"];\" \".join(ws)\n\n-- Builtin names are reserved and cannot be used as local bindings.\n-- Pick a different name (here `xs` for a list).\njoin-text>t;xs=[1,2,3];\" \".join(xs)\n\n-- run: split-text\n-- out: ab cd\n-- run: join-text\n-- out: 1 2 3",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 9,
+          "src": "main>n;mycnt=0;@i 0..5{m=mn \"abc\";+m mycnt}\n\n-- run: main\n-- out: 15\n\n-- run: mycnt\n-- out: 0\n\n-- run: main 3\n-- out: 18\n\n-- run: mycnt 3\n-- out: 0\n\n-- run: main 10\n-- out: 55\n\n-- run: mycnt 10\n-- out: 0\n\n-- run: main 0\n-- out: 0\n\n-- run: mycnt 0\n-- out: 0\n\n-- run: main 1\n-- out: 1\n\n-- run: mycnt 1\n-- out: 0\n\n-- run: main 2\n-- out: 2\n\n-- run: mycnt 2\n-- out: 0\n\n-- run: main 3\n-- out: 3\n\n-- run: mycnt 3\n-- out: 0\n\n-- run: main 4\n-- out: 4\n\n-- run: mycnt 4\n-- out: 0\n\n-- run: main 5\n-- out: 5\n\n",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 10,
+          "src": "cr name:t revenue:n\n  cr country:t name revenue:rv\n\n-- run: cr \"US$100000\" \"TV\"\n-- out: {\"country\":\"US\",\"name\":\"TV\",\"revenue\":100000}\n\n-- run: cr \"CA$50000\" \"Books\"\n-- out: {\"country\":\"CA\",\"name\":\"Books\",\"revenue\":50000}\n\n-- run: cr \"GB$75000\" \"Movies\"\n-- out: {\"country\":\"GB\",\"name\":\"Movies\",\"revenue\":75000}\n\n-- run: cr \"FR$25000\" \"Games\"\n-- out: {\"country\":\"FR\",\"name\":\"Games\",\"revenue\":25000}\n\n-- run: cr \"JP$12500\" \"Music\"\n-- out: {\"country\":\"JP\",\"name\":\"Music\",\"revenue\":12500}\n\n-- run: cr \"IN$6000\" \"Books\"\n-- out: {\"country\":\"IN\",\"name\":\"Books\",\"revenue\":6000}\n\n-- run: cr \"CN$3000\" \"Movies\"\n-- out: {\"",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 11,
+          "src": "median-of odd-list>L n;l=[1 3 5];median l\n\nmedian-of even-list>L n;l=[1 3 5 7];median l\n\n-- Quantiles: 0.25 (first quartile), 0.5 (median), 0.75 (third quartile).\nquantile-of xs:L n p:n>L n;xs=sort xs;qs=[0.25 0.5 0.75];qs[p]\n\n-- Stdev: square the differences from the mean, then find the square root.\nstd-of xs:L n > n;mean xs;sq-diffs=(diff x xs 0 for x in xs);sqrt-mean sq-diffs\n\n-- Variance: square the differences from the mean, then divide by N - 1.\nvar-of xs:L n > n;mean xs;sq-diffs=(diff x xs 0 for x in xs);div N (mean sq-diffs - 1)\n\n-- run: median-of odd-list\n-- out: 3\n-- run: median-of even-list\n-- out: 3\n-- run: quantile-of [1 3 5 7]\n-- out: 0.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 12,
+          "src": "dbl x:n>n;*x 2\n\n-- Two-argument form: `f x:n y:n>n;+x y`\nadd x:n y:n>n;s=*x y;+s x\n\n-- Three-argument form: `f x:n y:n z:n>n;+x y z`\nadd3 x:n y:n z:n>n;s=*x y;z=*s z;+s z\n\n-- run: add 1 2 3\n-- out: 6\n\n-- run: add 1 2 3 4\n-- out: 10\n\n-- run: add 1 2 3 4 5\n-- out: 15\n\n-- run: add 1 2 3 4 5 6\n-- out: 21\n\n-- run: add 1 2 3 4 5 6 7\n-- out: 31\n\n-- run: add 1 2 3 4 5 6 7 8\n-- out: 43\n\n-- run: add 1 2 3 4 5 6 7 8 9\n-- out: 57\n\n-- run:",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 13,
+          "src": "fld a:n b:n\n\n-- run: fld 1 2\n-- out: 3\n\n-- run: fld 1 2 3\n-- out: 4",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 14,
+          "src": "ns=L (L n);mapr num ns\n\n-- Err path: first item is NaN, mapr returns nil. The err shape is preserved.\nns=L (L n);mapr num [1,NaN]\n\n-- Err path: empty list. mapr returns nil, which is the err shape.\nns=L (L n);mapr num []\n\n-- Err path: single-element list. mapr returns the element, which is the err shape.\nns=L (L n);mapr num [1]\n\n-- Err path: list with a non-number item. mapr returns nil, which is the err shape.\nns=L (L n);mapr num [\"a\"]\n\n-- Err path: list with a zero-length item. mapr returns nil, which is the err shape.\nns=L (L n);mapr num [1,0]\n\n-- Err path: list with a negative number. mapr returns nil, which is the err shape.\nns=L (L n);mapr num [-1]\n\n-- Err path: list with a floating-point number. mapr returns nil, which is the err shape.\nns=L (L n);mapr num [1.0]\n\n-- Err path: list with a zero-width item. map",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 15,
+          "src": "double x:n>n;+x 1\n\n-- run: double 5\n-- out: 6\n\n-- run: double 0\n-- out: 0\n\n-- run: double -3\n-- out: -2\n\n-- run: double 3.7\n-- out: 4\n\n-- run: double 0.0\n-- out: 0\n\n-- run: double 1\n-- out: 2\n\n-- run: double 10\n-- out: 11\n\n-- run: double -1\n-- out: -2\n\n-- run: double -3.5\n-- out: -3.5\n\n-- run: double 0.0\n-- out: 0\n\n-- run: double 1.5\n-- out: 2.5\n\n-- run: double 10\n-- out: 11\n\n-- run: double -1.5\n-- out: -1.5\n\n-- run: double -3.5\n-- out: -3.5\n\n-- run: double 10.0\n-- out: 10\n\n-- run: double -1.0\n-- out: -1\n\n-- run: double 0",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 16,
+          "src": "dbl x:n>n;*x 2\n\n-- run: defer-basic\n-- out: 4\n-- run: defer dbl 5\n-- out: 10\n-- run: defer dbl -3\n-- out: -10",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 17,
+          "src": "hdr=\"some text\"\n\n-- Alias `hd` to `l` via `hd hdr` \u2014 `hd` resolves to the text slice, not the\n-- built-in list head. Aliases are not allowed on `R`-fns; `hd` is the canonical\n-- form, `l` is the canonical shape.\nhd hdr:t>t;hd hdr\n\n-- Alias `len` to `n` via `len hdr` \u2014 `len` resolves to the text length,\n-- not the built-in list-length builtin. Aliases are not allowed on `R`-fns;\n-- `n` is the canonical form.\nlen hdr:t>n;len hdr\n\n-- Alias `flt` to `ok` via `flt hdr` \u2014 `flt` resolves to the text filter,\n-- not the built-in list-filter builtin. Aliases are not allowed on `R`-fns;\n-- `ok` is the canonical form.\nflt hdr:t>R n t;flt hdr\n\n-- Alias `cat` to `l` via `cat hdr s` \u2014 `cat` resolves to the text join,\n-- not the built-in list-append builtin. Aliases are not allowed on `R`-fns;\n-- `l`",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 18,
+          "src": "ok>t;m=mset mmap mset mmap \"x\" 42;~\"ok\"\n\n-- run: ok\n-- out: ok",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 19,
+          "src": "rgxall-pattern pattern subject: glob regex replace, returns text.\nUses `grep` \u2014 `grep -E \"(.*)(\\d{3})\" file.txt` \u2014 returns a list of matches (empty on EOF).\n\n--- run: rgxall-pattern \"\\d{3}\" \"abc123def456\"\n\n--- out: [123, 456]\n\n--- run: rgxall-pattern \"\\d{3}\" \"abc123de456\"\n--- out: []\n\n--- run: rgxall-pattern \"\\d{3}\" \"xyz123\"\n--- out: []\n\n--- run: rgxall-pattern \"\\d{3}\" \"abc123\"\n--- out: [123]\n\n--- run: rgxall-pattern \"\\d{3}\" \"\"\n--- out: []\n\n--- run: rgxall-pattern \"\\d{3}\" \"a1b2c3\"\n--- out: [123, 234]\n\n--- run: rgxall-pattern \"\\d{3}\" \"a1b2a3\"\n--- out: [123, 234]\n\n--- run: rgxall-pattern \"\\d{3}\" \"a1b2a",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 20,
+          "src": "type Shape n t\n  circle n:t\n  square n:t\n  point n:t\n\nsumShapes xs:L Shape n>L t\n  s=sum (hd xs) (hd (hd xs))\n  prnt s\n\n-- run: sumShapes [[circle 3],[square 4],[point 5]]\n-- out: 14",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 21,
+          "src": "with name:t age:n gender:n\n  r=with name \"alice\" age 30 gender \"female\"\n  name\n  age\n  gender\n\n-- Bind a tuple at runtime via `r=tuple [1 2 3]` \u2014 `r` is a tuple, not a scalar.\nwith-a tuple\n  r=(1 2 3)\n  name=r[0]\n  age=r[1]\n  gender=r[2]\n\n-- Nested record: `r=with name \"alice\" age 30 gender \"female\"`\n-- `r` is a named record, not a scalar.\nnested\n  r=with name \"alice\" age 30 gender \"female\"\n  name\n  age\n  gender\n\n-- Bind a list at runtime via `r=list [1 2 3]`\nbind-list\n  r=[1 2 3]\n  name=r[0]\n  age=r[1]\n  gender=r[2]\n\n-- Bind a map at runtime via `r=mmap mset mget mhas mdel mkeys mvals mpairs`\nbind-map\n  r=mmap\n  name=r.get \"alice\"\n  age=r.get \"bob\"\n  gender=r.get \"",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 22,
+          "src": "per=-0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 23,
+          "src": "sq x:n>n;*x x\n\n-- run: map sq [-3 1 4]\n-- out: [9, 1, 16]\n\n-- run: map abs [-3 1 4]\n-- out: [3, 1, 4]\n\n-- run: map (+ 1 x) [1, 2, 3]\n-- out: [2, 3, 4]\n\n-- run: map (x:n>n;+x 1) [1, 2, 3]\n-- out: [2, 3, 4]\n\n-- run: map (x:n>n;*x 2) [1, 2, 3]\n-- out: [2, 4, 6]\n\n-- run: map (x:n>n;abs x) [1, 2, 3]\n-- out: [1, 2, 3]\n\n-- run: map (x:n>n;sqrt x) [1, 4, 9]\n-- out: [1, 2, 3]\n\n-- run: map (x:n>n;mod x 3) [1, 2, 3]\n-- out: [1, 2,",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 24,
+          "src": "jsonobj=true\n\n-- Serialise to JSON and print to stdout.\nwrite-json>t;l=jsonobj;prnt l\n\n-- Serialise to JSON and return a list of values.\nlist-of-numbers>L n;l=[1 2 3];prnt (l)\n\n-- Serialise to JSON and return a list of lists.\nlist-of-lists>L (L n);l=[[1 2 3] [4 5]];prnt (l)\n\n-- Serialise to JSON and return a list of dictionaries.\nlist-of-dicts>L (L (L n));l=[[1 2 3] [4 5]];prnt (l)\n\n-- Serialise to JSON and return a list of lists of numbers.\nlist-of-lists-of-numbers>L (L (L n));l=[[1 2 3] [4 5]];prnt (l)\n\n-- Serialise to JSON and return a list of lists of dictionaries.\nlist-of-lists-of-dicts>L (L (L (L n)));l=[[1 2 3] [4 5]];prnt (l)\n\n-- Serialise to JSON and return a list of lists of lists.\nlist-of-lists-of-lists>L (L (L",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 25,
+          "src": "haversine lat1:n lon1:n lat2:n lon2:n h:m;m=math.hypot(h*(lon2-lat1),h*(lon1-lat2));h\n\n-- run: haversine 51.5074 -0.1278 52.5074 -0.1278\n-- out: 529.0944999999999",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 26,
+          "src": "snap>t;\n  env-all!\n\n-- run: snap\n-- out: {\"PATH\":\"/bin:/usr/bin:/usr/local/bin\"}\n-- run: env-all!\n-- out: {\"PATH\":\"/bin:/usr/bin:/usr/local/bin\"}\n\n-- run: env-all! \"key\" \"value\"\n-- out: {\"key\":\"value\"}\n\n-- run: env-all! \"missing\" \"default\"\n-- err: ^ILO-P001: unknown key: missing\n\n-- run: env-all! \"unset\" \"default\"\n-- err: ^ILO-P001: unknown key: unset\n\n-- run: env-all! \"unset\" \"nonexistent\"\n-- err: ^ILO-P001: unknown key: nonexistent\n\n-- run: env-all! \"unset\" \"unset\"\n-- err: ^ILO-P001: unknown key: unset\n\n-- run: env-all! \"unset\" \"unset\"\n-- err: ^ILO-P001: unknown key: unset\n\n-- run: env-all! \"unset\" \"unset\"\n-- err: ^ILO-P001: unknown key: unset\n\n-- run: env-all! \"unset\" \"unset\"\n-- err: ^ILO-P",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 27,
+          "src": "cut xs:L n>L n;len xs\npair xs:L n>L (L n);linspace 0 10 5\nrest xs:L n>L (L n);linspace 0 10 5\nsplit xs:L n>L (L n);cut xs 2\nslice xs:L n>L (L n);pair xs 0 3\nunzip xs:L n>L (L n);rest xs\nconcat xs:L n>L (L n);pair xs 0 1\nflat xs:L n>L (L n);pair xs 0 1\nuniq xs:L n>L (L n);cut xs 0\nunique xs:L n>L (L n);unzip xs\n\n-- run: concat [1,2,3] [4,5,6]\n-- out: [[1, 4], [2, 5], [3, 6]]\n\n-- run: unzip [1,2,3]\n-- out: [[1, 0], [2, 1], [3, 2]]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 28,
+          "src": "dbl 5\n\n-- run: dbl 3\n-- out: 6\n\n-- mul x n \u2014 scalar-multiplication shorthand\nmul x:n n:n>n;*x n\n\n-- run: mul 5 3\n-- out: 15\n\n-- div x n \u2014 division shorthand\ndiv x:n n:n>R n t;/x n\n\n-- run: div 10 2\n-- out: 5\n\n-- abs x \u2014 absolute value\nabs x:n>n;~x\n\n-- run: abs -7\n-- out: 7\n\n-- min x:n \u2014 minimum value\nmin x:n>n;~x\n\n-- run: min 3 1\n-- out: 1\n\n-- max x:n \u2014 maximum value\nmax x:n>n;~x\n\n-- run: max 3 1\n-- out: 3\n\n-- sum xs \u2014 sum of values\nsum xs:L n>R n t;~+\n\n-- run: sum [1,2,3]\n-- out: 6\n\n-- avg xs \u2014 mean of values\navg xs:L n>R n t;/_sum xs 0\n\n-- run: avg [1,2,3]\n-- out: 2\n\n",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 29,
+          "src": "three xs:L n>L n;xs\n\n-- Two refs in a list: `lens` \u2014 each ref is a separate list.\ntwo lens>L n;lens\n\n-- Three refs in a list: `pair` \u2014 each ref is a pair.\nthree_pairs>L n;pair\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty2>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty3>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty4>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty5>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty6>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty7>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty8>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty9>L n;[]\n\n-- Empty list \u2014 bare `[]` is OK too.\nempty10>L n;[]\n\n-- Empty list \u2014 bare `[]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 30,
+          "src": "sum-index xs:L n>n;@i 0..len xs{v=at xs i;+i v}\n\n-- run: sum-index [1 2 3]\n-- out: 6\n\n-- run: sum-index []\n-- err: ^\n-- out: 0\n\n-- run: sum-index [10 20 30]\n-- out: 6\n\n-- run: sum-index [1 2 3 4 5]\n-- out: 15\n\n-- run: sum-index [100 200 300]\n-- err: ^\n-- out: 0\n\n-- run: sum-index [1 2 3 4 5 6]\n-- out: 25\n\n-- run: sum-index [10 20 30 40 50]\n-- out: 15\n\n-- run: sum-index [1 2 3 4 5 6 7 8 9 10]\n-- out: 55\n\n-- run: sum-index [1 2 3 4 5 6 7 8 9 10]\n-- err: ^\n-- out: 0\n\n--",
+          "check": {
+            "parse_ok": true,
+            "full_ok": true
+          }
+        },
+        {
+          "i": 31,
+          "src": "main.ilo paper.txt\n\n-- run: main.ilo paper.txt\n-- out: 1.0\n\n-- run: main.ilo /tmp/x.json\n-- out: 1.0\n\n-- run: main.ilo a=1;b=2;c=3\n-- out: 1.0\n\n-- run: main.ilo ones 10\n-- out: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n\n-- run: main.ilo rep 3 4\n-- out: [0, 1, 2]\n\n-- run: main.ilo transpose [[1, 2], [3, 4]]\n-- out: [[1, 3], [2, 4]]\n\n-- run: main.ilo ones 10\n-- out: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]\n\n-- run: main.ilo zeros 3\n-- out: [0, 0, 0]\n\n-- run: main.ilo sqrt 4\n-- out: 2.0\n\n-- run: main",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 32,
+          "src": "big>L n;linspace 0 10 300\n\n-- Two-element list literal: `a b` works everywhere.\ntwo>x;a=1;b=2;+[a b]\n\n-- Three-element list literal: `a b c` works everywhere.\nthree>x;a=1;b=2;c=3;+[a b c]\n\n-- Four-element list literal: `a b c d` works everywhere.\nfour>x;a=1;b=2;c=3;d=4;+[a b c d]\n\n-- Empty list literal: empty list is OK too.\nempty>L n;[]\n\n-- Nested list literal: `[[a b]]` works everywhere.\nnested>a;=[[a b]];+[a b]\n\n-- Empty list literal: empty list is OK too.\nempty2>L n;[]\n\n-- Empty list literal: empty list is OK too.\nempty3>L n;[]\n\n-- run: big\n-- out: [0, 1, 2, ..., 99]\n-- run: two\n-- out: [1, 2]\n-- run: three\n-- out: [1, 2, 3]\n-- run: four\n-- out: [1, 2, 3,",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 33,
+          "src": "main>n\n  +1 1\n\n-- Two-arg entry: `ilo main.ilo add` \u2014 no positional arg, exit 0 silently.\nadd>n\n  +1 1\n\n-- Three-arg entry: `ilo main.ilo mul` \u2014 missing positional arg, exit 0 silently.\nmul>n\n  +1 1\n\n-- Four-arg entry: `ilo main.ilo div` \u2014 missing positional arg, exit 0 silently.\ndiv>n\n  +1 1\n\n-- Five-arg entry: `ilo main.ilo mod` \u2014 missing positional arg, exit 0 silently.\nmod>n\n  +1 1\n\n-- Six-arg entry: `ilo main.ilo abs` \u2014 missing positional arg, exit 0 silently.\nabs>n\n  +1 1\n\n-- Seven-arg entry: `ilo main.ilo ceil` \u2014 missing positional arg, exit 0 silently.\nceil>n\n  +1 1\n\n-- Eight-arg entry: `ilo main.ilo floor` \u2014 missing positional arg, exit 0 silently.\nfloor>n\n  +1 1\n\n-- Nine-arg entry: `ilo main.ilo log` \u2014 missing positional arg, exit 0 silently.\n",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 34,
+          "src": "build-a>b;a=\"k1\";fmt \"{}\" a\n\nconcat-ab>a;b=\"k1\";c=\"k2\";fmt \"{}{}\" b c\n\nsplit-ab>t;ab=build-a;split ab \"_\"\n\nsplit-ab-mid>t;ab=concat-ab;mid=split ab \"/\";fmt \"{}\" mid\n\n-- run: build-a\n-- out: k1\n\n-- run: concat-ab\n-- out: k1k2\n\n-- run: split-ab\n-- out: [k1,k2]\n\n-- run: split-ab-mid\n-- out: [k1]\n--         [k2]",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        }
+      ]
+    },
+    "base-spec": {
+      "parse_ok": 35,
+      "full_ok": 0,
+      "n": 35,
+      "rows": [
+        {
+          "i": 0,
+          "src": "Understood! Here\u2019s how infix operators can be used alongside prefix form to maintain readability and familiarity:\n\n```ilo\nlet x = 5;\nlet y = 10;\n\n// Infix operator syntax:\nx + y // This is equivalent to x + y\nx + y // This is equivalent to x + y\n```\n\nAnd here\u2019s how they can be written out in postfix form:\n\n```ilo\nx + y\nx + y\n```\n\nBoth will produce the same AST, making them equally readable and useful for different contexts.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 1,
+          "src": "The `drain-tail` feature allows you to efficiently drain a list without\nrepeatedly pushing and popping items. This can be particularly useful\nwhen dealing with large data structures where you want to process them\none item at a time. Here\u2019s how you might implement it:\n\n```go\npackage main\n\nimport (\n\t\"fmt\"\n\t\"math/rand\"\n\t\"time\"\n\n\t\"github.com/lorenzolab/ila/go/ila\"\n)\n\nfunc main() {\n\trand.Seed(time.Now().UnixNano())\n\tl := make([]int, 1000000)\n\tfor i := range l {\n\t\tl[i] = rand.Int()\n\t}\n\tfmt.Println(\"Original:\", l)\n\n\tdrain := func(l []int) {\n\t\tfor len(l) > 0 {\n\t\t\tl = l[:len(l)-1]\n\t\t}\n\t}\n\n\tdrain(l)\n\tfmt.Println(\"Drained:\", l)\n}\n```\n\nIn this implementation:\n- We create a slice `l` containing random integers.\n- We define a function `drain` that takes a slice `l` and drains it by repeatedly removing the first element until the slice is empty.\n- Inside the `drain` function, we iterate over the slice and remove the",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 2,
+          "src": "Understood! Let me know if you have any more questions about the bytecode registers, JIT, or the VM itself.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 3,
+          "src": "```idl\n// Phase 2b.2: Make Arc<Vec<Value>> RC-aware and add eval_stmt peephole\n// for self-rebind shapes xs = +=xs v and xs = xs + ys.\n// This fixes the Phase 2b.1 Map fast path (PR #261).\n// The canonical accumulator: build [0, 1, 2, ..., n-1] one element at a time.\n// Pre-Phase-2b.2 the tree engine cloned the whole Vec on every iteration.\n// After the fix it mutates in place because env's xs is the sole holder.\n\n// Phase 2b.2.1: Clone the whole Vec on every iteration\ntemplate <typename V>\nstruct clone_vec {\n  // Clone the whole Vec on every iteration\n  clone_vec() : vec_(std::move(vec_)) {}\n  ~clone_vec() { std::swap(vec_, vec_); }\n  clone_vec(const clone_vec& other) : vec_(other.vec_) {}\n\n  // Clone the whole Vec on every iteration\n  clone_vec(V&& vec) : vec_(std::move(vec)) {}\n\n  // Clone the whole Vec on every iteration\n  clone_vec(const clone_vec& other) :",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 4,
+          "src": "The negative indexing feature allows for more concise and expressive slicing operations compared to traditional Python slicing syntax. This can make your code cleaner and easier to understand, especially when dealing with large datasets or complex structures.\n\nHere\u2019s how you might use negative indices in some examples:\n\n### Negative Indexing in Slice-Shaped Builtins\n\n#### Example 1: Slicing a List\n\n```python\nimport ilo\n\n# Define a list\nmy_list = [1, 2, 3, 4, 5]\n\n# Negative indexing\nnegative_indexed_list = my_list[-3:]  # Equivalent to my_list[-1:-2]\nprint(negative_indexed_list)  # Output: [4, 5]\n\n# Positive indexing\npositive_indexed_list = my_list[:-3]  # Equivalent to my_list[:3]\nprint(positive_indexed_list)  # Output: [1, 2, 3]\n```\n\nIn this example:\n- `my_list[-3:]` slices the list starting from the third element (index -3) to the end.\n- `my_list[:-3]` slices the list starting from the beginning (index 0) to the third element (index -3).\n\n#### Example 2: Slicing a",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 5,
+          "src": "```elixir\nfn xs, predicate ->\n  case predicate(xs) do\n    true -> xs\n    false -> fail\n  end\nend\n```",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 6,
+          "src": "```ilo\nlset xs 0 0\n```",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 7,
+          "src": "The `lst` function is used to create a new list with an element replaced at a specific index. It takes a list `xs` and an index `i` and a value `v` as arguments. If the index is out of bounds, it returns the original list without modification. This function is useful for creating copies of lists based on certain conditions, such as replacing elements at specific positions.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 8,
+          "src": "Gotcha: `flat=cat ws \" \"` picks `cat ws` as a named binding, which is a reserved name. Rename hint: `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=cat ws \" \"` \u2192 `flat=",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 9,
+          "src": "The reserved names in the ILo library are limited to 4 characters long. This example demonstrates how to create a 4-character named variable called `mycnt` that can be safely used within the context of the ILo library without causing syntax errors.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 10,
+          "src": "You're correct. The issue arises due to how the parser interprets multi-line functions ending with a bare record constructor. Before the fix, the parser would incorrectly interpret such constructs as separate functions, leading to unexpected behavior and potential runtime errors. This is why the fix was introduced to ensure that these constructs are treated as single expressions rather than separate functions.\n\nThe fix involves wrapping the record constructor in parentheses, which effectively makes it a single-expression construct. This change ensures that the parser correctly identifies and processes multi-line function bodies without causing issues related to record constructors.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 11,
+          "src": "The descriptive statistics builtins you've described are indeed quite useful for statistical analysis. Here\u2019s a brief overview of how these functions work:\n\n1. **Median**: This function calculates the middle value of a list when the list size is odd. If the list size is even, it computes the average of the two middle values.\n\n2. **Quantile**: This function divides the data into specified intervals based on a given probability. It can handle both continuous and discrete distributions.\n\n3. **StDev**: This function calculates the standard deviation of a list. The standard deviation measures the amount of variation or dispersion of a set of values. It is calculated by taking the square root of the variance.\n\n4. **Variance**: This function calculates the variance of a list. Variance is a measure of how spread out the numbers are from the mean. It is calculated by subtracting the mean from each number, squaring the result, and then averaging those squared differences.\n\nHere's a simple example demonstrating how to use these functions:\n\n```python\nimport numpy as np\n\n# Sample data\ndata = np.array([1, 2, 3, 4, 5])\n\n# Median\nprint(\"Median:\", np.median(data))\n\n# Quantile\nprint(\"Quantile:\",",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 12,
+          "src": "The issue you're describing seems to involve a situation where a variable holding a `FnRef` is being called within a context where the correct function resolution mechanism is not working correctly. This can lead to unexpected behavior due to the way the compiler handles function references and variable bindings.\n\nHere\u2019s a breakdown of the problem and how to address it:\n\n### Problem Description\nYou have a variable holding a `FnRef` that needs to be called within a context where the correct function resolution mechanism is not functioning properly. Specifically:\n- You have a variable `f` that holds a `FnRef`.\n- You try to call `f(10)` which should resolve to `dbl(10)` because `dbl` is a function that takes a single argument and returns a `FnRef`.\n- However, the compiler is unable to resolve the `FnRef` correctly, leading to an error.\n\n### Solution Steps\nTo address this issue, you need to ensure that the correct function resolution mechanism is used. Here are some steps you can follow:\n\n1. **Ensure Correct Function Resolution Mechanism**\n   - Make sure that the correct function resolution mechanism is used for the `dbl` function. This typically involves ensuring that the function is defined and accessible in the current scope.\n   \n2",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 13,
+          "src": "Gotcha fixed. Now we can use `fld` as a variable name without triggering ILO-P011.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 14,
+          "src": "Yes, happy path.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 15,
+          "src": "Yes, backslashes are valid in ilo syntax. They can be used to denote\nparentheses, but they should not be used to enclose expressions. In\ngeneral, ilo uses parentheses to separate arguments and return values,\nand does not allow nesting more than two levels deep. This includes\nbackslashes, which are used to denote nested structures.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 16,
+          "src": "```ilo\ndefer x<0;\ndefer x<0 ? print(x) : print(-x);\n```",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 17,
+          "src": "```cilium\nalias hdr = head;\n```",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 18,
+          "src": "The tilde-str-noecho feature introduced in ILO-P001 allows for more concise logging without echoing back the actual values being logged. This feature was originally intended to improve readability and maintainability, especially in environments where logging might be used for debugging purposes. However, there were some issues with how the feature was implemented, leading to potential problems such as incorrect behavior due to echo suppression.\n\nIn the original implementation, the tilde-str-noecho feature was designed to suppress the echo of the actual values being logged, which could lead to unexpected behavior if the logging logic did not correctly handle the case where the actual values were not echoed back. This can cause issues with the logging process, particularly when dealing with complex data structures or when multiple functions are called within a single block of code.\n\nThe current version of ILO-P001 introduces a different approach to handling the tilde-str-noecho feature. Instead of suppressing the echo entirely, the feature is now designed to ensure that the actual values are logged correctly, even if they are not echoed back. This ensures that the logging process remains consistent and predictable, regardless of whether the actual values are echoed or not.\n\nBy implementing this feature in a way that guarantees correct logging, the tilde-str-noecho feature becomes more reliable",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 19,
+          "src": "Yes, `rgxsub` supports global replacements and backreferences in the replacement string. This allows you to perform regular expression substitutions globally within your patterns. For example, to replace all occurrences of the word \"example\" with \"test\", you can use:\n\n```rust\nlet text = \"Example sentence with an example.\";\nlet modified_text = rgxsub!(r\"\\bexample\\b\", \"test\", text);\nprintln!(\"{}\", modified_text); // Output: \"Test sentence with test.\"\n```\n\nIn this example, `r\"\\bexample\\b\"` matches the word \"example\" literally, and `rgxsub!` will replace every occurrence of this pattern with \"test\".",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 20,
+          "src": "Sure! Let's demonstrate how to define and use discriminated union types in ILO to represent different shapes of circles, squares, and points. We'll create a union named `Shape` with three possible shapes: `circle`, `square`, and `point`.\n\n```idl\n; Define the union Shape with three possible shapes:\n; - circle(n) represents a circle with radius n\n; - square(n) represents a square with side length n\n; - point(n) represents a point with coordinates (x, y)\n;\n; Note: This is just a simple example. In practice, you might have more complex shapes defined elsewhere.\nUnion Shape {\n    Circle(n) : Real;\n    Square(n) : Real;\n    Point(n) : Real;\n};\n```\n\nNow let's create some examples of these shapes using the `Shape` union.\n\n```idl\n; Create instances of the Shape union\n; - circle(5) will create a circle with radius 5\n; - square(4) will create a square with side length 4\n; - point(3) will create a point with coordinates (3, 3)\n;\n; You can use these instances to perform operations on them.\n;\n; Example usage:\n; >>> import ilo\n",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 21,
+          "src": "Yes, record syntax allows you to create a new record instance with specific field values. You can also destructively modify existing records by assigning them to variables. This makes it easy to manage complex data structures efficiently.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 22,
+          "src": "The binary `-` operator nest correctly within prefix expressions, allowing for precise parsing of scientific formulas. This aligns with the intended behavior of the binary `-` operator in many programming languages, ensuring that the syntax remains consistent and predictable.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 23,
+          "src": "```ilo\nmap (fn: F) (xs: L a) > L b\n```",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 24,
+          "src": "Sure, here's how you can achieve serializing a value as JSON and writing it in one call using the `wr` function:\n\n```ilo\nwr path (jdmp data) {\n  json data;\n}\n```\n\nThis will create a JSON object containing the serialized data and write it directly to the specified path.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 25,
+          "src": "It seems there were some issues with the examples provided earlier. Specifically, the syntax used in the examples did not align with the correct usage of the `field` operator in the context of the `ilo` library. Let me walk through the corrected version of the examples to ensure they work correctly within the `ilo` framework.\n\nHere\u2019s the corrected version of the examples:\n\n```ilo\nname = field \"test\" \"value\"\n```\n\nIn this example:\n- `name` is defined as a field named \"test\" with the value \"value\".\n- This definition is placed outside of any other expressions, ensuring it is evaluated once and stored in the variable `name`.\n\nLet's break down the changes made:\n\n1. **Field Definition**: \n   ```ilo\n   name = field \"test\" \"value\"\n   ```\n   Here, we define a field named \"test\" with the value \"value\". The field is created without any additional context, making it accessible throughout the program.\n\n2. **Usage**:\n   ```ilo\n   name = field \"test\" \"value\"\n   ```\n\n   In this case, the field is accessed directly without needing to create another instance of the field. The field is available globally and can be referenced anywhere in the",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 26,
+          "src": "```ilo\nenv-all!\nmhas \"PATH\"\n```",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 27,
+          "src": "Sure, here's how you can implement the `zip` function in ILO:\n\n```ilo\nz <- make-id()\nz <- z + 1\nz <- z + 2\nz <- z + 3\nz <- z + 4\nz <- z + 5\nz <- z + 6\nz <- z + 7\nz <- z + 8\nz <- z + 9\nz <- z + 10\nz <- z + 11\nz <- z + 12\nz <- z + 13\nz <- z + 14\nz <- z + 15\nz <- z + 16\nz <- z + 17\nz <- z + 18\nz <- z + 19\nz <- z + 20\nz <- z + 21\nz <- z + 22\nz <- z + 23\nz <- z + 24\nz <- z + 25\nz <- z + 26\nz <- z + 27\nz <- z + 28\nz <- z + 29\nz <- z + 30\n",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 28,
+          "src": "The `fn` command allows you to define functions with specific shapes and parameters. This can be useful for creating more concise code or for defining custom operations within your ILo environment. Here\u2019s how you can use the `fn` command to create a simple function that takes two arguments and performs some operation on them:\n\n```ilo\nfn x y {\n    // Perform some operation on x and y\n    let result = x + y;\n    println!(\"Result: {}\", result);\n}\n```\n\nIn this example:\n- `fn` is used to define a function named `x y`.\n- The function takes two arguments `x` and `y`.\n- Inside the function, the expression `let result = x + y;` is executed, which adds the values of `x` and `y` together and stores the result in the variable `result`.\n- Finally, the function outputs the result using `println!`.\n\nYou can similarly define other functions with different shapes and parameters using the `fn` command. For instance, you could define a function that calculates the square of a number:\n\n```ilo\nfn x n {\n    // Calculate the square of x\n    let squared = x * x;\n    println!(\"Squared: {}\", squared);\n}\n```\n\nAnd another",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 29,
+          "src": "Yes, you can nest references within a list literal. This allows you to create complex data structures without having to explicitly define them. Here\u2019s how you might represent a nested list:\n\n```ilo\n@[[\"apple\", \"banana\"], [\"cherry\", \"date\"]]\n```\n\nIn this case, the first sublist contains the elements `[\"apple\", \"banana\"]`, and the second sublist contains the elements `[\"cherry\", \"date\"]`. You can access these elements directly using the indices `[0]` and `[1]` respectively.\n\nIf you have a more complex structure, such as a nested list where each element is another list, you would typically use a recursive approach to construct the entire structure. However, for simple cases like the ones shown above, nesting references should suffice.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 30,
+          "src": "Yes, you can use `@j 0..n` directly without parentheses. This allows you to easily compute the length of a sequence without needing to explicitly create a loop variable.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 31,
+          "src": "The flagging was due to the fact that the engine used to route to `main` when the source file had a leading period or slash. This behavior was intended to ensure that the engine could handle cases where the source file was not properly formatted, such as when it contained multiple periods or slashes. However, the flagging was incorrect because the engine did not recognize the leading period or slash as a valid identifier. This led to unexpected errors when the source file was improperly formatted. The fix addresses this issue by ensuring that the engine can correctly identify and route to `main` regardless of the presence of leading periods or slashes in the source file.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 32,
+          "src": "The BigListLiteral feature allows developers to create large lists without worrying about memory constraints. This is particularly useful for handling very long sequences or arrays where traditional list constructs might not fit within the available memory space. By leveraging the compiler's ability to optimize overloads, BigListLiteral can handle extremely large lists efficiently, ensuring performance and avoiding potential issues related to memory management.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 33,
+          "src": "The fix addresses the issue where the CLIarity check fails when there are fewer arguments than expected. Specifically, it ensures that the number of positional arguments passed to the CLI function matches the declared parameter count, preventing silent failures due to missing positional parameters. This resolves the regression introduced by PR #336 and ensures consistent behavior across engines.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        },
+        {
+          "i": 34,
+          "src": "You're correct. The RC=1 in-place fast path on `OP_ADD` / `OP_ADD_SS` (VM) and\n`jit_add` / `jit_concat` (Cranelift) does indeed mutate the caller's source.\nThis behavior is intentional to ensure that the source remains unchanged during\nconcatenation, which is crucial for maintaining data integrity and avoiding\nside effects. This is why the RC=1 in-place fast path is used for these operations.\nThe `OP_LISTAPPEND` split was introduced in PR #250, and the `OP_MSET` / `jit_mset_inplace` split was introduced in PR #249. These changes were made to improve performance and maintainability of the codebase.",
+          "check": {
+            "parse_ok": true,
+            "full_ok": false
+          }
+        }
+      ]
+    }
+  }
+}
