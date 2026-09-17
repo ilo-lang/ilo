@@ -132,6 +132,18 @@ Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 | "Positional args risk parameter-swap errors" (early manifesto worry) | Refuted by our own 10-variant × 4-task test: 10/10 accuracy. Positional args stay |
 | Spec-only fluency claims ("agents learned the full vocabulary with 10/10 accuracy") | True of the 2026-Q1 micro suite only; not reproduced at current spec size or on the full persona set. Do not cite |
 | Any per-task dollar figure published before 2026-09-17 | Unsupported; the first measured figures are the tables above |
+## Phase 4 pre-training baseline (2026-09-17)
+
+| Arm | Model | Spec in context | Check-valid |
+|---|---|---|---|
+| Untrained 1.5B + full curated spec | Qwen2.5-1.5B-Instruct | yes (4.1k tok) | **0/10** |
+
+Every single val task failed `ilo check` — the model produced ilo-shaped
+prose but no syntactically valid programs. This is the number that
+fine-tuning must beat. The gap (0% → ?%) is the entire Phase 4 thesis:
+spec-in-context without weight-level training is insufficient for a
+model with no ilo exposure.
+
 ## Comparator status
 
 - **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
