@@ -159,7 +159,33 @@ labelled-arg detection (`peek_labelled_arg_label`) and the
 tag dropped naively at `fn parse_stmt_body` entry would mis-key states for
 those paths. Consequence: the recorder needs one deliberate
 state-emission point per site (after pre-processing, at the match), chosen
-by someone reading each site — a focused compiler session, not a
-sweep. The probed context masks shipped in this branch are the stand-in
-and cover the practical host need; per-site states remain the end-state
 for hosts that want production-path keys.
+
+## Strategy 1 static alternatives — rejected with cause (2026-09-17)
+
+Reading the dispatch sites for hand-derived exhaustive alternative sets
+hit an architectural wall: **`parse_stmt_body` ends in a `_ =>` fallback
+that delegates to `parse_expr`** (guard-style statements like
+`>=a 0 x` enter through expression parsing). A static alternatives set for
+the stmt site is therefore the union of its specific arms (`?`, `@`,
+ident, destructure `{`) with **expression's entire first-set — which is
+unbounded**, because `parse_expr_inner` itself accepts prefix operators
+recursively. There is no finite hand-written set.
+
+Consequences:
+- Static per-site masks are impossible at fallback sites. Axis can ship
+  them because its twelve-construct grammar has no permissive fallback;
+  ilo's expression-first statement grammar does.
+- The probed context masks (schemaVersion 2) are therefore not a
+  stand-in for Strategy 1 — they are the only sound mask representation
+  ilo's grammar admits: keyed on emitted-token context, exhaustively
+  probed through the real parser, tolerance-documented.
+- Hosts that track true parse state (an embedded ilo parser, e.g. the LSP)
+  can use the site-keyed `sites` section of the empirical artifact for
+  production-path analytics; hosts that only track emitted tokens use the
+  context masks.
+
+This closes Strategy 1: the observational site recorder (shipped) plus the
+probed context masks (shipped) are the complete ilo-side deliverable. The
+remaining masked-generation work is host-side (a decoding harness that
+consumes either artifact).
