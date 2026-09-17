@@ -91,6 +91,27 @@ pub fn enabled() -> bool {
     ON.with(|v| *v)
 }
 
+/// Strategy 1 (observational v1): record the (site, peeked-token)
+/// transition at a parser dispatch point. Keyed `"<site>|after <prev>"`;
+/// the peeked token is the alternative the parser took. Observed over the
+/// corpus — same epistemics as the bigram, finer key.
+pub fn mark_site(site: &'static str, peek: Option<&Token>) {
+    if !enabled() {
+        return;
+    }
+    let peek_name = peek.map(display).unwrap_or_else(|| "<EOF>".into());
+    REC.with(|r| {
+        let mut rec = r.borrow_mut();
+        let rec = rec.get_or_insert_with(Rec::default);
+        rec.vocab.insert(peek_name.clone());
+        let prev1 = rec.last.clone().unwrap_or_else(|| "<START>".into());
+        rec.edges
+            .entry(format!("{site}|after {prev1}"))
+            .or_default()
+            .insert(peek_name);
+    });
+}
+
 /// Begin a fresh program (resets the previous-token cursor).
 pub fn begin_program() {
     if !enabled() {
@@ -154,20 +175,28 @@ pub fn to_json() -> String {
             Some(rec) => rec,
             None => return String::from("{\"error\":\"nothing recorded\"}"),
         };
-        let edges: serde_json::Map<String, serde_json::Value> = rec
-            .edges
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    serde_json::Value::Array(
-                        v.iter()
-                            .map(|t| serde_json::Value::String(t.clone()))
-                            .collect(),
-                    ),
-                )
-            })
-            .collect();
+        // Split recorded edges: plain keys are the bigram view; keys of the
+        // form "<site>|after <prev>" are Strategy-1 site-keyed transitions.
+        let mut plain: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+        let mut sites: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+        for (k, v) in rec.edges.iter() {
+            let arr = serde_json::Value::Array(
+                v.iter()
+                    .map(|t| serde_json::Value::String(t.clone()))
+                    .collect(),
+            );
+            match k.split_once("|after ") {
+                Some((site, prev)) => {
+                    sites.insert(format!("{site} after {prev}"), arr);
+                }
+                None => {
+                    plain.insert(k.clone(), arr);
+                }
+            }
+        }
+        let edges = plain;
         let vocab = serde_json::Value::Array(
             rec.vocab
                 .iter()
@@ -187,6 +216,7 @@ pub fn to_json() -> String {
             "startToken": "<START>",
             "endToken": "<EOF>",
             "transitions": serde_json::Value::Object(edges),
+            "sites": serde_json::Value::Object(sites),
         })
         .to_string()
     })

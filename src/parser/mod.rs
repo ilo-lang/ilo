@@ -2461,6 +2461,7 @@ statement boundary; bind the chain to a local first. For example, split \
         {
             return Err(self.error_hint("ILO-P011", msg, hint));
         }
+        constrain::mark_site("stmt", self.peek());
         match self.peek() {
             Some(Token::Question) => {
                 if self.is_prefix_ternary() {
@@ -3430,6 +3431,7 @@ statement boundary; bind the chain to a local first. For example, split \
     }
 
     fn parse_pattern_body(&mut self) -> Result<Pattern> {
+        constrain::mark_site("pattern", self.peek());
         match self.peek() {
             Some(Token::Caret) => {
                 self.advance();
@@ -3740,6 +3742,7 @@ statement boundary; bind the chain to a local first. For example, split \
     }
 
     fn parse_expr_body(&mut self) -> Result<Expr> {
+        constrain::mark_site("expr", self.peek());
         let expr = match self.peek() {
             Some(Token::Tilde) => {
                 self.advance();
@@ -5679,6 +5682,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
     }
 
     fn parse_atom_body(&mut self) -> Result<Expr> {
+        constrain::mark_site("atom", self.peek());
         match self.peek().cloned() {
             Some(Token::Number(n)) => {
                 self.advance();
