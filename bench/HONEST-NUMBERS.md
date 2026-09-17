@@ -100,16 +100,27 @@ Files: `bench/variance/r{1,2,3}/` (full JSON per repeat),
 `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 `bench/persona-smoke-baseline-dsflash-align-curated.json`.
 
-**MCP generated-vs-handwritten schema cost (2026-09-17, G5.1):** seven
-tools across three families (`mcp-tools/`), schemas generated from AST
-signatures: **1,310 B ≈ 327 tokens** resident `tools/list` (~47 tok/tool).
-The same seven schemas hand-authored to MCP best-practice verbosity
-(descriptions on every tool and property,
-`bench/mcp-schema-handwritten.json`): **1,474 B — 1.1× the generated**.
-For scalar-param tools a careful human author is roughly size-neutral with
-the generator; ilo's advantages are zero authoring, verifier-exact types,
-and structural immunity to tool-count bloat (the jCodeMunch failure mode:
-27.5k resident tokens came from 91 tools, not verbose descriptions).
+**MCP generated-vs-handwritten schema cost (2026-09-17/18, G5.1):**
+eighteen tools across six families (`mcp-tools/`), schemas generated
+from AST signatures: **3,503 B ≈ 876 tokens** resident `tools/list`
+(~49 tok/tool). The same schemas hand-authored to MCP best-practice
+verbosity (descriptions on every tool and property,
+`bench/mcp-schema-handwritten.json`, 11 tools measured): **1.1× the
+generated** on the scalar original seven; **2.29×** on the newest four
+(`sum-list`, `max-list`, `clampinto`, `in-range`: 886 B generated vs
+2,029 B handwritten). For scalar-param tools a careful human author is
+roughly size-neutral with the generator; ilo's advantages are zero
+authoring, verifier-exact types, and structural immunity to tool-count
+bloat (the jCodeMunch failure mode: 27.5k resident tokens came from 91
+tools, not verbose descriptions).
+
+**MCP result contract hardening (2026-09-18, G5.1):** server v0.3 —
+`outputSchema` on every tool (envelope `{"result": <return type>}`),
+`structuredContent: {"result": …}` on success (JSON parse, then scalar
+coercion per declared type), `structuredContent: {"error": {"code",
+"message"}}` on failure using ilo's stable codes (verified live:
+`ILO-R600` on a wrong-typed argument). Pinned in
+`scripts/test-mcp-server.py` (16 wire calls).
 
 **Constrain artifact v1 (2026-09-17, G3):** `ilo constrain examples
 --probe` — 370 files, 30,120 prefixes, 873,480 parser calls (~3 min), 405

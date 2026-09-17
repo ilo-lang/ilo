@@ -132,18 +132,28 @@ Optional/Result mapped; Fn params skip), and executes calls through the
 verifying compiler. Measured: **606 B (≈151 tokens) of resident `tools/list`
 schema for three tools** — the graft-vs-jCodeMunch measurement was 886 B
 vs 27,526 B for one server each; ilo's generated-schema path is the cheap
-end of that axis by construction. Families: `demo`, `text`, `numbers`, `gates` — **10 tools, 4 families,
-1,861 B ≈ 465 tokens resident `tools/list`** (~47 tok/tool). Wire tests:
-`scripts/test-mcp-server.py` (stdio, 12 calls incl. gate family) and
+end of that axis by construction. Families: `demo`, `text`, `numbers`,
+`gates`, `quality`, `lists` — **18 tools, 6 families, 3,503 B ≈ 876
+tokens resident `tools/list`** (~49 tok/tool). Wire tests:
+`scripts/test-mcp-server.py` (stdio, 16 calls incl. all families) and
 `scripts/test-mcp-http.py` (HTTP transport + session). CI job `mcp-e2e`
 runs both plus the constrain smoke. Private (`_`-prefixed) functions
 don't leak. Arg names match hyphen/score-insensitively. Honest schema
-delta vs hand-authored schemas: **1.1×** on scalar tools
-(`bench/mcp-schema-handwritten.json`) — the wins are zero authoring,
-verifier-exact types, and bloat immunity, not bytes.
+delta vs hand-authored schemas: **1.1×** on scalar tools, **2.29×** on
+the newest four (`bench/mcp-schema-handwritten.json`, 11 tools) — the
+wins are zero authoring, verifier-exact types, and bloat immunity, not
+bytes.
 
-Shipped: streamable-HTTP transport (`--http --port`, JSON mode + Mcp-Session-Id, e2e-tested). Open: `--json` tool-result contract hardening,
-publishing 2 more tool families with measured schema-vs-handwritten deltas.
+Result contract hardened (server v0.3): every `tools/list` entry carries
+an `outputSchema` derived from the ilo return type; successful calls
+return `structuredContent: {"result": …}` (JSON parse, then scalar
+coercion); failed calls surface ilo's stable diagnostic code
+(`ILO-R600`…) as `structuredContent: {"error": {"code", "message"}}` —
+clients branch on code, not prose.
+
+Shipped: streamable-HTTP transport (`--http --port`, JSON mode + Mcp-Session-Id, e2e-tested); result-contract hardening (above); 2 new
+tool families (`quality`, `lists`) with measured schema-vs-handwritten
+deltas.
 
 Stop competing for "the language agents write apps in." Aim ilo where verified density + determinism are load-bearing:
 

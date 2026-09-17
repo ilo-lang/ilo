@@ -63,24 +63,39 @@ def main() -> int:
         assert "demo:tri" in names and "demo:slug" in names, names
         # private (_-prefixed) helpers must not leak into the tool list
         assert not any(n.startswith("demo:__") for n in names), names
+        # v0.3 result contract: every tool carries an outputSchema derived
+        # from the ilo return type
+        by_name = {t["name"]: t for t in tools}
+        assert by_name["demo:tri"]["outputSchema"]["properties"]["result"] == {
+            "type": "number"}, by_name["demo:tri"]
+        assert by_name["gates:within-budget"]["outputSchema"]["properties"][
+            "result"] == {"type": "boolean"}
 
         tri = rpc(3, "tools/call",
                   {"name": "demo:tri", "arguments": {"n": 10}})
         assert tri["result"]["content"][0]["text"] == "55", tri
+        assert tri["result"]["structuredContent"] == {"result": 55}, tri
 
         slug = rpc(4, "tools/call", {
             "name": "demo:slug", "arguments": {"text": "Hello   MCP World"}})
         assert slug["result"]["content"][0]["text"] == "hello-mcp-world", slug
+        assert slug["result"]["structuredContent"] == {
+            "result": "hello-mcp-world"}, slug
 
         stats = rpc(5, "tools/call", {
             "name": "demo:stats-summary",
             "arguments": {"numbers_json": [3, 1, 4, 1, 5]}})
         structured = stats["result"].get("structuredContent", {})
-        assert structured.get("count") == 5, stats
+        assert structured.get("result", {}).get("count") == 5, stats
 
         bad_arg = rpc(6, "tools/call",
                       {"name": "demo:tri", "arguments": {"n": "oops"}})
         assert bad_arg["result"].get("isError") is True, bad_arg
+        # v0.3 error contract: ilo's stable diagnostic code surfaces
+        # structurally so clients can branch on code, not prose
+        berr = bad_arg["result"].get("structuredContent", {}).get("error", {})
+        assert berr.get("code") == "ILO-R600", bad_arg
+        assert "expects" in berr.get("message", ""), bad_arg
 
         unknown = rpc(7, "tools/call", {"name": "nope", "arguments": {}})
         assert unknown["error"]["code"] == -32602, unknown
@@ -103,8 +118,24 @@ def main() -> int:
             "arguments": {"requested": 120, "limit": 100}})
         assert gate_no["result"]["content"][0]["text"] == "false", gate_no
 
+        # families 5/6 (quality, lists): scalar coercion into the
+        # structured envelope + schema-derived outputSchema presence
+        clamp = rpc(12, "tools/call", {
+            "name": "quality:clampinto",
+            "arguments": {"x": 15, "lo": 0, "hi": 10}})
+        assert clamp["result"]["structuredContent"] == {"result": 10}, clamp
+        assert by_name["quality:clampinto"]["outputSchema"]["properties"][
+            "result"] == {"type": "number"}
+        total = rpc(13, "tools/call", {
+            "name": "lists:sum-list", "arguments": {"xs": [1, 2, 3, 4]}})
+        assert total["result"]["structuredContent"] == {"result": 10}, total
+        blank = rpc(14, "tools/call", {
+            "name": "quality:not-blank", "arguments": {"s": "   "}})
+        assert blank["result"]["structuredContent"] == {"result": False}, blank
+
         print("mcp e2e: OK "
-              "(initialize, list, tri/slug/stats, gate calls, typed error, unknown tool)")
+              "(initialize, list+outputSchema, tri/slug/stats, gate calls, "
+              "quality/lists envelopes, typed error, unknown tool)")
         return 0
     finally:
         srv.kill()

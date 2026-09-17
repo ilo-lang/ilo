@@ -1,0 +1,16 @@
+-- MCP validation-gate tools (G5.1, family 5): pure input-quality gates an
+-- agent harness calls before spending tokens on free-form work. Same
+-- contract as gates.ilo — the verifier makes third states impossible.
+-- Verified with: ilo check mcp-tools/quality.ilo
+
+-- clampinto: x constrained into [lo, hi]; the neutral numeric normaliser
+clampinto x:n lo:n hi:n>n;lo2=? (<x lo) lo x;? (>lo2 hi) hi lo2
+
+-- in-range: is x within [lo, hi] inclusive
+in-range x:n lo:n hi:n>b;& (>=x lo) (>=hi x)
+
+-- not-blank: does s contain any non-whitespace character
+not-blank s:t>b;>len (trm s) 0
+
+-- length-ok: is s at most max characters (prompt/field guards)
+length-ok s:t max:n>b;<=len s max

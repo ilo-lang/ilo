@@ -1,119 +1,227 @@
 {
-  "_note": "Hand-written equivalent of the seven ilo-generated tool schemas, authored to MCP best-practice verbosity (descriptions on every tool and property, required arrays). Used by bench/HONEST-NUMBERS.md for the generated-vs-handwritten schema-cost delta. Not a working server — measurement fixture only.",
-  "tools": [
-    {
-      "name": "tri",
-      "description": "Calculate the triangular number of n — the sum of all integers from 1 to n inclusive. For example, triangular(10) = 55. Useful for cumulative counting problems and arithmetic series.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "n": {
-            "type": "number",
-            "description": "The upper bound of the summation. Must be a non-negative integer. Returns n*(n+1)/2."
-          }
-        },
-        "required": ["n"]
-      }
+ "_note": "Hand-written equivalent of the nine ilo-generated tool schemas (demo trio, gates trio, numbers pair, lists pair), authored to MCP best-practice verbosity (descriptions on every tool and property, required arrays). Used by bench/HONEST-NUMBERS.md for the generated-vs-handwritten schema-cost delta. Not a working server \u2014 measurement fixture only.",
+ "tools": [
+  {
+   "name": "tri",
+   "description": "Calculate the triangular number of n \u2014 the sum of all integers from 1 to n inclusive. For example, triangular(10) = 55. Useful for cumulative counting problems and arithmetic series.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "n": {
+      "type": "number",
+      "description": "The upper bound of the summation. Must be a non-negative integer. Returns n*(n+1)/2."
+     }
     },
-    {
-      "name": "slug",
-      "description": "Convert arbitrary text into a URL-friendly slug: trimmed, lowercased, with runs of whitespace collapsed into single hyphens. Empty segments produced by repeated separators are dropped.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string",
-            "description": "The free-form input text to slugify. Leading and trailing whitespace is ignored; internal whitespace becomes hyphens."
-          }
-        },
-        "required": ["text"]
-      }
+    "required": [
+     "n"
+    ]
+   }
+  },
+  {
+   "name": "slug",
+   "description": "Convert arbitrary text into a URL-friendly slug: trimmed, lowercased, with runs of whitespace collapsed into single hyphens. Empty segments produced by repeated separators are dropped.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "text": {
+      "type": "string",
+      "description": "The free-form input text to slugify. Leading and trailing whitespace is ignored; internal whitespace becomes hyphens."
+     }
     },
-    {
-      "name": "stats-summary",
-      "description": "Compute descriptive statistics for an array of numbers: the count of elements, the arithmetic sum, and the median (linear-interpolated). Returns a JSON object.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "numbers_json": {
-            "type": "string",
-            "description": "A JSON-encoded array of numbers, e.g. \"[3,1,4,1,5]\". Malformed input yields a zero-count summary rather than an error."
-          }
-        },
-        "required": ["numbers_json"]
-      }
+    "required": [
+     "text"
+    ]
+   }
+  },
+  {
+   "name": "stats-summary",
+   "description": "Compute descriptive statistics for an array of numbers: the count of elements, the arithmetic sum, and the median (linear-interpolated). Returns a JSON object.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "numbers_json": {
+      "type": "string",
+      "description": "A JSON-encoded array of numbers, e.g. \"[3,1,4,1,5]\". Malformed input yields a zero-count summary rather than an error."
+     }
     },
-    {
-      "name": "count-matches",
-      "description": "Count how many times a regular expression pattern occurs in the input string, scanning left to right for non-overlapping whole matches.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "pat": {
-            "type": "string",
-            "description": "The regular expression pattern, e.g. \"[0-9]+\"."
-          },
-          "s": {
-            "type": "string",
-            "description": "The text to scan for matches."
-          }
-        },
-        "required": ["pat", "s"]
-      }
+    "required": [
+     "numbers_json"
+    ]
+   }
+  },
+  {
+   "name": "count-matches",
+   "description": "Count how many times a regular expression pattern occurs in the input string, scanning left to right for non-overlapping whole matches.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "pat": {
+      "type": "string",
+      "description": "The regular expression pattern, e.g. \"[0-9]+\"."
+     },
+     "s": {
+      "type": "string",
+      "description": "The text to scan for matches."
+     }
     },
-    {
-      "name": "headline",
-      "description": "Normalise free text into a display headline: collapsed whitespace, lowercase, then capitalise the first letter of every remaining word.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "s": {
-            "type": "string",
-            "description": "The text to transform into headline case."
-          }
-        },
-        "required": ["s"]
-      }
+    "required": [
+     "pat",
+     "s"
+    ]
+   }
+  },
+  {
+   "name": "headline",
+   "description": "Normalise free text into a display headline: collapsed whitespace, lowercase, then capitalise the first letter of every remaining word.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "s": {
+      "type": "string",
+      "description": "The text to transform into headline case."
+     }
     },
-    {
-      "name": "percent",
-      "description": "Express a part-of-whole ratio as a percentage string with one decimal place, e.g. percent(54.17, 100) = \"54.2%\".",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "part": {
-            "type": "number",
-            "description": "The numerator."
-          },
-          "whole": {
-            "type": "number",
-            "description": "The denominator; must be non-zero."
-          }
-        },
-        "required": ["part", "whole"]
-      }
+    "required": [
+     "s"
+    ]
+   }
+  },
+  {
+   "name": "percent",
+   "description": "Express a part-of-whole ratio as a percentage string with one decimal place, e.g. percent(54.17, 100) = \"54.2%\".",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "part": {
+      "type": "number",
+      "description": "The numerator."
+     },
+     "whole": {
+      "type": "number",
+      "description": "The denominator; must be non-zero."
+     }
     },
-    {
-      "name": "between",
-      "description": "Inclusive range check: returns true when x is greater than or equal to lo and less than or equal to hi.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "type": "number",
-            "description": "The value to test."
-          },
-          "lo": {
-            "type": "number",
-            "description": "Inclusive lower bound."
-          },
-          "hi": {
-            "type": "number",
-            "description": "Inclusive upper bound."
-          }
-        },
-        "required": ["x", "lo", "hi"]
-      }
-    }
-  ]
+    "required": [
+     "part",
+     "whole"
+    ]
+   }
+  },
+  {
+   "name": "between",
+   "description": "Inclusive range check: returns true when x is greater than or equal to lo and less than or equal to hi.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "x": {
+      "type": "number",
+      "description": "The value to test."
+     },
+     "lo": {
+      "type": "number",
+      "description": "Inclusive lower bound."
+     },
+     "hi": {
+      "type": "number",
+      "description": "Inclusive upper bound."
+     }
+    },
+    "required": [
+     "x",
+     "lo",
+     "hi"
+    ]
+   }
+  },
+  {
+   "name": "sum-list",
+   "description": "Calculate the sum of a list of numbers. Accepts an array of numeric values and returns their arithmetic total as a single number. An empty list returns 0. Useful for aggregating measurements, totals, and scores.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "xs": {
+      "type": "array",
+      "items": {
+       "type": "number"
+      },
+      "description": "The list of numbers to sum. May be empty; an empty list sums to 0."
+     }
+    },
+    "required": [
+     "xs"
+    ]
+   }
+  },
+  {
+   "name": "max-list",
+   "description": "Find the largest element in a list of numbers. Accepts an array of numeric values and returns the maximum. An empty list returns 0 (the neutral number); callers needing to distinguish empty from a genuine 0 should check the list length first.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "xs": {
+      "type": "array",
+      "items": {
+       "type": "number"
+      },
+      "description": "The list of numbers to scan for the maximum. May be empty; an empty list yields 0."
+     }
+    },
+    "required": [
+     "xs"
+    ]
+   }
+  },
+  {
+   "name": "clampinto",
+   "description": "Constrain a number into an inclusive range [lo, hi]. Values below lo become lo, values above hi become hi, and in-range values pass through unchanged. The neutral numeric normaliser for enforcing bounds on user or model output.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "x": {
+      "type": "number",
+      "description": "The value to clamp."
+     },
+     "lo": {
+      "type": "number",
+      "description": "The inclusive lower bound of the range."
+     },
+     "hi": {
+      "type": "number",
+      "description": "The inclusive upper bound of the range."
+     }
+    },
+    "required": [
+     "x",
+     "lo",
+     "hi"
+    ]
+   }
+  },
+  {
+   "name": "in-range",
+   "description": "Test whether a number lies within an inclusive range [lo, hi]. Returns true when lo <= x <= hi and false otherwise. A pure boolean gate for validation flows.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "x": {
+      "type": "number",
+      "description": "The value to test."
+     },
+     "lo": {
+      "type": "number",
+      "description": "The inclusive lower bound."
+     },
+     "hi": {
+      "type": "number",
+      "description": "The inclusive upper bound."
+     }
+    },
+    "required": [
+     "x",
+     "lo",
+     "hi"
+    ]
+   }
+  }
+ ]
 }

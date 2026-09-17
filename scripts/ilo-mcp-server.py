@@ -16,6 +16,12 @@ Protocol: initialize / tools/list / tools/call / ping; notifications
 Discovery: every `*.ilo` file in --dir; every public Function declaration
 becomes one tool (named `demo:tri` style: file stem + function name).
 
+Result contract (v0.3): every tool carries an `outputSchema` derived from
+the ilo return type; successful calls wrap parsed stdout as
+`structuredContent: {"result": ...}`; failing calls surface ilo's stable
+diagnostic code (`ILO-*`) as `structuredContent: {"error": {"code",
+"message"}}`.
+
 Type mapping (ilo → JSON Schema):
   Number → number, Text → string, Bool → boolean
   {List: T} → {"type":"array","items":schema(T)}
@@ -85,7 +91,8 @@ def schema(ty, depth: int = 0):
 
 class Tool:
     def __init__(self, file: Path, name: str, description: str,
-                 params: list[dict], input_schema: dict, schema_bytes: int):
+                 params: list[dict], input_schema: dict, schema_bytes: int,
+                 return_type=None):
         self.tool_name = f"{file.stem}:{name}"
         self.description = description
         self.params = params
@@ -93,6 +100,11 @@ class Tool:
         self.schema_bytes = schema_bytes
         self.file = file
         self.fn = name
+        # MCP structured output envelope: the tool's value lives under
+        # "result"; outputSchema describes that envelope.
+        self.output_schema = {"type": "object",
+                              "properties": {"result": schema(return_type)},
+                              "required": ["result"]}
 
 
 def discover(dir_path: Path, ilo_bin: str) -> list[Tool]:
@@ -146,7 +158,8 @@ def discover(dir_path: Path, ilo_bin: str) -> list[Tool]:
                             "additionalProperties": False}
             tools.append(Tool(file, fn["name"], description or fn["name"],
                               fn.get("params", []), input_schema,
-                              len(json.dumps(input_schema))))
+                              len(json.dumps(input_schema)),
+                              return_type=fn.get("return_type")))
     return tools
 
 
@@ -167,15 +180,47 @@ def call_tool(tool: Tool, ilo_bin: str, arguments: dict) -> dict:
             argv.append(str(v))
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     if proc.returncode != 0:
-        return {"content": [{"type": "text",
-                             "text": (proc.stderr or proc.stdout).strip()}],
-                "isError": True}
+        text = (proc.stderr or proc.stdout).strip()
+        out = {"content": [{"type": "text", "text": text}], "isError": True}
+        # ilo emits one JSON diagnostic per line with a stable `code`
+        # (ILO-P*/ILO-T*/ILO-C*). Surface the first as the structured
+        # error so clients can branch on code, not prose.
+        for line in text.splitlines():
+            try:
+                diag = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(diag, dict) and "code" in diag and "message" in diag:
+                out["structuredContent"] = {"error": {
+                    "code": diag["code"], "message": diag["message"]}}
+                break
+        return out
     out = {"content": [{"type": "text", "text": proc.stdout.strip()}]}
+    result_schema = tool.output_schema["properties"]["result"]
     try:
-        out["structuredContent"] = json.loads(proc.stdout)
+        out["structuredContent"] = {
+            "result": coerce(proc.stdout.strip(), result_schema)}
+    except (json.JSONDecodeError, ValueError):
+        pass  # unparseable → text content remains the contract
+    return out
+
+
+def coerce(text: str, sch: dict):
+    """Coerce ilo's CLI stdout to the declared type.
+
+    JSON parse first (covers tools that print structured values); bare
+    scalar output falls back to the declared schema. This tolerates
+    tools whose declared Text return actually renders a JSON map."""
+    try:
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
-    return out
+    ty = sch.get("type")
+    if ty == "number":
+        return float(text)
+    if ty == "boolean":
+        return text == "true"
+    return text  # string / any
 
 
 def err(code: int, message: str) -> dict:
@@ -198,7 +243,8 @@ def dispatch(req: dict, tools: list[Tool], ilo_bin: str):
     if method == "tools/list":
         return {"tools": [
             {"name": t.tool_name, "description": t.description,
-             "inputSchema": t.input_schema} for t in tools]}, None
+             "inputSchema": t.input_schema,
+             "outputSchema": t.output_schema} for t in tools]}, None
     if method == "tools/call":
         params = req.get("params", {})
         match = next((t for t in tools
@@ -217,7 +263,9 @@ def dispatch(req: dict, tools: list[Tool], ilo_bin: str):
             return call_tool(match, ilo_bin, arguments), None
         except subprocess.TimeoutExpired:
             return ({"content": [{"type": "text", "text": "timeout"}],
-                     "isError": True}), None
+                     "isError": True,
+                     "structuredContent": {"error": {"code": "ILO-TIMEOUT",
+                                                     "message": "tool call exceeded 30s"}}}), None
     if rid is not None:
         return None, err(-32601, f"method not found: {method}")
     return None, None

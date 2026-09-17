@@ -1,0 +1,16 @@
+-- MCP list tools (G5.1, family 6): pure List utilities. All builtins are
+-- in ilo-builtins-sig, so the curated context suffices to author these.
+-- Verified with: ilo check mcp-tools/lists.ilo
+
+-- sum-list: total of a list of numbers
+sum-list xs:L n>n;sum xs
+
+-- max-list: largest element of a non-empty list (empty → 0, the
+-- neutral Number; callers needing a tri-state should wrap in Result)
+max-list xs:L n>n;? (= (len xs) 0) 0 (max xs)
+
+-- mean-list: arithmetic mean; empty list → 0
+mean-list xs:L n>n;? (= (len xs) 0) 0 (/ (sum xs) (len xs))
+
+-- take-first: the first n elements of xs
+take-first xs:L n k:n>L n;take k xs
