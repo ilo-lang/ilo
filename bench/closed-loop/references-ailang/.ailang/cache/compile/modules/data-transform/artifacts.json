@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "data-transform",
+  "cache_key": "8863e7036a59948445337129edb3235138c605dd6ed3f7caa0cc29435e3ec759",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "376319d295d4a6bcb5791502ce6de6b969af8b1f6e9adda8e76ab123684a2af2",
+    "coretypeinfo.gob": "1da6e0806509b15fe681cd2f64e7ef2522ed0025b0e61093961157628c283a98",
+    "iface.json": "1e0ae846da78c7e377778ef23cb254f36ec4859084965d0e220a8d0125d59f39"
+  }
+}

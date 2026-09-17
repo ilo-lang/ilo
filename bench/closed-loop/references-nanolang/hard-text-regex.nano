@@ -1,0 +1,34 @@
+# Task: hard-text-regex — count non-overlapping "ab" in "abababab" = 4
+# No regex builtin in the native backend; rgxall equivalent is a
+# non-overlapping scan via str_index_of over shrinking windows.
+fn count_pattern(text: string, pattern: string) -> int {
+    let mut count: int = 0
+    let tlen: int = (str_length text)
+    let plen: int = (str_length pattern)
+    let mut start: int = 0
+    while (<= start (- tlen plen)) {
+        let rest: string = (str_substring text start tlen)
+        let idx: int = (str_index_of rest pattern)
+        if (< idx 0) {
+            return count
+        }
+        set count (+ count 1)
+        set start (+ start (+ idx plen))
+    }
+    return count
+}
+
+shadow count_pattern {
+    assert (== (count_pattern "abababab" "ab") 4)
+    assert (== (count_pattern "aaa" "ab") 0)
+    assert (== (count_pattern "abab" "ab") 2)
+}
+
+fn main() -> int {
+    (println (count_pattern "abababab" "ab"))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

@@ -1,0 +1,48 @@
+# Task: hard-records — items with qty 3,5,8; keep qty>4; sum = 13
+struct Item {
+    name: string,
+    qty: int
+}
+
+fn heavy(i: Item) -> bool {
+    return (> i.qty 4)
+}
+
+shadow heavy {
+    assert (== (heavy Item { name: "a", qty: 5 }) true)
+    assert (== (heavy Item { name: "b", qty: 3 }) false)
+}
+
+fn sum_heavy(items: array<Item>) -> int {
+    let mut total: int = 0
+    let mut i: int = 0
+    while (< i (array_length items)) {
+        let it: Item = (at items i)
+        if (heavy it) {
+            set total (+ total it.qty)
+        }
+        set i (+ i 1)
+    }
+    return total
+}
+
+shadow sum_heavy {
+    let mut probe: array<Item> = []
+    set probe (array_push probe Item { name: "x", qty: 8 })
+    set probe (array_push probe Item { name: "y", qty: 2 })
+    assert (== (sum_heavy probe) 8)
+    assert (== (sum_heavy []) 0)
+}
+
+fn main() -> int {
+    let mut items: array<Item> = []
+    set items (array_push items Item { name: "apple", qty: 3 })
+    set items (array_push items Item { name: "pear", qty: 5 })
+    set items (array_push items Item { name: "fig", qty: 8 })
+    (println (sum_heavy items))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

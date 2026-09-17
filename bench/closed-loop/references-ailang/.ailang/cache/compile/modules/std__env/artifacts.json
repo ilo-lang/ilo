@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "std/env",
+  "cache_key": "2a885f60a53a6417183b84d934b5b80fe75ea4d475ec8d4baef5ab27c9acfa66",
+  "sha256": {
+    "constructors.json": "443958971d199640d61f77b75da11ef3380750f0ff47d5414af8b1dfd992a206",
+    "core.gob": "662cfd08422afe8fa581e545a70b90472883ba1ea222006dbf904fb98f665c85",
+    "coretypeinfo.gob": "4e996d526dc0f2785ac30b87e9719a2fc7c12f6d941f576f3d4c119de6c55cfc",
+    "iface.json": "d34821adc46c96a9e64f1a48b1b80c18c88d9b6d39abe9c6a2d3e7be52e342a9"
+  }
+}

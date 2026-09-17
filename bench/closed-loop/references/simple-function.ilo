@@ -1,0 +1,2 @@
+tri n:n>n;/ (* n (+ n 1)) 2
+main>n;tri 10

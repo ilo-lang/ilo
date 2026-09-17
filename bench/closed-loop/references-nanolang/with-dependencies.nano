@@ -1,0 +1,27 @@
+# Task: with-dependencies — quad calls double twice, quad(7) = 28
+fn double(x: int) -> int {
+    return (* x 2)
+}
+
+shadow double {
+    assert (== (double 7) 14)
+    assert (== (double 0) 0)
+}
+
+fn quad(x: int) -> int {
+    return (double (double x))
+}
+
+shadow quad {
+    assert (== (quad 7) 28)
+    assert (== (quad 1) 4)
+}
+
+fn main() -> int {
+    (println (quad 7))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

@@ -4,5 +4,4 @@ run-report>n
   big=flt {it> >it.qty 4} xs
   qs=map {it>it.qty} big
   s=sum qs
-  prnt str s
   s

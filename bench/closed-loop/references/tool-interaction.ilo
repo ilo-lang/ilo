@@ -1,0 +1,1 @@
+main>t;v=default-on-err (env "BENCH_VAR") "hello";(+ v " world")

@@ -1,0 +1,14 @@
+fn fib(n: i32) -> i32 {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+pub fn main(world: World) -> Void raises {
+    var out: [12]u8 = [0_u8; 12]
+    let m: Maybe<Span<u8>> = std.fmt.i32(out, fib(15) + fib(12))
+    if m.has {
+        check world.out.write(m.value)
+    }
+}

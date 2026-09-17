@@ -1,0 +1,19 @@
+# Task: simple-function — triangular number n*(n+1)/2, call with n=10
+fn triangular(n: int) -> int {
+    return (/ (* n (+ n 1)) 2)
+}
+
+shadow triangular {
+    assert (== (triangular 10) 55)
+    assert (== (triangular 0) 0)
+    assert (== (triangular 1) 1)
+}
+
+fn main() -> int {
+    (println (triangular 10))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

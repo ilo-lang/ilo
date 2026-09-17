@@ -1,0 +1,24 @@
+# Task: workflow-rollback — safe-div returns 0 on zero divisor; print 5 then 0
+fn safe_div(a: int, b: int) -> int {
+    if (== b 0) {
+        return 0
+    } else {
+        return (/ a b)
+    }
+}
+
+shadow safe_div {
+    assert (== (safe_div 10 2) 5)
+    assert (== (safe_div 5 0) 0)
+    assert (== (safe_div 9 3) 3)
+}
+
+fn main() -> int {
+    (println (safe_div 10 2))
+    (println (safe_div 5 0))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "tmp/ilo/bench/closed-loop/references-ailang/simple-function",
+  "cache_key": "98ff196de567345039a2c774ac09c3588775967a94bf7b531f2b0866e171fb19",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "b229ad993c012e44fcc139c85714fcdbc55fb6bed1c47a3bbecb93cdeb42d41c",
+    "coretypeinfo.gob": "e66b10136e604f295f4527285d668cd3c7618bb2e004cd921b148356bf1f0fd8",
+    "iface.json": "6c67aa2bd965ed5f6cc96d92fd2a5cee463282f04811a408b6fa652ec3f21a5b"
+  }
+}

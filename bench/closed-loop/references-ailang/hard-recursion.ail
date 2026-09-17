@@ -1,0 +1,15 @@
+-- hard-recursion: naive recursive fib; fib(15) + fib(12) = 610 + 144 = 754.
+-- Run: ailang run -quiet --caps IO hard-recursion.ail
+module bench/hard_recursion
+
+import std/io (println)
+
+pure func fib(n: int) -> int {
+  if n == 0 then 0
+  else if n == 1 then 1
+  else fib(n - 1) + fib(n - 2)
+}
+
+export func main() -> () ! {IO} {
+  println(show(fib(15) + fib(12)))
+}

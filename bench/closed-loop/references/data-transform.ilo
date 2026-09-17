@@ -1,0 +1,1 @@
+main>n;xs=[1,2,3,4,5];sq=map (x:n>n;*x x) xs;big=flt (v:n>b;>v 10) sq;sum big

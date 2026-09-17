@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "hard-recursion",
+  "cache_key": "df05729a3902bd17b01573feb695a825b762c6f6f8f15b6e3b6a099fbd765592",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "38227c3dfcfda12aa9037ab03b7a8c4e3cd4f4522ee7e578ba6281dde172a1c6",
+    "coretypeinfo.gob": "d55945a338db22c5ab3c1555da670f655ab487fa45435cee03984da450a08f34",
+    "iface.json": "7bc0179978ddb69f62119f6beb199ea2c38fe503429bedb631e2a3c08b0615b1"
+  }
+}

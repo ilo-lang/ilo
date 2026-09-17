@@ -1,0 +1,22 @@
+-- hard-records: items {name, qty}; keep qty > 4; sum quantities = 5+8 = 13.
+-- Run: ailang run -quiet --caps IO hard-records.ail
+module bench/hard_records
+
+import std/io (println)
+import std/list (filter, foldl)
+
+type Item = { name: string, qty: int }
+
+pure func sumQty(items: [Item]) -> int {
+  foldl(\acc. \it. acc + it.qty, 0, items)
+}
+
+export func main() -> () ! {IO} {
+  let items = [
+    { name: "a", qty: 3 },
+    { name: "b", qty: 5 },
+    { name: "c", qty: 8 }
+  ]
+  let big = filter(\it. it.qty > 4, items)
+  println(show(sumQty(big)))
+}

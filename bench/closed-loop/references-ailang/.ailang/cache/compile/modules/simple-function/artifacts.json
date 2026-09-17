@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "simple-function",
+  "cache_key": "98ff196de567345039a2c774ac09c3588775967a94bf7b531f2b0866e171fb19",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "0d132a59b53a164fb547d11c9ef8c47c57ed73079789c8bc1ca3165dcdc0f7b4",
+    "coretypeinfo.gob": "7b95801720b92391eaab4689b5b29d07c3e855417085c162ed062dd9b2b57453",
+    "iface.json": "147939631cfe1f3f5760f63bcd740d16f2604e675ab7febdbba7ef525cfbe6d5"
+  }
+}

@@ -1,0 +1,8 @@
+pub fn main(world: World) -> Void raises {
+    let count: usize = std.str.count("abababab", "ab")
+    var out: [12]u8 = [0_u8; 12]
+    let m: Maybe<Span<u8>> = std.fmt.usize(out, count)
+    if m.has {
+        check world.out.write(m.value)
+    }
+}

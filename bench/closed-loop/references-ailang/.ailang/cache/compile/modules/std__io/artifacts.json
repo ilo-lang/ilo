@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "std/io",
+  "cache_key": "9d66993489bd21a8b0d897fb9921d3651d18c52707e5bde5638277a8955c48f5",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "cd7968ad5092062b624e969769376110ad8541127624d3d1fb6d1ec644502b2f",
+    "coretypeinfo.gob": "e85f2ee229017aad76ec2442b3566c953f87dc9982887db7058f1b72b9768752",
+    "iface.json": "47e7d290700fcad3e70be972ca6e8cbdf41d0d9562fd4867647e0e419b9667f9"
+  }
+}

@@ -1,0 +1,1 @@
+../hard-text-regex.mbt

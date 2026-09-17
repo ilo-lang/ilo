@@ -1,0 +1,15 @@
+-- hard-text-regex: count non-overlapping matches of "ab" in "abababab" = 4.
+-- Run: ailang run -quiet --caps IO hard-text-regex.ail
+module bench/hard_text_regex
+
+import std/io (println)
+import std/regex as R
+import std/result (Result, Ok, Err)
+import std/list (length)
+
+export func main() -> () ! {IO} {
+  match R.compile("ab") {
+    Err(e) => println("bad pattern: ${e}"),
+    Ok(re) => println(show(length(R.findAll(re, "abababab"))))
+  }
+}

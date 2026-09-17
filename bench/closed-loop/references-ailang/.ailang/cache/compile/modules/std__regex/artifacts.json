@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "std/regex",
+  "cache_key": "1780c5a0062dea00e4d1abdb79ec0b25dd23ec828bea97a1eb5bee4303b6f703",
+  "sha256": {
+    "constructors.json": "002b3b7d958716b6a823a64682e9c951c66bd06ada43f56f06f483871c9d8a56",
+    "core.gob": "e7aaecdfd3436fe7c783da39a041cfc3736b1bd569c0803412d3103138eaf0a3",
+    "coretypeinfo.gob": "74ee4ad30d64d7e0a7544c9f8a760b0eb2b0cdb75851b9a40f49fb2ad0511917",
+    "iface.json": "c32a5eb56d4d1f096ab96a3e29d53b01fea20571d7cf50181537ed9791f67391"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "tool-interaction",
+  "cache_key": "2257c652245cdcc5fbcec644bd753e10931111077026f897b497ab8a995f4aa1",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "1edcd4cef3877c3c3f80cffa9b9d4281a94cd85d59f82e5a91c860ae39146ce4",
+    "coretypeinfo.gob": "e8c7f5e8ca89ec1faac081014507ac90412a741771b1c92268d68c8f4fe63dd1",
+    "iface.json": "048400340bfcb85f0c69363c98a7119cb29eaa3b76d9808d980b6211d43cdc43"
+  }
+}

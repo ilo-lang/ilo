@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "workflow-rollback",
+  "cache_key": "5ff84497586f8d5716e0edb13ff62eb02860f837bdac9cadcd4a4ed9be4f6c37",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "ec5182959d4fb9fb7293d35305eb9e40325971c2653279d0b3fe49106126c2aa",
+    "coretypeinfo.gob": "ea16727c01aad66a4000c2c3fec900d90cd2c51b24451cd33a88506aca6c05ef",
+    "iface.json": "0b1ba6c6e28c80eedb6df8913c6c82831f3d205fdeeeba497ba976c66213f952"
+  }
+}

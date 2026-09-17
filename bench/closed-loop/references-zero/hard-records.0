@@ -1,0 +1,25 @@
+type Item {
+    name: String,
+    qty: i32,
+}
+
+pub fn main(world: World) -> Void raises {
+    let a: Item = Item { name: "a", qty: 3 }
+    let b: Item = Item { name: "b", qty: 5 }
+    let c: Item = Item { name: "c", qty: 8 }
+    var total: i32 = 0
+    if a.qty > 4 {
+        total = total + a.qty
+    }
+    if b.qty > 4 {
+        total = total + b.qty
+    }
+    if c.qty > 4 {
+        total = total + c.qty
+    }
+    var out: [12]u8 = [0_u8; 12]
+    let m: Maybe<Span<u8>> = std.fmt.i32(out, total)
+    if m.has {
+        check world.out.write(m.value)
+    }
+}

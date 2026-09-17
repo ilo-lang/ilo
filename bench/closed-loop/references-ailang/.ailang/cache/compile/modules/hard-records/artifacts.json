@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "hard-records",
+  "cache_key": "64c58b89f1b35859246fa703611fd42b9df8d02230e01cedf8e11e42b3a68aba",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "1c58a6b0affca8585faca6dccc047a3bb81d1374ed652874bb233dfe328f1311",
+    "coretypeinfo.gob": "d7d69ecb2d6f93f3e1db52aaaab372ce7479e6e7e5f76c9cf83b21980482472b",
+    "iface.json": "4551319900a315ba7a0430e4922e564174d459ebcde296aabff4c218471cd1e8"
+  }
+}

@@ -1,0 +1,2 @@
+safe-div a:n b:n>n;? (= b 0) 0 (/ a b)
+main>t;prnt (safe-div 20 4);prnt (safe-div 7 0);""

@@ -1,0 +1,17 @@
+-- with-dependencies: quad(x) = double(double(x)); quad(7) = 28.
+-- Run: ailang run -quiet --caps IO with-dependencies.ail
+module bench/with_dependencies
+
+import std/io (println)
+
+pure func double(x: int) -> int {
+  x * 2
+}
+
+pure func quad(x: int) -> int {
+  double(double(x))
+}
+
+export func main() -> () ! {IO} {
+  println(show(quad(7)))
+}

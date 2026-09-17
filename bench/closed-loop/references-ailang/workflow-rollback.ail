@@ -1,0 +1,14 @@
+-- workflow-rollback: safe-div returns 0 on zero divisor; print 5 then 0.
+-- Run: ailang run -quiet --caps IO workflow-rollback.ail
+module bench/workflow_rollback
+
+import std/io (println)
+
+pure func safeDiv(a: int, b: int) -> int {
+  if b == 0 then 0 else a / b
+}
+
+export func main() -> () ! {IO} {
+  println(show(safeDiv(10, 2)))
+  println(show(safeDiv(5, 0)))
+}

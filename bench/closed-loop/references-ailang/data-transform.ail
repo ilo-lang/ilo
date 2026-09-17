@@ -1,0 +1,16 @@
+-- data-transform: [1..5] -> squares -> keep >10 -> sum = 16+25 = 41.
+-- Run: ailang run -quiet --caps IO data-transform.ail
+module bench/data_transform
+
+import std/io (println)
+import std/list (map, filter, foldl)
+
+pure func sum(xs: [int]) -> int {
+  foldl(\acc. \x. acc + x, 0, xs)
+}
+
+export func main() -> () ! {IO} {
+  let squares = map(\x. x * x, [1, 2, 3, 4, 5])
+  let big = filter(\x. x > 10, squares)
+  println(show(sum(big)))
+}

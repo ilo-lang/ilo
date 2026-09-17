@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "with-dependencies",
+  "cache_key": "2f3cd1398c1542c5dd74de59e749757627db27120e1f5a7e873360f0eed20db4",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "7a2a50e25f9ea4f3ba6f9b974d7d93d536b52ff08a8aac95f6696358609d3271",
+    "coretypeinfo.gob": "ab157558fec4461a2a487b95e822026b35fc4bbcc013d92a76dc185d7d1187ae",
+    "iface.json": "b5266cdc5827a2b105993552b97b029e42612d02800ac9e1ab2d1a327cf252d5"
+  }
+}

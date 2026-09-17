@@ -1,0 +1,13 @@
+-- simple-function: triangular number n*(n+1)/2, computed for n=10.
+-- Run: ailang run -quiet --caps IO simple-function.ail
+module bench/simple_function
+
+import std/io (println)
+
+pure func tri(n: int) -> int {
+  n * (n + 1) / 2
+}
+
+export func main() -> () ! {IO} {
+  println(show(tri(10)))
+}

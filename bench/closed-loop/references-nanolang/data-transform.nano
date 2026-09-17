@@ -1,0 +1,49 @@
+# Task: data-transform — [1..5] -> squares -> keep >10 -> sum = 41
+# Note: array_map/array_filter/array_fold exist in the C-seed interpreter but
+# are not declared by the native C transpiler, so stages are explicit loops.
+fn square(x: int) -> int {
+    return (* x x)
+}
+
+shadow square {
+    assert (== (square 3) 9)
+    assert (== (square 0) 0)
+}
+
+fn gt10(x: int) -> bool {
+    return (> x 10)
+}
+
+shadow gt10 {
+    assert (== (gt10 16) true)
+    assert (== (gt10 9) false)
+}
+
+fn main() -> int {
+    let nums: array<int> = [1, 2, 3, 4, 5]
+    # map: square every element
+    let mut squared: array<int> = []
+    let mut i: int = 0
+    while (< i (array_length nums)) {
+        set squared (array_push squared (square (at nums i)))
+        set i (+ i 1)
+    }
+    # filter: keep values > 10, summing as we go
+    let mut big: array<int> = []
+    let mut total: int = 0
+    set i 0
+    while (< i (array_length squared)) {
+        let v: int = (at squared i)
+        if (gt10 v) {
+            set big (array_push big v)
+            set total (+ total v)
+        }
+        set i (+ i 1)
+    }
+    (println total)
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

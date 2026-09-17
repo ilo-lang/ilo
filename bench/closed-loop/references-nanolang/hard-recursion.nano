@@ -1,0 +1,23 @@
+# Task: hard-recursion — fib(15) + fib(12) = 610 + 144 = 754
+fn fib(n: int) -> int {
+    if (< n 2) {
+        return n
+    } else {
+        return (+ (fib (- n 1)) (fib (- n 2)))
+    }
+}
+
+shadow fib {
+    assert (== (fib 0) 0)
+    assert (== (fib 1) 1)
+    assert (== (fib 10) 55)
+}
+
+fn main() -> int {
+    (println (+ (fib 15) (fib 12)))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

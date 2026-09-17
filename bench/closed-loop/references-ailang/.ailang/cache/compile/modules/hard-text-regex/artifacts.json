@@ -1,0 +1,11 @@
+{
+  "version": "v4",
+  "module_id": "hard-text-regex",
+  "cache_key": "baeb038d4c3f3b13da751676212f387ababf35292e60309d24855804c8b590b5",
+  "sha256": {
+    "constructors.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "core.gob": "05ff39e5443ebaaf663f1a96c814c08490e1150a93363abf2ce912200c088214",
+    "coretypeinfo.gob": "c4293b0ad76674d04c80b09b9e456307ef29dc13f1a7c4f8fd05fd2b39ce1a8a",
+    "iface.json": "b11a64648a2d4af51868fe01abebe3b579575b32789c902debbae44ff1c7c038"
+  }
+}

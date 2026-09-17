@@ -1,0 +1,11 @@
+-- tool-interaction: read BENCH_VAR from env (default "hello"), append " world".
+-- Run: ailang run -quiet --caps IO,Env tool-interaction.ail
+module bench/tool_interaction
+
+import std/io (println)
+import std/env (getEnvOr)
+
+export func main() -> () ! {IO, Env} {
+  let base = getEnvOr("BENCH_VAR", "hello")
+  println("${base} world")
+}

@@ -1,0 +1,22 @@
+# Task: tool-interaction — getenv BENCH_VAR, default "hello", append " world"
+fn with_default(v: string, dflt: string) -> string {
+    if (str_equals v "") {
+        return dflt
+    }
+    return v
+}
+
+shadow with_default {
+    assert (str_equals (with_default "" "hello") "hello")
+    assert (str_equals (with_default "x" "hello") "x")
+}
+
+fn main() -> int {
+    let base: string = (with_default (getenv "BENCH_VAR") "hello")
+    (println (str_concat base " world"))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}
