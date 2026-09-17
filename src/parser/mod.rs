@@ -988,6 +988,7 @@ impl Parser {
                 ),
             ));
         }
+        constrain::mark_site("decl", self.peek());
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
@@ -2112,6 +2113,7 @@ statement boundary; bind the chain to a local first. For example, split \
                 },
             });
         }
+        constrain::mark_site("type", self.peek());
         match self.peek().cloned() {
             Some(Token::LParen) => {
                 self.advance();
