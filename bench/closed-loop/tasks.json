@@ -34,6 +34,27 @@
       "expected_output": "5\n0",
       "difficulty": "medium",
       "category": "control-flow"
+    },
+    {
+      "id": "hard-recursion",
+      "description": "Write recursive functions in ilo: fib(n) with fib(0)=0, fib(1)=1, using bind-first pattern for the recursive calls. Compute fib(15) and fib(12), print their sum.",
+      "expected_output": "754",
+      "difficulty": "hard",
+      "category": "recursion"
+    },
+    {
+      "id": "hard-records",
+      "description": "Define a record type item with a text field name and a number field qty. Build a list of three items with quantities 3, 5, and 8. Filter to items with qty greater than 4, sum their quantities, and print the result.",
+      "expected_output": "13",
+      "difficulty": "hard",
+      "category": "records-collections"
+    },
+    {
+      "id": "hard-text-regex",
+      "description": "Count the non-overlapping occurrences of the pattern ab in the text abababab using rgxall, and print the count as text.",
+      "expected_output": "4",
+      "difficulty": "medium",
+      "category": "text-regex"
     }
   ]
 }
