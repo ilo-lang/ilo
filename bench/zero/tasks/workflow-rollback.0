@@ -1,0 +1,20 @@
+fn safe_div(a: i32, b: i32) -> i32 {
+    if b == 0 {
+        return 0
+    }
+    return a / b
+}
+
+pub fn main(world: World) -> Void raises {
+    var out1: [12]u8 = [0_u8; 12]
+    var out2: [12]u8 = [0_u8; 12]
+    let m1: Maybe<Span<u8>> = std.fmt.i32(out1, safe_div(10, 2))
+    if m1.has {
+        check world.out.write(m1.value)
+    }
+    check world.out.write("\n")
+    let m2: Maybe<Span<u8>> = std.fmt.i32(out2, safe_div(10, 0))
+    if m2.has {
+        check world.out.write(m2.value)
+    }
+}

@@ -1,0 +1,15 @@
+fn double(x: i32) -> i32 {
+    return x * 2
+}
+
+fn quad(x: i32) -> i32 {
+    return double(double(x))
+}
+
+pub fn main(world: World) -> Void raises {
+    var out: [12]u8 = [0_u8; 12]
+    let m: Maybe<Span<u8>> = std.fmt.i32(out, quad(7))
+    if m.has {
+        check world.out.write(m.value)
+    }
+}

@@ -1,6 +1,6 @@
 {
   "name": "ilo",
-  "description": "Write, run, debug, and explain programs in ilo — a token-optimised programming language for AI agents",
+  "description": "Write, run, debug, and explain programs in ilo \u2014 a token-optimised programming language for AI agents",
   "version": "0.11.8",
   "author": {
     "name": "Daniel Morris"
@@ -8,5 +8,22 @@
   "homepage": "https://github.com/ilo-lang/ilo",
   "repository": "https://github.com/ilo-lang/ilo",
   "license": "MIT",
-  "keywords": ["ilo", "programming-language", "token-optimised", "ai-agents", "prefix-notation"]
+  "keywords": [
+    "ilo",
+    "programming-language",
+    "token-optimised",
+    "ai-agents",
+    "prefix-notation"
+  ],
+  "mcpServers": {
+    "ilo-tools": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/ilo-mcp-server.py",
+        "--dir",
+        "${CLAUDE_PLUGIN_ROOT}/mcp-tools"
+      ]
+    }
+  }
 }

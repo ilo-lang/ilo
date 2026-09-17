@@ -1,0 +1,11 @@
+fn tri(n: i32) -> i32 {
+    return (n * (n + 1)) / 2
+}
+
+pub fn main(world: World) -> Void raises {
+    var out: [12]u8 = [0_u8; 12]
+    let m: Maybe<Span<u8>> = std.fmt.i32(out, tri(10))
+    if m.has {
+        check world.out.write(m.value)
+    }
+}
