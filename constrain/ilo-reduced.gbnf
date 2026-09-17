@@ -1,0 +1,71 @@
+# ilo GBNF - probed contexts reachable from START (depth 4)
+
+root ::= ws start
+start ::= state-t-ltSTARTgtspTool | state-t-ltSTARTgtspType | state-t-ltSTARTgtspUse | state-t-ltSTARTgtspus | state-t-ltSTARTgtspident
+state-t-ltSTARTgtspTool ::= "" | "!" ws state-t-ex | "!!" ws state-t-exex | "!=" ws state-t-exeq | "$" ws state-t-dollar | "&" ws state-t-amp | "(" ws state-t-lp | ")" ws state-t-rp | "*" ws state-t-star | "+" ws state-t-plus | "+=" ws state-t-pluseq | "," ws state-t-comma | "-" ws state-t-minus | "." ws state-t-dot | ".." ws state-t-dotdot | ".?" ws state-t-dotq2 | "/" ws state-t-div | ":" ws state-t-colon | ";" ws state-t-semi | "<" ws state-t-lt | "<=" ws state-t-lteq | "=" ws state-t-eq | ">" ws state-t-gt | ">=" ws state-t-gteq | ">>" ws state-t-gtgt | "?" ws state-t-q2 | "??" ws state-t-q2q2 | "@" ws state-t-at | "By" ws state-t-By | "False" ws state-t-False | "FnType" ws state-t-FnType | "I64Type" ws state-t-I64Type | "ListType" ws state-t-ListType | "MapType" ws state-t-MapType | "Nil" ws state-t-Nil | "OptType" ws state-t-OptType | "ResultType" ws state-t-ResultType | "Retry" ws state-t-Retry | "SumType" ws state-t-SumType | "Timeout" ws state-t-Timeout | "Tool" ws state-t-Tool | "True" ws state-t-True | "Type" ws state-t-Type | "U32Type" ws state-t-U32Type | "U64Type" ws state-t-U64Type | "Use" ws state-t-Use | "With" ws state-t-With | "WorldType" ws state-t-WorldType | "[" ws state-t-lb | "]" ws state-t-rb | "^" ws state-t-car | "_" ws state-t-us | ident ws state-t-ident | number ws state-t-number | string ws state-t-string | "{" ws state-t-lc | "|" ws state-t-pipe | "}" ws state-t-rc | "~" ws state-t-tl
+state-t-ltSTARTgtspType ::= "" | "!" ws state-t-ex | "!!" ws state-t-exex | "!=" ws state-t-exeq | "$" ws state-t-dollar | "&" ws state-t-amp | "(" ws state-t-lp | ")" ws state-t-rp | "*" ws state-t-star | "+" ws state-t-plus | "+=" ws state-t-pluseq | "," ws state-t-comma | "-" ws state-t-minus | "." ws state-t-dot | ".." ws state-t-dotdot | ".?" ws state-t-dotq2 | "/" ws state-t-div | ":" ws state-t-colon | ";" ws state-t-semi | "<" ws state-t-lt | "<=" ws state-t-lteq | "=" ws state-t-eq | ">" ws state-t-gt | ">=" ws state-t-gteq | ">>" ws state-t-gtgt | "?" ws state-t-q2 | "??" ws state-t-q2q2 | "@" ws state-t-at | "By" ws state-t-By | "False" ws state-t-False | "FnType" ws state-t-FnType | "I64Type" ws state-t-I64Type | "ListType" ws state-t-ListType | "MapType" ws state-t-MapType | "Nil" ws state-t-Nil | "OptType" ws state-t-OptType | "ResultType" ws state-t-ResultType | "Retry" ws state-t-Retry | "SumType" ws state-t-SumType | "Timeout" ws state-t-Timeout | "Tool" ws state-t-Tool | "True" ws state-t-True | "Type" ws state-t-Type | "U32Type" ws state-t-U32Type | "U64Type" ws state-t-U64Type | "Use" ws state-t-Use | "With" ws state-t-With | "WorldType" ws state-t-WorldType | "[" ws state-t-lb | "]" ws state-t-rb | "^" ws state-t-car | "_" ws state-t-us | ident ws state-t-ident | number ws state-t-number | string ws state-t-string | "{" ws state-t-lc | "|" ws state-t-pipe | "}" ws state-t-rc | "~" ws state-t-tl
+state-t-ltSTARTgtspUse ::= "" | "!" ws state-t-ex | "!!" ws state-t-exex | "!=" ws state-t-exeq | "$" ws state-t-dollar | "&" ws state-t-amp | "(" ws state-t-lp | ")" ws state-t-rp | "*" ws state-t-star | "+" ws state-t-plus | "+=" ws state-t-pluseq | "," ws state-t-comma | "-" ws state-t-minus | "." ws state-t-dot | ".." ws state-t-dotdot | ".?" ws state-t-dotq2 | "/" ws state-t-div | ":" ws state-t-colon | ";" ws state-t-semi | "<" ws state-t-lt | "<=" ws state-t-lteq | "=" ws state-t-eq | ">" ws state-t-gt | ">=" ws state-t-gteq | ">>" ws state-t-gtgt | "?" ws state-t-q2 | "??" ws state-t-q2q2 | "@" ws state-t-at | "By" ws state-t-By | "False" ws state-t-False | "FnType" ws state-t-FnType | "I64Type" ws state-t-I64Type | "ListType" ws state-t-ListType | "MapType" ws state-t-MapType | "Nil" ws state-t-Nil | "OptType" ws state-t-OptType | "ResultType" ws state-t-ResultType | "Retry" ws state-t-Retry | "SumType" ws state-t-SumType | "Timeout" ws state-t-Timeout | "Tool" ws state-t-Tool | "True" ws state-t-True | "Type" ws state-t-Type | "U32Type" ws state-t-U32Type | "U64Type" ws state-t-U64Type | "Use" ws state-t-Use | "With" ws state-t-With | "WorldType" ws state-t-WorldType | "[" ws state-t-lb | "]" ws state-t-rb | "^" ws state-t-car | "_" ws state-t-us | ident ws state-t-ident | number ws state-t-number | string ws state-t-string | "{" ws state-t-lc | "|" ws state-t-pipe | "}" ws state-t-rc | "~" ws state-t-tl
+state-t-ltSTARTgtspus ::= "" | "!" ws state-t-ex | "!!" ws state-t-exex | "!=" ws state-t-exeq | "$" ws state-t-dollar | "&" ws state-t-amp | "(" ws state-t-lp | ")" ws state-t-rp | "*" ws state-t-star | "+" ws state-t-plus | "+=" ws state-t-pluseq | "," ws state-t-comma | "-" ws state-t-minus | "." ws state-t-dot | ".." ws state-t-dotdot | ".?" ws state-t-dotq2 | "/" ws state-t-div | ":" ws state-t-colon | ";" ws state-t-semi | "<" ws state-t-lt | "<=" ws state-t-lteq | "=" ws state-t-eq | ">" ws state-t-gt | ">=" ws state-t-gteq | ">>" ws state-t-gtgt | "?" ws state-t-q2 | "??" ws state-t-q2q2 | "@" ws state-t-at | "By" ws state-t-By | "False" ws state-t-False | "FnType" ws state-t-FnType | "I64Type" ws state-t-I64Type | "ListType" ws state-t-ListType | "MapType" ws state-t-MapType | "Nil" ws state-t-Nil | "OptType" ws state-t-OptType | "ResultType" ws state-t-ResultType | "Retry" ws state-t-Retry | "SumType" ws state-t-SumType | "Timeout" ws state-t-Timeout | "Tool" ws state-t-Tool | "True" ws state-t-True | "Type" ws state-t-Type | "U32Type" ws state-t-U32Type | "U64Type" ws state-t-U64Type | "Use" ws state-t-Use | "With" ws state-t-With | "WorldType" ws state-t-WorldType | "[" ws state-t-lb | "]" ws state-t-rb | "^" ws state-t-car | "_" ws state-t-us | ident ws state-t-ident | number ws state-t-number | string ws state-t-string | "{" ws state-t-lc | "|" ws state-t-pipe | "}" ws state-t-rc | "~" ws state-t-tl
+state-t-ltSTARTgtspident ::= "" | "!" ws state-t-ex | "!!" ws state-t-exex | "!=" ws state-t-exeq | "$" ws state-t-dollar | "&" ws state-t-amp | "(" ws state-t-lp | ")" ws state-t-rp | "*" ws state-t-star | "+" ws state-t-plus | "+=" ws state-t-pluseq | "," ws state-t-comma | "-" ws state-t-minus | "." ws state-t-dot | ".." ws state-t-dotdot | ".?" ws state-t-dotq2 | "/" ws state-t-div | ":" ws state-t-colon | ";" ws state-t-semi | "<" ws state-t-lt | "<=" ws state-t-lteq | "=" ws state-t-eq | ">" ws state-t-gt | ">=" ws state-t-gteq | ">>" ws state-t-gtgt | "?" ws state-t-q2 | "??" ws state-t-q2q2 | "@" ws state-t-at | "By" ws state-t-By | "False" ws state-t-False | "FnType" ws state-t-FnType | "I64Type" ws state-t-I64Type | "ListType" ws state-t-ListType | "MapType" ws state-t-MapType | "Nil" ws state-t-Nil | "OptType" ws state-t-OptType | "ResultType" ws state-t-ResultType | "Retry" ws state-t-Retry | "SumType" ws state-t-SumType | "Timeout" ws state-t-Timeout | "Tool" ws state-t-Tool | "True" ws state-t-True | "Type" ws state-t-Type | "U32Type" ws state-t-U32Type | "U64Type" ws state-t-U64Type | "Use" ws state-t-Use | "With" ws state-t-With | "WorldType" ws state-t-WorldType | "[" ws state-t-lb | "]" ws state-t-rb | "^" ws state-t-car | "_" ws state-t-us | ident ws state-t-ident | number ws state-t-number | string ws state-t-string | "{" ws state-t-lc | "|" ws state-t-pipe | "}" ws state-t-rc | "~" ws state-t-tl
+state-t-ex ::= ""
+state-t-exex ::= ""
+state-t-exeq ::= ""
+state-t-dollar ::= ""
+state-t-amp ::= ""
+state-t-lp ::= ""
+state-t-rp ::= ""
+state-t-star ::= ""
+state-t-plus ::= ""
+state-t-pluseq ::= ""
+state-t-comma ::= ""
+state-t-minus ::= ""
+state-t-dot ::= ""
+state-t-dotdot ::= ""
+state-t-dotq2 ::= ""
+state-t-div ::= ""
+state-t-colon ::= ""
+state-t-semi ::= ""
+state-t-lt ::= ""
+state-t-lteq ::= ""
+state-t-eq ::= ""
+state-t-gt ::= ""
+state-t-gteq ::= ""
+state-t-gtgt ::= ""
+state-t-q2 ::= ""
+state-t-q2q2 ::= ""
+state-t-at ::= ""
+state-t-By ::= ""
+state-t-False ::= ""
+state-t-FnType ::= ""
+state-t-I64Type ::= ""
+state-t-ListType ::= ""
+state-t-MapType ::= ""
+state-t-Nil ::= ""
+state-t-OptType ::= ""
+state-t-ResultType ::= ""
+state-t-Retry ::= ""
+state-t-SumType ::= ""
+state-t-Timeout ::= ""
+state-t-Tool ::= ""
+state-t-True ::= ""
+state-t-Type ::= ""
+state-t-U32Type ::= ""
+state-t-U64Type ::= ""
+state-t-Use ::= ""
+state-t-With ::= ""
+state-t-WorldType ::= ""
+state-t-lb ::= ""
+state-t-rb ::= ""
+state-t-car ::= ""
+state-t-us ::= ""
+state-t-ident ::= ""
+state-t-number ::= ""
+state-t-string ::= ""
+state-t-lc ::= ""
+state-t-pipe ::= ""
+state-t-rc ::= ""
+state-t-tl ::= ""
+ws ::= [ \n\t]*
+ident ::= [a-z] [a-z0-9-]*
+number ::= [0-9]+ ("." [0-9]+)?
+string ::= [^"]*
