@@ -42,13 +42,38 @@ Generation density held (attempt-1 ilo programs are 2–4× Python's token
 count, not 0.33× — the headline density claim describes hand-written
 canonical programs, not model output under a 9.5k unfamiliar-spec load).
 
-**Rerun (same day, filenames fixed):** warm arm engaged the provider prefix
-cache — 46,720 hit-input tokens, ilo $/task $0.0048 → $0.0044 (−8%), cold
-arm still 0 hits at $0.0064. The cache-alignment lever is real and
-measurable; it is the harness's own next fix (spec → system message,
-repair → appended turn), per G4.
+**Alignment matrix (same day, G2/G4 experiment):**
 
-Provenance: `*-warm-from-log.*` files are the first warm arm from the
+| Arm | ilo mean $/task | ilo attempts (Σ) | ilo cache hits (Σ) | Python mean $/task | ilo:Python |
+|---|---|---|---|---|---|
+| legacy warm (spec in user, repair rewrites) | $0.0048 | 6 | 0 | $0.00054 | 8.9× |
+| **aligned warm, full spec (9.5k)** | **$0.00138** | 6 | 47,424 | $0.00034 | **4.1×** |
+| aligned warm, core spec (2.5k) | $0.0039 | 11 | 33,408 | $0.00026 | 15× |
+| legacy cold | $0.0072 | 9 | 0 | $0.00082 | 8.8× |
+| aligned cold, core spec | $0.0025 | 7 | 0 | $0.00034 | 7.4× |
+
+**Reading:**
+1. **Cache alignment alone is a 3.5× cost cut** — spec-in-system +
+   append-only repair keeps the prefix stable, so retries ride the provider
+   cache (9,344 hit-tokens per retry vs 0 before). This is G4 validated.
+2. **Naive spec truncation backfires.** The core-only arm cut input 73% but
+   *tripled* retries (with-dependencies: 3 attempts, 9k gen tokens; the
+   model lacks the builtins the task needs and improvises). Retries cost
+   more than context: $0.0039 vs $0.00138. G2's ≤4k core must be **curated**
+   (language + core + the signatures tasks actually reach for) or paired
+   with reliable on-demand loading — amputation is measurably worse than
+   the 51k disease it treats.
+3. Residual gap to Python at best config: 4.1×, from generation tokens
+   (416–1,524 vs 126–349) plus one extra attempt on one task. Both are
+   G3 (constrained decoding) targets, not context targets.
+4. Persona side agrees: core-spec personas 6.5/13 vs full 8/13, with
+   multi-k-token thrash (k-means: 37k gen tokens) where io/text builtins
+   were missing. Same conclusion.
+
+Files: `bench/closed-loop-2026-09-17-warm-align{,-core}.json/.md`,
+`bench/closed-loop-2026-09-17-cold-align-core.json/.md`,
+`bench/persona-smoke-baseline-dsflash-align-core.json`.
+Raw `*-warm-from-log.*` files are the first warm arm from the
 pre-fix filename bug, kept for provenance.
 
 ## Claims we retract or refuse

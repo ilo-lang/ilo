@@ -186,16 +186,18 @@ Rules:
 - Output ONLY the ilo program, no explanation, no markdown fences.
 """
 
-def make_user_prompt(slug: str, skill_text: str) -> str:
+def make_user_prompt(slug: str, skill_text: str = "") -> str:
     # Derive a human-readable task description from the slug.
     task = slug.replace("-", " ").replace("_", " ")
-    return (
+    prompt = (
         f"Persona: {task}\n\n"
         f"Write a small ilo program that solves a representative task for this "
         f"persona.  The program should exercise the key builtins and patterns "
-        f"described in the skill documentation below.\n\n"
-        f"---SKILL DOCUMENTATION---\n{skill_text}\n---END---\n"
+        f"described in the skill documentation"
     )
+    if skill_text:
+        return prompt + f" below.\n\n---SKILL DOCUMENTATION---\n{skill_text}\n---END---\n"
+    return prompt + "."
 
 
 # ---------------------------------------------------------------------------
@@ -329,14 +331,21 @@ def classify_outcome(code: str, stdout: str, stderr: str, exit_code: int) -> str
 # ---------------------------------------------------------------------------
 
 def run_persona(
-    slug: str, ilo_bin: str, model_cfg: dict, api_key: str
+    slug: str, ilo_bin: str, model_cfg: dict, api_key: str,
+    align: bool = False, context_mode: str = "full",
 ) -> dict[str, Any]:
     modules = modules_for_persona(slug)
+    if context_mode == "core":
+        modules = [m for m in DEFAULT_SKILLS if m in modules] or modules
     skill_text = "\n\n".join(load_skill_text(m, ilo_bin) for m in modules)
 
-    system = SYSTEM_PROMPT
-    user = make_user_prompt(slug, skill_text)
-
+    if align:
+        system = (SYSTEM_PROMPT
+                  + "\n---SKILL DOCUMENTATION---\n" + skill_text + "\n---END---\n")
+        user = make_user_prompt(slug, "")
+    else:
+        system = SYSTEM_PROMPT
+        user = make_user_prompt(slug, skill_text)
     total_gen_tokens = 0
     attempts = 0
     outcome = "failed"
@@ -361,13 +370,17 @@ def run_persona(
         if outcome == "working":
             break
 
-        # Feed back the error for the next attempt
-        user = (
+        # Feed back the error for the next attempt.  Aligned: append-only
+        # (doc lives in the system message, prefix stays cacheable).
+        repair = (
             f"The previous ilo program for persona '{slug}' failed.\n"
             f"Error output:\n{stderr or stdout or '(no output)'}\n\n"
             f"Rewrite the program to fix the error.  Output ONLY the ilo code.\n"
-            f"---SKILL DOCUMENTATION---\n{skill_text}\n---END---\n"
         )
+        if align:
+            user = repair
+        else:
+            user = repair + f"---SKILL DOCUMENTATION---\n{skill_text}\n---END---\n"
 
     return {
         "persona": slug,
@@ -516,6 +529,18 @@ def main() -> int:
         help="Suffix for the baseline file "
              "(persona-smoke-baseline-<tag>.json).",
     )
+    parser.add_argument(
+        "--align",
+        action="store_true",
+        help="Cache-aligned: skill doc in system message, append-only repair.",
+    )
+    parser.add_argument(
+        "--context",
+        choices=["full", "core"],
+        default="full",
+        help="full: per-persona module set.  core: language + core builtins "
+             "only (G2 experiment arm).",
+    )
     args = parser.parse_args()
 
     # Always print module token sizes as part of the CI summary.
@@ -542,11 +567,13 @@ def main() -> int:
 
     slugs = [args.persona] if args.persona else load_persona_list()
 
-    print(f"Running {len(slugs)} persona(s) on {model_cfg['id']}...\n")
+    print(f"Running {len(slugs)} persona(s) on {model_cfg['id']} "
+          f"({args.context}, {'aligned' if args.align else 'inline'})...\n")
     results: list[dict[str, Any]] = []
     for slug in slugs:
         print(f"  -> {slug}")
-        r = run_persona(slug, ilo_bin, model_cfg, api_key)
+        r = run_persona(slug, ilo_bin, model_cfg, api_key,
+                        align=args.align, context_mode=args.context)
         results.append(r)
         print(
             f"     outcome={r['outcome']}  "

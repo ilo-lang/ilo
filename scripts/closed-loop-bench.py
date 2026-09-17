@@ -134,10 +134,18 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
     return fallback
 
 
-def ilo_context(ilo_bin: str) -> str:
-    """Return the core ilo skill documentation (cached)."""
-    mods = ["ilo-language", "ilo-builtins-core", "ilo-builtins-text",
-            "ilo-builtins-math", "ilo-builtins-io"]
+def ilo_context(ilo_bin: str, context_mode: str = "full") -> str:
+    """Return the ilo skill documentation (cached).
+
+    full: the five module set the original benchmark shipped with (~9.5k tok).
+    core: language + core builtins only (~2.5k tok) -- the G2 core-spec
+    experiment arm.
+    """
+    if context_mode == "core":
+        mods = ["ilo-language", "ilo-builtins-core"]
+    else:
+        mods = ["ilo-language", "ilo-builtins-core", "ilo-builtins-text",
+                "ilo-builtins-math", "ilo-builtins-io"]
     return "\n\n".join(load_skill_text(m, ilo_bin) for m in mods)
 
 
@@ -202,7 +210,7 @@ def make_repair_prompt(
 
 def call_llm(
     system: str,
-    user: str,
+    messages: list[dict[str, str]],
     model_cfg: dict,
     api_key: str,
     cache_nonce: str | None = None,
@@ -224,7 +232,7 @@ def call_llm(
             "model": model_cfg["id"],
             "max_tokens": max_tokens,
             "system": system,
-            "messages": [{"role": "user", "content": user}],
+            "messages": messages,
         }).encode()
         req = urllib.request.Request(
             model_cfg["base_url"] + "/v1/messages",
@@ -250,10 +258,7 @@ def call_llm(
     payload = json.dumps({
         "model": model_cfg["id"],
         "max_tokens": max_tokens,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+        "messages": [{"role": "system", "content": system}] + messages,
     }).encode()
     req = urllib.request.Request(
         model_cfg["base_url"] + "/chat/completions",
@@ -344,23 +349,38 @@ def run_task(
     api_key: str,
     retry_cap: int,
     cache_mode: str,          # "warm" | "cold"
+    align: bool,              # cache-aligned: spec in system, append-only repair
+    context_mode: str,        # "full" | "core" ilo skill modules
     ilo_bin: str,
     lang2_bin: str | None,
     lang2_ext: str,
 ) -> dict[str, Any]:
     is_ilo = (lang == "ilo")
 
-    # Build context
+    # Build context.  Aligned mode keeps the spec in the system message and
+    # repairs by appending turns, so the provider prefix cache survives a
+    # retry; unaligned is the legacy shape (spec in user, repair rewrites).
     if is_ilo:
-        context = ilo_context(ilo_bin)
-        system = ILO_SYSTEM
+        context = ilo_context(ilo_bin, context_mode)
         run_fn = lambda code: run_ilo(code, ilo_bin)  # noqa: E731
+        if align:
+            system = (
+                ILO_SYSTEM
+                + "\n---LANGUAGE DOCUMENTATION---\n" + context + "\n---END---\n"
+            )
+            messages = [{"role": "user", "content":
+                         f"Task: {task['description']}\n\n"
+                         f"Expected output: {task['expected_output']}"}]
+        else:
+            system = ILO_SYSTEM
+            messages = [{"role": "user", "content":
+                         make_initial_prompt(task, context, lang)}]
     else:
         context = f"(No formal language documentation available for {lang}.)"
         system = LANG2_SYSTEM.format(lang_name=lang)
         run_fn = lambda code: run_lang2(code, lang2_bin, lang2_ext)  # noqa: E731
-
-    user = make_initial_prompt(task, context, lang)
+        messages = [{"role": "user", "content":
+                     make_initial_prompt(task, context, lang)}]
 
     total_gen_tokens = 0
     total_input_tokens = 0
@@ -376,7 +396,8 @@ def run_task(
         # Cold arm: bust the provider prefix cache on every attempt.
         nonce = os.urandom(8).hex() if cache_mode == "cold" else None
         try:
-            resp = call_llm(system, user, model_cfg, api_key, cache_nonce=nonce)
+            resp = call_llm(system, messages, model_cfg, api_key,
+                            cache_nonce=nonce)
         except Exception as exc:  # noqa: BLE001
             print(f"      [attempt {attempt}] API error: {exc}", file=sys.stderr)
             time.sleep(2)
@@ -404,9 +425,21 @@ def run_task(
         if outcome == "working":
             break
 
-        # Build repair prompt
+        # Build repair turn.  Aligned: append assistant+user (prefix stable).
+        # Legacy: rewrite the user message (prefix broken by design).
         error_detail = (stderr or stdout or "(no output)").strip()[:1000]
-        user = make_repair_prompt(task, context, error_detail, lang)
+        if align:
+            messages = messages + [
+                {"role": "assistant", "content": code},
+                {"role": "user", "content":
+                    f"The previous {lang} program failed.\n"
+                    f"Error / actual output:\n{error_detail}\n\n"
+                    f"Rewrite the program to fix the error. "
+                    f"Output ONLY the {lang} code."},
+            ]
+        else:
+            messages = [{"role": "user", "content":
+                         make_repair_prompt(task, context, error_detail, lang)}]
 
     wall_time = time.monotonic() - wall_start
     attempts_to_success = attempts if outcome == "working" else None
@@ -421,6 +454,8 @@ def run_task(
         "model_id": model_cfg["id"],
         "provider": model_cfg["api"],
         "cache_mode": cache_mode,
+        "align": align,
+        "context": context_mode,
         "generation_tokens": total_gen_tokens,
         "input_tokens": total_input_tokens,
         "input_cache_hit_tokens": total_in_hit,
@@ -555,7 +590,6 @@ def write_markdown(results: list[dict[str, Any]], date_str: str, cache_mode: str
         f"adjust `--retry-cap` once flattening point is visible.",
     ]
 
-    out.write_text("\n".join(lines) + "\n")
     return out
 
 
@@ -577,6 +611,11 @@ def main() -> int:
     parser.add_argument("--python", action="store_true",
                         help="Shorthand for --lang2-name python "
                              "--lang2-bin python3 --lang2-ext .py")
+    parser.add_argument("--align", action="store_true",
+                        help="Cache-aligned harness: spec in system message, "
+                             "append-only repair turns.")
+    parser.add_argument("--context", choices=["full", "core"], default="full",
+                        help="ilo skill module set (core = G2 experiment arm).")
     parser.add_argument("--task", metavar="ID",
                         help="Run only this task ID.")
     parser.add_argument("--lang2-name", default=None,
@@ -684,6 +723,8 @@ def main() -> int:
                     api_key=api_keys[model_key],
                     retry_cap=args.retry_cap,
                     cache_mode=args.cache,
+                    align=args.align,
+                    context_mode=args.context,
                     ilo_bin=args.ilo,
                     lang2_bin=lang2_bin,
                     lang2_ext=args.lang2_ext,
@@ -697,8 +738,10 @@ def main() -> int:
                 )
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    json_path = write_json(results, date_str, args.cache)
-    md_path = write_markdown(results, date_str, args.cache)
+    label = args.cache + ("-align" if args.align else "") \
+        + ("-core" if args.context == "core" else "")
+    json_path = write_json(results, date_str, label)
+    md_path = write_markdown(results, date_str, label)
 
     print(f"\nResults written:")
     print(f"  JSON: {json_path}")

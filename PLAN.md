@@ -261,3 +261,45 @@ Relevance to this plan: routing is the missing lever between G3 (make small
 models able to speak ilo) and the cost metric — a verified ilo decision
 gate (G5.2) plus a router is the "cheap model first, escalate on
 uncertainty" cascade. Logged as an input to Phase 4, not a dependency.
+
+### A.6 Constrained / Jev-style architecture for programming — exploration (G3 input)
+
+Question: could Jev-style constrained architecture work for *programming*,
+and for ilo?
+
+**General verdict — partially.** Grammar-constrained decoding is proven at
+the syntax layer (XGrammar-2 near-zero overhead, OpenAI CFG Structured
+Outputs, GBNF/Outlines; PICARD/Synchromesh for semantic-constrained DSLs) but
+cannot express semantics, variable state, or algorithm choice; and a CFG can
+only pin vocabularies its author enumerated, so open-surface languages
+(Python) are out of reach. Jev-style typed decisions (pick API → pick args →
+pick construct as Choice calls) extend the guarantee to semantic *selection*
+over closed option sets — but 30–60 round-trips per program cost 10–50× the
+latency of one masked pass unless the host batches (Jev's API does; chat
+APIs don't).
+
+**ilo verdict — near-ideal test case.** Closed world: ~150 builtins (arity
+tables already in src/builtins.rs), ~50 fixed tokens, six-entry-point
+recursive-descent parser (src/parser/mod.rs) → roughly 150–400 mask states,
+a days-not-months `ilo constrain` port. And the decisive asymmetry vs Jev:
+**ilo has a free correctness oracle** — the 13k-line verifier replaces
+probability calibration with exact selection (generate k masked samples,
+verify, ship the one that type-checks). Recommended architecture, in spike
+order: (a) grammar-masked generation (Axis-format masks) — kills the
+parse-error retry term; (b) verifier-in-the-loop cascade mask → verify →
+typed fix plan (the durable architecture); (c) Jev-style decomposition only
+for batched coarse decisions, never per-token.
+
+**Risks:** mask-induced entropy collapse in small models (free-form retry is
+their repair mechanism — the spike must be allowed to publish a null);
+hosted-API mask support may not exist for Haiku-class models (fallback:
+verification-fail-fast, already shipped); mask state machine is a second
+parser that rots unless generated from the parser itself or
+conformance-tested (ilo's conformance/ infrastructure covers this); and the
+honest possibility that small-model failures are wrong-algorithm rather than
+wrong-syntax, in which case masks yield a small delta — itself worth
+publishing as constrained-decoding calibration.
+
+Sources: XGrammar-2 (blog.mlc.ai/2026/05/04), ACL 2025 industry GCD reports,
+Pel grammar-as-capability-surface (arXiv:2505.13453), Axis
+src/editor/constrain.rs, Jev launch materials (typesafe.ai).
