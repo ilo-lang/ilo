@@ -65,6 +65,7 @@ pub struct ParseContext {
     pub script_stmt_boundary: bool,
 }
 
+pub mod constrain;
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
@@ -357,6 +358,9 @@ impl Parser {
     fn advance(&mut self) -> Option<&Token> {
         let tok = self.tokens.get(self.pos).map(|(t, _)| t);
         if tok.is_some() {
+            if constrain::enabled() {
+                constrain::record(tok.unwrap());
+            }
             self.pos += 1;
         }
         tok

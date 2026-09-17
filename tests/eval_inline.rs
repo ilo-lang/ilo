@@ -871,17 +871,40 @@ fn ai_flag_exits_success() {
     );
 }
 
+// G2 (2026-09-17): `-ai` serves the curated resident spec (language + core
+// builtins + signature reference, ~4.1k tokens) while `help ai` serves the
+// full compact spec (~48k tokens) as the reference surface. Intentionally
+// different now: the agent-facing surface must not carry the monolith.
+// See PLAN.md G2 and bench/HONEST-NUMBERS.md.
 #[test]
-fn help_ai_and_ai_flag_produce_same_output() {
+fn help_ai_and_ai_flag_are_intentionally_different() {
     let out1 = ilo()
         .args(["help", "ai"])
         .output()
         .expect("failed to run ilo");
     let out2 = ilo().args(["-ai"]).output().expect("failed to run ilo");
-    assert_eq!(
-        out1.stdout, out2.stdout,
-        "help ai and -ai should produce identical output"
+    let help = String::from_utf8_lossy(&out1.stdout);
+    let ai = String::from_utf8_lossy(&out2.stdout);
+    assert_ne!(
+        help, ai,
+        "help ai (full reference) and -ai (curated) must differ"
     );
+    // -ai is the token-cost surface: it has a budget (~6k tokens ≈ 24 KB).
+    assert!(
+        ai.len() < 24_000,
+        "-ai output grew to {} bytes; the curated spec has a budget",
+        ai.len()
+    );
+    // help ai remains the full reference, strictly larger than curated.
+    assert!(
+        help.len() > ai.len() * 2,
+        "help ai ({}) should be much larger than -ai ({})",
+        help.len(),
+        ai.len()
+    );
+    // Both surfaces build from the same curated core: ilo-language module.
+    assert!(ai.contains("name: ilo-language"));
+    assert!(help.contains("INTRO:"));
 }
 
 #[test]

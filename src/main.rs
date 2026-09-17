@@ -3584,6 +3584,15 @@ fn main() {
         std::process::exit(0);
     }
 
+    // `ilo constrain` — empirical token-transition masks (G3 v0). Replays
+    // the example corpus through the real parser and prints the JSON
+    // artifact. See docs/constrain-design.md.
+    if raw_args.get(1).map(|s| s.as_str()) == Some("constrain") {
+        let dir = raw_args.get(2).map(|s| s.as_str()).unwrap_or("./examples");
+        let code = ilo::parser::constrain::constrain_cmd(dir);
+        std::process::exit(code);
+    }
+
     // Friendly usage for `ilo run` / `ilo check` / `ilo build` with no
     // source argument. Without this, clap rejects the missing-positional
     // and we fall through to dispatch_bare_args, which then tries to lex
