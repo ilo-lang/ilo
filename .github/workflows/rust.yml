@@ -34,7 +34,7 @@ jobs:
       run: python3 scripts/test-mcp-server.py
     - name: constrain artifact smoke (G3 v0)
       run: |
-        ILO_CONSTRAIN=1 ./target/release/ilo constrain mcp-tools > /tmp/masks.json
+        ILO_CONSTRAIN=1 ./target/release/ilo constrain examples > /tmp/masks.json
         python3 -c "import json; d=json.load(open('/tmp/masks.json')); assert d['schemaVersion']==1; assert d['transitions']"
   lint:
     runs-on: ubuntu-latest
