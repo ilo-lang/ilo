@@ -481,6 +481,11 @@ def run_task(
         "input_cache_hit_tokens": total_in_hit,
         "input_cache_miss_tokens": total_in_miss,
         "cost_usd": round(cost_usd, 6),
+        "effective_input_tokens": round(
+            total_in_miss
+            + total_in_hit
+            * (model_cfg["pricing"]["in_hit"] / model_cfg["pricing"]["in_miss"]),
+        ),
         "cache_savings_usd": round(
             (total_in_hit * model_cfg["pricing"]["in_miss"]
              - total_in_hit * model_cfg["pricing"]["in_hit"]) / 1e6, 6),
@@ -779,14 +784,15 @@ def main() -> int:
     # Summary table to stdout
     print("\nSummary:")
     print(f"{'task':<22} {'lang':<6} {'model':<8} {'gen_tok':>7} "
-          f"{'in_hit':>7} {'in_miss':>7} {'$':>8} {'att':>5} {'outcome':<8} {'time':>6}")
-    print("-" * 100)
+          f"{'in_hit':>7} {'in_miss':>7} {'eff_in':>8} {'$':>8} {'att':>5} {'outcome':<8} {'time':>6}")
+    print("-" * 110)
     for r in results:
         att = str(r["attempts_to_success"]) if r["attempts_to_success"] else "-"
         print(
             f"{r['task']:<22} {r['language']:<6} {r['model']:<8} "
             f"{r['generation_tokens']:>7} {r['input_cache_hit_tokens']:>7} "
-            f"{r['input_cache_miss_tokens']:>7} {r['cost_usd']:>8.4f} "
+            f"{r['input_cache_miss_tokens']:>7} {r['effective_input_tokens']:>8} "
+            f"{r['cost_usd']:>8.4f} "
             f"{att:>5} {r['final_outcome']:<8} "
             f"{r['wall_time_s']:>5.1f}s"
         )
