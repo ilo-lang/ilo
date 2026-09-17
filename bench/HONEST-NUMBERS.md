@@ -143,7 +143,10 @@ Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
   The LLM comparison itself is **blocked: the DeepSeek key ran out of
   balance (−$0.42) mid-session**; rerun
   `closed-loop-bench.py --lang2-name zero --lang2-bin bench/zero/zero-bench.sh
-  --lang2-ext .0 --lang2-docs <zero language+stdlib skills>` when funded.
+  --lang2-ext .0 --lang2-docs <zero language+stdlib skills>` when funded.  Anthropic OAuth (Claude Max) was tested as the Haiku leg:
+rate-limited at session time (2026-09-17); rerun
+`persona-smoke.py --baseline --model haiku` after the limit clears — note
+a 13×3-attempt run will consume a meaningful share of the weekly cap.
   Zero's own agent docs (language + stdlib skills) are 98,999 bytes
   (~24.7k tokens) — 6× ilo's curated resident spec, which is itself a
   finding about the G2 thesis.

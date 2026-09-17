@@ -23,7 +23,7 @@ cat /tmp/zero-docs-language.md /tmp/zero-docs-stdlib.md > /tmp/zero-docs.md
 
 for arm in warm cold; do
   python3 scripts/closed-loop-bench.py \
-      --model dsflash \
+      --model "$MODEL" \
       --cache $arm \
       --align \
       --context curated \
