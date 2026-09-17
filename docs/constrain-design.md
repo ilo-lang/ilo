@@ -189,3 +189,33 @@ This closes Strategy 1: the observational site recorder (shipped) plus the
 probed context masks (shipped) are the complete ilo-side deliverable. The
 remaining masked-generation work is host-side (a decoding harness that
 consumes either artifact).
+
+
+## Masked-generation experiment — negative result, fully local (2026-09-17)
+
+The G3 acceptance item "persona rerun with masks" was executed **fully
+locally** — no API, no key:
+
+- llama.cpp (built from HEAD, CPU) serving Qwen2.5 0.5B/1.5B Instruct GGUF
+- `constrain/ilo.gbnf` (3,253 rules, 3,253 states) generated from the
+  probed transition table by `scripts/make-gbnf.py`
+- masked generation via llama-server `grammar` field
+
+**Results:** masked output is 100% bigram-valid (every adjacent token pair
+obeys the probed transitions) but **0/3 ilo-check-valid on both 0.5B and
+1.5B**. The mask guarantees *local* pair validity; the models fall into
+degenerate loops (prompt echo, `ident ident ident...`) that are
+locally-legal and globally useless. Unmasked controls fail identically
+with prose instead.
+
+**Conclusion (updates the G3 verdict):** bigram/context masks cannot
+deliver program validity to *stateless chat models* — local pair legality
+is necessary but nowhere near sufficient. The v2 artifact serves two real
+consumers: (1) hosts that already track ilo parse state (LSP-class tools,
+parser-in-the-loop decoders), and (2) analytics/linting. The path to
+masked success on small models is **Phase 4 (fine-tune)** — the model
+must internalize the program grammar, not be masked toward it — or a
+decoder host with true parser-state feedback.
+
+Setup preserved: server start command, GBNF generator
+(`scripts/make-gbnf.py`), samples (`/tmp/gen-masked15b-*.ilo`).
