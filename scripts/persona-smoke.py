@@ -45,7 +45,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import tiktoken
+try:
+    import tiktoken
+except ImportError:  # token report falls back to a chars/4 estimate
+    tiktoken = None
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -141,11 +144,15 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
 # ---------------------------------------------------------------------------
 
 def module_token_report() -> dict[str, int]:
+    if tiktoken is None:
+        report: dict[str, int] = {}
+        for path in sorted(SKILLS_DIR.glob("ilo-*.md")):
+            report[path.stem] = len(path.read_text()) // 4
+        return report
     enc = tiktoken.get_encoding("cl100k_base")
     report: dict[str, int] = {}
     for path in sorted(SKILLS_DIR.glob("ilo-*.md")):
-        tokens = len(enc.encode(path.read_text()))
-        report[path.stem] = tokens
+        report[path.stem] = len(enc.encode(path.read_text()))
     return report
 
 
@@ -192,36 +199,74 @@ def make_user_prompt(slug: str, skill_text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Helper: call Anthropic API (Haiku)
+# Helper: call the configured model (Anthropic or OpenAI-compatible)
 # ---------------------------------------------------------------------------
 
-def call_haiku(system: str, user: str, api_key: str) -> tuple[str, int]:
+MODELS = {
+    "haiku": {
+        "id": "claude-haiku-4-5", "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "key_env": "ANTHROPIC_API_KEY",
+        "max_tokens": 4096,
+    },
+    "dsflash": {
+        # DeepSeek V4.1-Flash: reasoning model, reasoning bills as output.
+        "id": "deepseek-flash", "api": "openai",
+        "base_url": "https://api.deepseek.com",
+        "key_env": "DEEPSEEK_API_KEY",
+        "max_tokens": 16384,
+    },
+}
+
+
+def call_model(system: str, user: str, model_cfg: dict, api_key: str) -> tuple[str, int]:
     """Returns (generated_text, output_tokens).  Raises on API error."""
     import urllib.request
 
-    payload = json.dumps({
-        "model": "claude-haiku-4-5",
-        "max_tokens": 1024,
-        "system": system,
-        "messages": [{"role": "user", "content": user}],
-    }).encode()
+    max_tokens = model_cfg["max_tokens"]
 
+    if model_cfg["api"] == "anthropic":
+        payload = json.dumps({
+            "model": model_cfg["id"],
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }).encode()
+        req = urllib.request.Request(
+            model_cfg["base_url"] + "/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            body = json.loads(resp.read())
+        return _strip_fences(body["content"][0]["text"]), body["usage"]["output_tokens"]
+
+    payload = json.dumps({
+        "model": model_cfg["id"],
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }).encode()
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        model_cfg["base_url"] + "/chat/completions",
         data=payload,
         headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
+            "Authorization": f"Bearer {api_key}",
             "content-type": "application/json",
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         body = json.loads(resp.read())
-
-    text = _strip_fences(body["content"][0]["text"])
-    tokens = body["usage"]["output_tokens"]
-    return text, tokens
+    text = body["choices"][0]["message"].get("content") or ""
+    return _strip_fences(text), body["usage"]["completion_tokens"]
 
 
 def _strip_fences(text: str) -> str:
@@ -284,7 +329,7 @@ def classify_outcome(code: str, stdout: str, stderr: str, exit_code: int) -> str
 # ---------------------------------------------------------------------------
 
 def run_persona(
-    slug: str, ilo_bin: str, api_key: str
+    slug: str, ilo_bin: str, model_cfg: dict, api_key: str
 ) -> dict[str, Any]:
     modules = modules_for_persona(slug)
     skill_text = "\n\n".join(load_skill_text(m, ilo_bin) for m in modules)
@@ -301,7 +346,7 @@ def run_persona(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         attempts = attempt
         try:
-            code, gen_tokens = call_haiku(system, user, api_key)
+            code, gen_tokens = call_model(system, user, model_cfg, api_key)
         except Exception as exc:  # noqa: BLE001
             print(f"    [attempt {attempt}] API error: {exc}", file=sys.stderr)
             time.sleep(2)
@@ -338,14 +383,19 @@ def run_persona(
 # Baseline record / compare
 # ---------------------------------------------------------------------------
 
-def record_baseline(results: list[dict[str, Any]]) -> None:
+def record_baseline(
+    results: list[dict[str, Any]], tag: str | None, model_id: str
+) -> None:
     baseline = {
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "model": model_id,
         "personas": {r["persona"]: r for r in results},
         "module_tokens": module_token_report(),
     }
-    BASELINE_FILE.write_text(json.dumps(baseline, indent=2))
-    print(f"\nBaseline written to {BASELINE_FILE}")
+    out = (REPO_ROOT / "bench" /
+           f"persona-smoke-baseline-{tag}.json") if tag else BASELINE_FILE
+    out.write_text(json.dumps(baseline, indent=2))
+    print(f"\nBaseline written to {out}")
 
 
 def compare_to_baseline(
@@ -454,6 +504,18 @@ def main() -> int:
         metavar="SLUG",
         help="Run a single persona instead of the full smoke set.",
     )
+    parser.add_argument(
+        "--model",
+        choices=list(MODELS.keys()),
+        default="haiku",
+        help="Model backend to run personas against (default: haiku).",
+    )
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="Suffix for the baseline file "
+             "(persona-smoke-baseline-<tag>.json).",
+    )
     args = parser.parse_args()
 
     # Always print module token sizes as part of the CI summary.
@@ -462,9 +524,11 @@ def main() -> int:
     if args.token_report:
         return 0
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    model_cfg = MODELS[args.model]
+    api_key = os.environ.get(model_cfg["key_env"], "")
     if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
+        print(f"ERROR: {model_cfg['key_env']} not set "
+              f"(needed for model '{args.model}')", file=sys.stderr)
         return 2
 
     # Verify ilo binary
@@ -478,11 +542,11 @@ def main() -> int:
 
     slugs = [args.persona] if args.persona else load_persona_list()
 
-    print(f"Running {len(slugs)} persona(s) on Haiku...\n")
+    print(f"Running {len(slugs)} persona(s) on {model_cfg['id']}...\n")
     results: list[dict[str, Any]] = []
     for slug in slugs:
         print(f"  -> {slug}")
-        r = run_persona(slug, ilo_bin, api_key)
+        r = run_persona(slug, ilo_bin, model_cfg, api_key)
         results.append(r)
         print(
             f"     outcome={r['outcome']}  "
@@ -491,19 +555,23 @@ def main() -> int:
         )
 
     if args.baseline:
-        record_baseline(results)
+        record_baseline(results, args.tag, model_cfg["id"])
         return 0
 
+    baseline_file = (REPO_ROOT / "bench" /
+                     f"persona-smoke-baseline-{args.tag}.json") if args.tag \
+        else BASELINE_FILE
+
     # Comparison mode
-    if not BASELINE_FILE.exists():
+    if not baseline_file.exists():
         print(
-            f"\nNo baseline found at {BASELINE_FILE}.\n"
-            "Run with --baseline to record one first.",
+            f"\nNo baseline found at {baseline_file}.\n"
+            "Run with --baseline (and --tag if needed) to record one first.",
             file=sys.stderr,
         )
         return 2
 
-    baseline_data = json.loads(BASELINE_FILE.read_text())
+    baseline_data = json.loads(baseline_file.read_text())
 
     print("\nRegression comparison:")
     passed, failures = compare_to_baseline(results, baseline_data)

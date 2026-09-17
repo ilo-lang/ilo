@@ -1,0 +1,169 @@
+{
+  "generated": "2026-09-17T07:23:53Z",
+  "model": "deepseek-flash",
+  "personas": {
+    "schedule-arithmetic": {
+      "persona": "schedule-arithmetic",
+      "outcome": "working",
+      "generation_tokens": 1070,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-text"
+      ]
+    },
+    "event-chronology": {
+      "persona": "event-chronology",
+      "outcome": "working",
+      "generation_tokens": 5988,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-text",
+        "ilo-builtins-io"
+      ]
+    },
+    "linear-regression": {
+      "persona": "linear-regression",
+      "outcome": "working",
+      "generation_tokens": 1959,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-math",
+        "ilo-builtins-io"
+      ]
+    },
+    "k-means": {
+      "persona": "k-means",
+      "outcome": "working",
+      "generation_tokens": 9304,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-math"
+      ]
+    },
+    "api-poller": {
+      "persona": "api-poller",
+      "outcome": "working",
+      "generation_tokens": 5788,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-io"
+      ]
+    },
+    "batch-http-fetch": {
+      "persona": "batch-http-fetch",
+      "outcome": "failed",
+      "generation_tokens": 12663,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-io"
+      ]
+    },
+    "csv-pipeline": {
+      "persona": "csv-pipeline",
+      "outcome": "failed",
+      "generation_tokens": 10836,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-io",
+        "ilo-builtins-text"
+      ]
+    },
+    "log-scanner": {
+      "persona": "log-scanner",
+      "outcome": "working",
+      "generation_tokens": 2645,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-io",
+        "ilo-builtins-text"
+      ]
+    },
+    "config-shaper": {
+      "persona": "config-shaper",
+      "outcome": "failed",
+      "generation_tokens": 5636,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-language-records",
+        "ilo-builtins-io"
+      ]
+    },
+    "record-transform": {
+      "persona": "record-transform",
+      "outcome": "working",
+      "generation_tokens": 3915,
+      "attempts": 2,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-language-records"
+      ]
+    },
+    "cron-explainer": {
+      "persona": "cron-explainer",
+      "outcome": "working",
+      "generation_tokens": 3468,
+      "attempts": 1,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-text"
+      ]
+    },
+    "text-mining": {
+      "persona": "text-mining",
+      "outcome": "working",
+      "generation_tokens": 11474,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-builtins-text"
+      ]
+    },
+    "doc-discovery": {
+      "persona": "doc-discovery",
+      "outcome": "failed",
+      "generation_tokens": 11888,
+      "attempts": 3,
+      "tool_use_count": 0,
+      "modules_loaded": [
+        "ilo-language",
+        "ilo-tools",
+        "ilo-agent"
+      ]
+    }
+  },
+  "module_tokens": {
+    "ilo-agent": 1392,
+    "ilo-builtins-core": 836,
+    "ilo-builtins-io": 2056,
+    "ilo-builtins-math": 1121,
+    "ilo-builtins-text": 1380,
+    "ilo-edit-loop": 513,
+    "ilo-engines": 396,
+    "ilo-errors": 806,
+    "ilo-examples": 449,
+    "ilo-language-records": 173,
+    "ilo-language": 1645,
+    "ilo-tools": 482
+  }
+}

@@ -74,8 +74,30 @@ ILO_TIMEOUT = 20  # seconds per ilo run
 LANG2_TIMEOUT = 20  # seconds per secondary language run
 
 MODELS = {
-    "haiku": "claude-haiku-4-5",
-    "sonnet": "claude-sonnet-4-5",
+    "haiku": {
+        "id": "claude-haiku-4-5", "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "key_env": "ANTHROPIC_API_KEY",
+        "max_tokens": 4096,
+        # $/M tokens (list price): cache-miss input / cache-hit input / output
+        "pricing": {"in_miss": 1.0, "in_hit": 0.1, "out": 5.0},
+    },
+    "sonnet": {
+        "id": "claude-sonnet-4-5", "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "key_env": "ANTHROPIC_API_KEY",
+        "max_tokens": 4096,
+        "pricing": {"in_miss": 3.0, "in_hit": 0.3, "out": 15.0},
+    },
+    "dsflash": {
+        # DeepSeek V4.1-Flash.  Peak $/M; off-peak halves.  Reasoning tokens
+        # bill as output and count against max_tokens.
+        "id": "deepseek-flash", "api": "openai",
+        "base_url": "https://api.deepseek.com",
+        "key_env": "DEEPSEEK_API_KEY",
+        "max_tokens": 16384,
+        "pricing": {"in_miss": 0.3, "in_hit": 0.006, "out": 1.2},
+    },
 }
 
 # Outcome ranks for partial ordering
@@ -181,39 +203,87 @@ def make_repair_prompt(
 def call_llm(
     system: str,
     user: str,
-    model_id: str,
+    model_cfg: dict,
     api_key: str,
-) -> tuple[str, int, int]:
-    """Returns (text, output_tokens, input_tokens).  Raises on error."""
+    cache_nonce: str | None = None,
+) -> dict:
+    """Call the model; returns token accounting.
+
+    Keys: text, out_tokens, in_hit, in_miss (input tokens split by cache
+    status).  ``cache_nonce`` prepends a one-off marker to the system prompt
+    to defeat provider prefix caching -- that is the cold arm.
+    """
     import urllib.request
 
-    payload = json.dumps({
-        "model": model_id,
-        "max_tokens": 1024,
-        "system": system,
-        "messages": [{"role": "user", "content": user}],
-    }).encode()
+    if cache_nonce:
+        system = f"<cache-bust:{cache_nonce}>\n" + system
+    max_tokens = model_cfg["max_tokens"]
 
+    if model_cfg["api"] == "anthropic":
+        payload = json.dumps({
+            "model": model_cfg["id"],
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }).encode()
+        req = urllib.request.Request(
+            model_cfg["base_url"] + "/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            body = json.loads(resp.read())
+        usage = body.get("usage", {})
+        return {
+            "text": body["content"][0]["text"],
+            "out_tokens": usage.get("output_tokens", 0) or 0,
+            "in_hit": usage.get("cache_read_input_tokens", 0) or 0,
+            "in_miss": usage.get("input_tokens", 0) or 0,
+        }
+
+    # OpenAI-compatible (DeepSeek, OpenRouter, ...)
+    payload = json.dumps({
+        "model": model_cfg["id"],
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }).encode()
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        model_cfg["base_url"] + "/chat/completions",
         data=payload,
         headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
+            "Authorization": f"Bearer {api_key}",
             "content-type": "application/json",
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         body = json.loads(resp.read())
+    msg = body["choices"][0]["message"]
+    usage = body.get("usage", {})
+    in_hit = usage.get("prompt_cache_hit_tokens", 0) or 0
+    in_total = usage.get("prompt_tokens", 0) or 0
+    return {
+        # Reasoning models may return content=None when only thinking fired.
+        "text": msg.get("content") or "",
+        "out_tokens": usage.get("completion_tokens", 0) or 0,
+        "in_hit": in_hit,
+        "in_miss": in_total - in_hit,
+    }
 
-    text = body["content"][0]["text"]
-    output_tokens = body["usage"]["output_tokens"]
-    input_tokens = body["usage"]["input_tokens"]
-    return text, output_tokens, input_tokens
 
+def estimate_cost(model_cfg: dict, out_tokens: int, in_hit: int, in_miss: int) -> float:
+    """USD for a bundle of token counts, from the model's $/M pricing table."""
+    p = model_cfg["pricing"]
+    return (out_tokens * p["out"] + in_hit * p["in_hit"] + in_miss * p["in_miss"]) / 1e6
 
-# ---------------------------------------------------------------------------
 # Run helpers
 # ---------------------------------------------------------------------------
 
@@ -269,15 +339,15 @@ def classify_outcome(expected: str, stdout: str, stderr: str, rc: int) -> str:
 def run_task(
     task: dict[str, Any],
     lang: str,                # "ilo" or lang2_name
-    model_key: str,           # "haiku" | "sonnet"
-    model_id: str,
+    model_key: str,           # key into MODELS
+    model_cfg: dict,
     api_key: str,
     retry_cap: int,
+    cache_mode: str,          # "warm" | "cold"
     ilo_bin: str,
     lang2_bin: str | None,
     lang2_ext: str,
 ) -> dict[str, Any]:
-    model_id_used = model_id
     is_ilo = (lang == "ilo")
 
     # Build context
@@ -294,6 +364,8 @@ def run_task(
 
     total_gen_tokens = 0
     total_input_tokens = 0
+    total_in_hit = 0
+    total_in_miss = 0
     repair_tokens_by_turn: list[int] = []
     attempts = 0
     outcome = "failed"
@@ -301,18 +373,22 @@ def run_task(
 
     for attempt in range(1, retry_cap + 1):
         attempts = attempt
+        # Cold arm: bust the provider prefix cache on every attempt.
+        nonce = os.urandom(8).hex() if cache_mode == "cold" else None
         try:
-            code, gen_tok, inp_tok = call_llm(system, user, model_id, api_key)
+            resp = call_llm(system, user, model_cfg, api_key, cache_nonce=nonce)
         except Exception as exc:  # noqa: BLE001
             print(f"      [attempt {attempt}] API error: {exc}", file=sys.stderr)
             time.sleep(2)
             continue
 
+        code = resp["text"]
+        gen_tok = resp["out_tokens"]
         total_gen_tokens += gen_tok
-        total_input_tokens += inp_tok
-        if attempt == 1:
-            pass  # first attempt is not a repair
-        else:
+        total_in_hit += resp["in_hit"]
+        total_in_miss += resp["in_miss"]
+        total_input_tokens += resp["in_hit"] + resp["in_miss"]
+        if attempt > 1:
             repair_tokens_by_turn.append(gen_tok)
 
         stdout, stderr, rc = run_fn(code)
@@ -320,7 +396,8 @@ def run_task(
 
         print(
             f"      attempt={attempt} outcome={outcome} "
-            f"gen_tok={gen_tok} rc={rc}",
+            f"gen_tok={gen_tok} in_hit={resp['in_hit']} "
+            f"in_miss={resp['in_miss']} rc={rc}",
             file=sys.stderr,
         )
 
@@ -333,14 +410,22 @@ def run_task(
 
     wall_time = time.monotonic() - wall_start
     attempts_to_success = attempts if outcome == "working" else None
+    cost_usd = estimate_cost(
+        model_cfg, total_gen_tokens, total_in_hit, total_in_miss
+    )
 
     return {
         "task": task["id"],
         "language": lang,
         "model": model_key,
-        "model_id": model_id_used,
+        "model_id": model_cfg["id"],
+        "provider": model_cfg["api"],
+        "cache_mode": cache_mode,
         "generation_tokens": total_gen_tokens,
         "input_tokens": total_input_tokens,
+        "input_cache_hit_tokens": total_in_hit,
+        "input_cache_miss_tokens": total_in_miss,
+        "cost_usd": round(cost_usd, 6),
         "repair_tokens_by_turn": repair_tokens_by_turn,
         "attempts_to_success": attempts_to_success,
         "attempts_total": attempts,
@@ -354,20 +439,21 @@ def run_task(
 # Output helpers
 # ---------------------------------------------------------------------------
 
-def write_json(results: list[dict[str, Any]], date_str: str) -> Path:
-    out = BENCH_DIR / f"closed-loop-{date_str}.json"
+def write_json(results: list[dict[str, Any]], date_str: str, cache_mode: str) -> Path:
+    out = BENCH_DIR / f"closed-loop-{date_str}-{cache_mode}.json"
     payload = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "harness": "closed-loop-bench.py",
         "ticket": "ILO-364",
+        "cache_mode": cache_mode,
         "results": results,
     }
     out.write_text(json.dumps(payload, indent=2))
     return out
 
 
-def write_markdown(results: list[dict[str, Any]], date_str: str) -> Path:
-    out = BENCH_DIR / f"closed-loop-{date_str}.md"
+def write_markdown(results: list[dict[str, Any]], date_str: str, cache_mode: str) -> Path:
+    out = BENCH_DIR / f"closed-loop-{date_str}-{cache_mode}.md"
 
     # Index results: (task, lang, model) -> record
     idx: dict[tuple[str, str, str], dict] = {}
@@ -483,8 +569,14 @@ def main() -> int:
                         help="Path to ilo binary.")
     parser.add_argument("--retry-cap", type=int, default=DEFAULT_RETRY_CAP,
                         help="Max repair attempts per task (default 5).")
-    parser.add_argument("--model", choices=["haiku", "sonnet", "both"],
+    parser.add_argument("--model", choices=list(MODELS.keys()) + ["both"],
                         default="both", help="Model(s) to run.")
+    parser.add_argument("--cache", choices=["warm", "cold"], default="warm",
+                        help="warm: stable prefixes (provider cache hits). "
+                             "cold: cache-busting nonce per attempt.")
+    parser.add_argument("--python", action="store_true",
+                        help="Shorthand for --lang2-name python "
+                             "--lang2-bin python3 --lang2-ext .py")
     parser.add_argument("--task", metavar="ID",
                         help="Run only this task ID.")
     parser.add_argument("--lang2-name", default=None,
@@ -503,6 +595,11 @@ def main() -> int:
     if args.output_dir:
         BENCH_DIR = Path(args.output_dir)
 
+
+    if args.python:
+        args.lang2_name = args.lang2_name or "python"
+        args.lang2_bin = args.lang2_bin or "python3"
+        args.lang2_ext = ".py"
     # Load tasks
     tasks_data = json.loads(TASKS_FILE.read_text())
     all_tasks = tasks_data["tasks"]
@@ -539,16 +636,20 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
-        return 2
-
-    # Determine models to run
+    # Determine models to run, then resolve each model's API key.
     if args.model == "both":
         model_keys = list(MODELS.keys())
     else:
         model_keys = [args.model]
+    api_keys: dict[str, str] = {}
+    for mk in model_keys:
+        env_name = MODELS[mk]["key_env"]
+        key = os.environ.get(env_name, "")
+        if not key:
+            print(f"ERROR: {env_name} not set (needed for model '{mk}')",
+                  file=sys.stderr)
+            return 2
+        api_keys[mk] = key
 
     # Determine languages
     languages = ["ilo"]
@@ -558,8 +659,8 @@ def main() -> int:
     total_runs = len(all_tasks) * len(languages) * len(model_keys)
     print(
         f"Closed-loop bench: {len(all_tasks)} tasks × "
-        f"{len(languages)} languages × {len(model_keys)} models = "
-        f"{total_runs} runs  (retry_cap={args.retry_cap})"
+        f"{len(languages)} languages × {len(model_keys)} models × "
+        f"{args.cache}-cache = {total_runs} runs  (retry_cap={args.retry_cap})"
     )
 
     results: list[dict[str, Any]] = []
@@ -569,19 +670,20 @@ def main() -> int:
         for lang in languages:
             for model_key in model_keys:
                 run_num += 1
-                model_id = MODELS[model_key]
+                model_cfg = MODELS[model_key]
                 print(
                     f"\n[{run_num}/{total_runs}] task={task['id']} "
-                    f"lang={lang} model={model_key}",
+                    f"lang={lang} model={model_key} cache={args.cache}",
                     file=sys.stderr,
                 )
                 r = run_task(
                     task=task,
                     lang=lang,
                     model_key=model_key,
-                    model_id=model_id,
-                    api_key=api_key,
+                    model_cfg=model_cfg,
+                    api_key=api_keys[model_key],
                     retry_cap=args.retry_cap,
+                    cache_mode=args.cache,
                     ilo_bin=args.ilo,
                     lang2_bin=lang2_bin,
                     lang2_ext=args.lang2_ext,
@@ -590,12 +692,13 @@ def main() -> int:
                 print(
                     f"  -> outcome={r['final_outcome']} "
                     f"gen_tokens={r['generation_tokens']} "
+                    f"cost=${r['cost_usd']:.4f} "
                     f"wall={r['wall_time_s']}s"
                 )
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    json_path = write_json(results, date_str)
-    md_path = write_markdown(results, date_str)
+    json_path = write_json(results, date_str, args.cache)
+    md_path = write_markdown(results, date_str, args.cache)
 
     print(f"\nResults written:")
     print(f"  JSON: {json_path}")
@@ -603,13 +706,16 @@ def main() -> int:
 
     # Summary table to stdout
     print("\nSummary:")
-    print(f"{'task':<22} {'lang':<6} {'model':<6} {'gen_tok':>7} {'attempts':>8} {'outcome':<8} {'time':>6}")
-    print("-" * 75)
+    print(f"{'task':<22} {'lang':<6} {'model':<8} {'gen_tok':>7} "
+          f"{'in_hit':>7} {'in_miss':>7} {'$':>8} {'att':>5} {'outcome':<8} {'time':>6}")
+    print("-" * 100)
     for r in results:
         att = str(r["attempts_to_success"]) if r["attempts_to_success"] else "-"
         print(
-            f"{r['task']:<22} {r['language']:<6} {r['model']:<6} "
-            f"{r['generation_tokens']:>7} {att:>8} {r['final_outcome']:<8} "
+            f"{r['task']:<22} {r['language']:<6} {r['model']:<8} "
+            f"{r['generation_tokens']:>7} {r['input_cache_hit_tokens']:>7} "
+            f"{r['input_cache_miss_tokens']:>7} {r['cost_usd']:>8.4f} "
+            f"{att:>5} {r['final_outcome']:<8} "
             f"{r['wall_time_s']:>5.1f}s"
         )
 
