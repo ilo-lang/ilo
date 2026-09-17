@@ -83,8 +83,12 @@ Acceptance:
 - CI budget with eviction: no spec growth without a linked persona-transcript artifact (the existing ≥3-transcripts / >40-token criterion, now mechanical); deletions counted as wins.
 - `ai.txt` either regenerated from the core or retired — two "real specs" is how drift happened.
 
-### G3 — Constrained decoding for small models (P0)
+### G3 — Constrained decoding for small models (P0) — **v0+v1 artifact shipped 2026-09-17**
 
+`ilo constrain` shipped: empirical bigram (schemaVersion 1) and probed
+context masks (`--probe`, schemaVersion 2: 405 contexts, 19k+ edges, 5
+published oracle anomalies / 873,480 probes — all prefix-binop chain
+states, tolerance-invariant). CI smoke replays the full examples corpus.
 The August baseline says the retry term dominates cold cost. ilo's closed, LL(1)-ish grammar is *more* maskable than Axis's, which already ships `--constrain`/`--logit-masks`. This makes invalid ilo unemittable at decode time — the retry term attacked preventively instead of correctively.
 
 Acceptance:

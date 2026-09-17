@@ -3589,7 +3589,10 @@ fn main() {
     // artifact. See docs/constrain-design.md.
     if raw_args.get(1).map(|s| s.as_str()) == Some("constrain") {
         let dir = raw_args.get(2).map(|s| s.as_str()).unwrap_or("./examples");
-        let code = ilo::parser::constrain::constrain_cmd(dir);
+        let probe = raw_args
+            .iter()
+            .any(|a| a.as_str() == "--probe");
+        let code = ilo::parser::constrain::constrain_cmd(dir, probe);
         std::process::exit(code);
     }
 

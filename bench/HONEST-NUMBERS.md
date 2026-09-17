@@ -111,6 +111,16 @@ the generator; ilo's advantages are zero authoring, verifier-exact types,
 and structural immunity to tool-count bloat (the jCodeMunch failure mode:
 27.5k resident tokens came from 91 tools, not verbose descriptions).
 
+**Constrain artifact v1 (2026-09-17, G3):** `ilo constrain examples
+--probe` — 370 files, 30,120 prefixes, 873,480 parser calls (~3 min), 405
+two-token contexts, 19k+ probed allowed-edges. Oracle self-check: **5
+anomalies in 873,480 probes (0.0006%)**, all prefix-binop chain states
+where parser recovery re-anchors diagnostics at statement boundaries
+(tolerance-invariant; tolerance 2 and 3 both tested). Artifact publishes
+the anomaly list; hosts should soft-mask chain contexts. Full limits and
+host guidance: `docs/constrain-design.md`,
+`bench/constrain-masks-probed.json`.
+
 Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 
 ## Claims we retract or refuse

@@ -97,12 +97,41 @@ as the artifact of record.
   artifact marks them as class-tokens (`"class:string"`), and the host's
   own tokenizer handles the interior. This is exactly how XGrammar handles
   JSON strings.
-
 ## Implementation checklist
 
-- [ ] Recorder type in `src/parser/` + state ids at decision sites
-- [ ] `ilo constrain > masks.json` CLI subcommand (json-first per manifesto P6)
-- [ ] Conformance replay test over `examples/`
-- [ ] Negative-test generator
-- [ ] `schemaVersion` field (manifesto P6)
+- [x] Recorder type in `src/parser/` + state ids at decision sites
+      — v0: `src/parser/constrain.rs`, empirical transition recorder gated
+      on `ILO_CONSTRAIN=1`, hooked in `Parser::advance`
+- [x] `ilo constrain > masks.json` CLI subcommand (json-first per manifesto P6)
+      — `ilo constrain <dir>` (bigram, schemaVersion 1) and
+      `ilo constrain <dir> --probe` (probed context masks, schemaVersion 2)
+- [x] Conformance replay test over `examples/`
+      — CI `mcp-e2e` job: constrain smoke over `examples/` (370 files),
+      plus `--probe` self-check (oracle anomalies must be published)
+- [x] Negative-test generator
+      — the probe IS the negative generator: every non-allowed candidate at
+      every corpus prefix was verified rejected by the parser
 - [ ] Persona rerun with a masked host; publish delta vs baselines
+
+## v1 probed-context results (2026-09-17)
+
+`ilo constrain examples --probe`: 370 files, 30,120 prefixes, 873,480
+parser calls (~3 min), **405 contexts / 19k+ probed edges**. The oracle
+self-check (every corpus continuation must appear in its own probed
+allowed set) surfaced **5 anomalies in 873,480 probes (0.0006%)**, all in
+prefix-binop chain states (`* * * ...`, `; !`) where the parser's
+error-recovery re-anchors the "missing operand" diagnostic at a statement
+boundary deeper than any fixed tolerance. Tolerance 2 and 3 were tested;
+the 5 anomalies are tolerance-invariant.
+
+**Host guidance:** treat the artifact as advisory in operator-chain
+contexts (soft-mask: allow with penalty), hard-mask elsewhere. The
+anomalies are published in the artifact (`oracleAnomalies`) — the day they
+disappear without explanation is the day to re-audit.
+
+**Why probing instead of a hand-written grammar:** the oracle reuses the
+real parser, so the mask inherits every grammar change by construction and
+can never drift from it. The instrumented per-site recorder (Strategy 1)
+remains the end-state for host APIs that want true parse states rather
+than context keys.
+
