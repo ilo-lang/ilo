@@ -89,6 +89,13 @@ MODELS = {
         "max_tokens": 4096,
         "pricing": {"in_miss": 3.0, "in_hit": 0.3, "out": 15.0},
     },
+    "qwen-1.5b": {
+        "id": "Qwen2.5-1.5B-Instruct", "api": "openai",
+        "base_url": "http://127.0.0.1:8399/v1",
+        "key_env": "",  # local model, no key
+        "max_tokens": 1024,
+        "pricing": {"in_miss": 0.0, "in_hit": 0.0, "out": 0.0},
+    },
     "dsflash": {
         # DeepSeek V4.1-Flash.  Peak $/M; off-peak halves.  Reasoning tokens
         # bill as output and count against max_tokens.
@@ -482,9 +489,10 @@ def run_task(
         "input_cache_miss_tokens": total_in_miss,
         "cost_usd": round(cost_usd, 6),
         "effective_input_tokens": round(
-            total_in_miss
-            + total_in_hit
-            * (model_cfg["pricing"]["in_hit"] / model_cfg["pricing"]["in_miss"]),
+            total_in_miss + total_in_hit * (
+                (model_cfg["pricing"]["in_hit"] / model_cfg["pricing"]["in_miss"])
+                if model_cfg["pricing"]["in_miss"] > 0 else 0.0
+            ),
         ),
         "cache_savings_usd": round(
             (total_in_hit * model_cfg["pricing"]["in_miss"]
@@ -716,6 +724,9 @@ def main() -> int:
     api_keys: dict[str, str] = {}
     for mk in model_keys:
         env_name = MODELS[mk]["key_env"]
+        if not env_name:
+            api_keys[mk] = ""
+            continue
         key = os.environ.get(env_name, "")
         if not key:
             print(f"ERROR: {env_name} not set (needed for model '{mk}')",
