@@ -85,17 +85,23 @@ curated task set (language + core + sig): **4,095 tokens**, CI-enforced.
 | Resident context tokens | 9,545 | 2,905 | **4,095** |
 
 **Reading:** the curated 4.1k set *beats the 9.5k full spec on persona
-success* (10 vs 8 of 13) while cutting resident context 57%. Bench $/task
-spans $0.0015–0.0023 across two runs (3.9–6.4× Python) — run-to-run
-variance is dominated by one task (`workflow-rollback`, whose single
-attempts ranged 677→5,994 generation tokens); per-cell n>1 is required
-before quoting ratios publicly. The naive-core control remains the
-cautionary tale: it is not the size, it is the selection.
+success* (10 vs 8 of 13) while cutting resident context 57%.
 
-Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
+**Variance (n=15 ilo runs / 15 python runs, 3 repeats × 5 tasks, warm
+aligned curated):** ilo mean **$0.0029** (sd $0.0044), median **$0.0013**;
+Python mean $0.0004 (sd $0.0002). Mean ratio 7.4×, **median ratio 3.8×**.
+First-attempt success 9/15. The mean is tail-driven: two of fifteen runs
+landed at $0.013–0.014 (retry thrash on multi-clause tasks); the typical
+task sits at 3.8× Python with 60% first-attempt success. The tail is the
+G3 target, not the typical case — and quoting the mean alone would
+overstate the gap by 2×.
+
+Files: `bench/variance/r{1,2,3}/` (full JSON per repeat),
+`bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 `bench/persona-smoke-baseline-dsflash-align-curated.json`.
 Raw `*-warm-from-log.*` files are the first warm arm from the
 pre-fix filename bug, kept for provenance.
+
 
 
 ## Claims we retract or refuse
