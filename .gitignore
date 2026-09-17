@@ -32,6 +32,10 @@ rust_out
 docs/
 # Tracked documentation files are explicitly exempted below:
 !docs/deploying.md
+!docs/cadence/
+!docs/response-to-agentlanguages-critique.md
+!docs/constrain-design.md
+!docs/reference/
 !docs/streaming.md
 
 # E2E test artefacts (subagent-produced logs; not tracked)
