@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TRAIN = ROOT / "bench/finetune/train.jsonl"
 OUT = ROOT / "bench/finetune/adapter"
 BASE = "Qwen/Qwen2.5-0.5B-Instruct"
-MAX_LEN = 8192
+MAX_LEN = 4096
 SPEC_TAG = "<<ILO_SPEC_INTERNALIZED>>"
 
 
@@ -101,6 +101,7 @@ def main() -> int:
         save_total_limit=1,
         report_to=[],
         use_cpu=True,
+        gradient_checkpointing=True,
         dataloader_num_workers=0,
         remove_unused_columns=False,
     )
