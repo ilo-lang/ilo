@@ -32,6 +32,8 @@ jobs:
       run: cargo build --release
     - name: MCP server end-to-end (G5.1)
       run: python3 scripts/test-mcp-server.py
+    - name: MCP HTTP transport e2e
+      run: python3 scripts/test-mcp-http.py
     - name: constrain artifact smoke (G3 v0)
       run: |
         ILO_CONSTRAIN=1 ./target/release/ilo constrain examples > /tmp/masks.json

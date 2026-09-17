@@ -5,7 +5,14 @@ PLAN.md G5.1. The selling point being measured: the tool schema is
 *generated from the ilo AST* (`ilo --ast`), so the resident schema cost is
 the typed signature, not hand-written JSON Schema boilerplate.
 
-Protocol: MCP stdio (JSON-RPC 2.0) — initialize / tools/list / tools/call.
+Transports:
+  stdio (default)           JSON-RPC 2.0 over stdin/stdout
+  --http --port 8391        MCP streamable-HTTP: POST /mcp, JSON responses,
+                            Mcp-Session-Id header on initialize
+
+Protocol: initialize / tools/list / tools/call / ping; notifications
+(including `initialized`) are accepted and produce no response.
+
 Discovery: every `*.ilo` file in --dir; every public Function declaration
 becomes one tool (named `demo:tri` style: file stem + function name).
 
@@ -13,19 +20,15 @@ Type mapping (ilo → JSON Schema):
   Number → number, Text → string, Bool → boolean
   {List: T} → {"type":"array","items":schema(T)}
   {Map: [K,V]} → {"type":"object","additionalProperties":schema(V)}
-  {Optional: T} → schema(T) (JSON Schema 2020-12 prefixItems-style union
-                  is avoided; tools receive absent → skipped)
-  {Result: OK, _} → schema(OK)  (tool calls return runtime errors as
-                  isError content, not as typed Err payloads)
+  {Optional: T} → schema(T) marked nullable
+  {Result: OK, _} → schema(OK)  (runtime errors surface as isError)
   {Fn: _, _} → tool is SKIPPED (function params can't cross JSON)
   anything else → {} (any)
 
-Argument names are matched hyphen/score-insensitively (MCP convention is
-snake_case; ilo identifiers are hyphenated).
-
 Usage:
   python3 scripts/ilo-mcp-server.py --dir mcp-tools --ilo ./target/release/ilo
-  python3 scripts/ilo-mcp-server.py --dir mcp-tools --stats   # schema cost only
+  python3 scripts/ilo-mcp-server.py --dir mcp-tools --http --port 8391
+  python3 scripts/ilo-mcp-server.py --dir mcp-tools --stats  # schema cost
 """
 
 from __future__ import annotations
@@ -73,8 +76,7 @@ def schema(ty, depth: int = 0):
             return {"type": "object",
                     "additionalProperties": schema(kv[1] if len(kv) > 1 else {}, depth + 1)}
         if "Optional" in ty:
-            inner = schema(ty["Optional"], depth + 1)
-            return inner | {"nullable": True}
+            return schema(ty["Optional"], depth + 1) | {"nullable": True}
         if "Result" in ty:
             ok = ty["Result"]
             return schema(ok[0] if isinstance(ok, list) and ok else ok, depth + 1)
@@ -108,7 +110,6 @@ def discover(dir_path: Path, ilo_bin: str) -> list[Tool]:
             print(f"ilo-mcp: skipping {file} (ast not json)", file=sys.stderr)
             continue
 
-        # Description: the leading `--` comment block's first meaningful line.
         description = ""
         for line in source.splitlines():
             if line.startswith("--"):
@@ -134,9 +135,7 @@ def discover(dir_path: Path, ilo_bin: str) -> list[Tool]:
                     skip = True
                     break
                 fragment = schema(ty)
-                if isinstance(ty, dict) and "Optional" in ty:
-                    pass  # nullable already marked; not required
-                else:
+                if not (isinstance(ty, dict) and "Optional" in ty):
                     required.append(norm(p["name"]))
                 props[norm(p["name"])] = fragment | {
                     "description": f"ilo param `{p['name']}`"}
@@ -145,27 +144,27 @@ def discover(dir_path: Path, ilo_bin: str) -> list[Tool]:
             input_schema = {"type": "object", "properties": props,
                             "required": required,
                             "additionalProperties": False}
-            schema_bytes = len(json.dumps(input_schema))
             tools.append(Tool(file, fn["name"], description or fn["name"],
-                              fn.get("params", []), input_schema, schema_bytes))
+                              fn.get("params", []), input_schema,
+                              len(json.dumps(input_schema))))
     return tools
 
 
 def call_tool(tool: Tool, ilo_bin: str, arguments: dict) -> dict:
     argv = [ilo_bin, str(tool.file), tool.fn]
-    matched = {norm(p["name"]): p for p in tool.params}
     for p in tool.params:
         key = norm(p["name"])
-        if key in arguments:
-            v = arguments[key]
-            if isinstance(v, bool):
-                argv.append("true" if v else "false")
-            elif isinstance(v, (int, float)):
-                argv.append(format(v))
-            elif isinstance(v, (list, dict)):
-                argv.append(json.dumps(v))
-            else:
-                argv.append(str(v))
+        if key not in arguments:
+            continue
+        v = arguments[key]
+        if isinstance(v, bool):
+            argv.append("true" if v else "false")
+        elif isinstance(v, (int, float)):
+            argv.append(format(v))
+        elif isinstance(v, (list, dict)):
+            argv.append(json.dumps(v))
+        else:
+            argv.append(str(v))
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     if proc.returncode != 0:
         return {"content": [{"type": "text",
@@ -179,10 +178,120 @@ def call_tool(tool: Tool, ilo_bin: str, arguments: dict) -> dict:
     return out
 
 
+def err(code: int, message: str) -> dict:
+    return {"code": code, "message": message}
+
+
+def dispatch(req: dict, tools: list[Tool], ilo_bin: str):
+    """Handle one JSON-RPC request. Returns (result | None, error | None).
+    (None, None) means the request was a notification: no response."""
+    rid = req.get("id")
+    method = req.get("method", "")
+    if method == "initialize":
+        return {"protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {"tools": {}},
+                "serverInfo": SERVER_INFO}, None
+    if method == "ping":
+        return {}, None
+    if method.startswith("notifications/"):
+        return None, None
+    if method == "tools/list":
+        return {"tools": [
+            {"name": t.tool_name, "description": t.description,
+             "inputSchema": t.input_schema} for t in tools]}, None
+    if method == "tools/call":
+        params = req.get("params", {})
+        match = next((t for t in tools
+                      if t.tool_name == params.get("name")), None)
+        if match is None:
+            return None, err(-32602, f"unknown tool: {params.get('name')}")
+        try:
+            return call_tool(match, ilo_bin, params.get("arguments", {})), None
+        except subprocess.TimeoutExpired:
+            return ({"content": [{"type": "text", "text": "timeout"}],
+                     "isError": True}), None
+    if rid is not None:
+        return None, err(-32601, f"method not found: {method}")
+    return None, None
+
+
+def serve_stdio(tools: list[Tool], ilo_bin: str) -> int:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        result, error = dispatch(req, tools, ilo_bin)
+        if result is None and error is None:
+            continue
+        msg: dict = {"jsonrpc": "2.0", "id": req.get("id")}
+        if error is not None:
+            msg["error"] = error
+        else:
+            msg["result"] = result
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
+def serve_http(tools: list[Tool], ilo_bin: str, port: int) -> int:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def _reply(self, code: int, payload: dict, session: str | None = None):
+            body = json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            if session:
+                self.send_header("Mcp-Session-Id", session)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            if self.path.rstrip("/") != "/mcp":
+                self._reply(404, {"error": "not found"})
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                req = json.loads(self.rfile.read(length))
+            except json.JSONDecodeError:
+                self._reply(400, {"error": "invalid json"})
+                return
+            result, error = dispatch(req, tools, ilo_bin)
+            if result is None and error is None:
+                self._reply(202, {})
+                return
+            if error is not None:
+                self._reply(200, {"jsonrpc": "2.0", "id": req.get("id"),
+                                  "error": error})
+                return
+            session = self.headers.get("Mcp-Session-Id") or os.urandom(8).hex()
+            self._reply(200, {"jsonrpc": "2.0", "id": req.get("id"),
+                              "result": result}, session)
+
+        def do_GET(self):
+            self._reply(405, {"error": "GET unsupported (JSON mode); use POST"})
+
+        def log_message(self, *_a):
+            pass
+
+    print(f"ilo-mcp: http://127.0.0.1:{port}/mcp "
+          f"({len(tools)} tools, JSON mode)", file=sys.stderr)
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dir", default="mcp-tools")
     ap.add_argument("--ilo", default=os.environ.get("ILO", "ilo"))
+    ap.add_argument("--http", action="store_true",
+                    help="streamable-HTTP transport instead of stdio")
+    ap.add_argument("--port", type=int, default=8391)
     ap.add_argument("--stats", action="store_true",
                     help="print resident schema cost and exit")
     args = ap.parse_args()
@@ -198,64 +307,9 @@ def main() -> int:
               f"server's tools/list)")
         return 0
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        rid = req.get("id")
-        method = req.get("method", "")
-        if method == "initialize":
-            resp = {"protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {"tools": {}},
-                    "serverInfo": SERVER_INFO}
-        elif method == "ping":
-            resp = {}
-        elif method.startswith("notifications/"):
-            continue
-        elif method == "tools/list":
-            resp = {"tools": [
-                {"name": t.tool_name, "description": t.description,
-                 "inputSchema": t.input_schema} for t in tools]}
-        elif method == "tools/call":
-            params = req.get("params", {})
-            match = next((t for t in tools
-                          if t.tool_name == params.get("name")), None)
-            if match is None:
-                send(rid, error=err(-32602, f"unknown tool: {params.get('name')}"))
-                continue
-            try:
-                result = call_tool(match, args.ilo,
-                                   params.get("arguments", {}))
-            except subprocess.TimeoutExpired:
-                result = {"content": [{"type": "text", "text": "timeout"}],
-                          "isError": True}
-            send(rid, result=result)
-        else:
-            if rid is not None:
-                send(rid, error=err(-32601, f"method not found: {method}"))
-            continue
-
-        if rid is not None:
-            send(rid, result=resp)
-    return 0
-
-
-def err(code: int, message: str) -> dict:
-    return {"code": code, "message": message}
-
-
-def send(rid, result=None, error=None) -> None:
-    msg: dict = {"jsonrpc": "2.0", "id": rid}
-    if error is not None:
-        msg["error"] = error
-    else:
-        msg["result"] = result
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    if args.http:
+        return serve_http(tools, args.ilo, args.port)
+    return serve_stdio(tools, args.ilo)
 
 
 if __name__ == "__main__":

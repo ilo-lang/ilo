@@ -125,7 +125,7 @@ end of that axis by construction. Wire test:
 unknown-tool), CI job `mcp-e2e`. Private (`_`-prefixed) functions don't
 leak. Arg names match hyphen/score-insensitively.
 
-Open: streamable-HTTP transport, `--json` tool-result contract hardening,
+Shipped: streamable-HTTP transport (`--http --port`, JSON mode + Mcp-Session-Id, e2e-tested). Open: `--json` tool-result contract hardening,
 publishing 2 more tool families with measured schema-vs-handwritten deltas.
 
 Stop competing for "the language agents write apps in." Aim ilo where verified density + determinism are load-bearing:
