@@ -65,3 +65,4 @@ zero-gap-specs/
 .zero/
 
 # training artifacts\ bench/finetune/adapter/
+bench/finetune/adapter/
