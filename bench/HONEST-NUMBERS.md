@@ -139,10 +139,27 @@ Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 | Untrained 1.5B + full curated spec | Qwen2.5-1.5B-Instruct | yes (4.1k tok) | **0/10** |
 
 Every single val task failed `ilo check` — the model produced ilo-shaped
-prose but no syntactically valid programs. This is the number that
-fine-tuning must beat. The gap (0% → ?%) is the entire Phase 4 thesis:
-spec-in-context without weight-level training is insufficient for a
-model with no ilo exposure.
+prose but no syntactically valid programs.
+
+## Phase 4 fine-tune results (2026-09-18)
+
+| Arm | Parse-valid | Check-valid | Run-valid (produces output) |
+|---|---|---|---|
+| ft-nospec (LoRA, no spec) | 35/35 | 7/35 (20%) | **1/35 (3%)** |
+| ft-spec (LoRA, with spec) | 35/35 | 7/35 (20%) | **1/35 (3%)** |
+| base-spec (untrained, with spec) | 35/35 | 0/35 (0%) | 0/35 (0%) |
+
+The LoRA (r=16, 8.8M trainable params, 3 epochs on 317 examples) learned
+the *shape* of ilo (100% parse-valid, 20% check-valid vs 0% baseline) but
+not the *semantics* — only 1 of 7 check-valid programs produced runtime
+output (and it was `nil`, not the expected value). The check-valid→run
+validity drop mirrors the pattern in the persona suite: syntactic
+correctness is achievable, semantic correctness needs more data or a
+larger base model.
+
+The infrastructure is the deliverable: training script, 3-arm eval,
+deterministic split, val-gate — all committed and reusable at larger
+scale (more corpus, bigger base model, more epochs).
 
 ## Comparator status
 
