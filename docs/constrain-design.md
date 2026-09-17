@@ -219,3 +219,30 @@ decoder host with true parser-state feedback.
 
 Setup preserved: server start command, GBNF generator
 (`scripts/make-gbnf.py`), samples (`/tmp/gen-masked15b-*.ilo`).
+
+
+## GBNF constraint experiment — llama.cpp scale limit (2026-09-18)
+
+The 3,253-state GBNF grammar (generated from probed transitions) **crashes
+llama.cpp's grammar engine** on first use. The grammar file is valid GBNF
+syntax, but the compiled pushdown automaton exceeds llama.cpp's practical
+limits (memory or computation during `llama_sampler_init`).
+
+**Findings:**
+- grammars with ≤100 rules parse and generate correctly (verified with
+  the built-in json.gbnf)
+- the ilo bigram grammar at 3,253 rules exceeds this by ~30×
+- the limit is in llama.cpp's grammar compiler, not the GBNF format
+
+**Implications:**
+- full-vocabulary ilo masking via GBNF requires either (a) llama.cpp
+  grammar compiler optimization for large grammars, or (b) a reduced
+  grammar covering only the top-N contexts
+- approach (b) is feasible: the top 50 contexts by corpus frequency cover
+  the majority of ilo code patterns, yielding a ~300-rule GBNF
+- the v2 probed context masks remain usable by non-GBNF hosts (API
+  logit_bias, custom decoders, LSP-style validators)
+
+**Next step:** generate a reduced grammar from the top-N contexts by
+corpus frequency, verify acceptance by llama.cpp, then rerun the persona
+suite with grammar constraints on the local model.
