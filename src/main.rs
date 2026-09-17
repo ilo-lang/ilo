@@ -25,6 +25,11 @@ use diagnostic::{Diagnostic, ansi::AnsiRenderer, json};
 fn compact_spec() -> &'static str {
     include_str!("../ai.txt")
 }
+/// The tools/harness contract block of the aligned prompt. Shared with
+/// scripts/ilo-harness.py (G4): byte-identical text, so the pinned digest
+/// (bench/harness-digest-curated.txt) matches across both emitters.
+const HARNESS_CONTRACT: &str = "# Harness contract\n\n- Emit exactly one ilo program per response. No prose, no markdown fences.\n- The program's first line must be `-- run: main`.\n- If the task names expected output, add `-- out: <expected>` on line 2.\n- Errors you receive are verifier diagnostics (ILO- codes) or runtime\n  output. Fix the named span; do not restate the program.\n";
+
 /// Curated agent spec: the G2 resident set (language + core builtins +
 /// signature reference) — ~4.1k tokens. This is what `ilo -ai` serves: the
 /// token-cost surface for LLM system prompts. The full 48k compact spec
@@ -3575,6 +3580,33 @@ fn main() {
         if hit {
             emit_run_vm_alias_hint();
         }
+    }
+
+    // `ilo harness` — emit the cache-aligned system prompt (G4): curated
+    // spec first, tools contract second, task last. Byte-stable per
+    // version; the digest is pinned by CI (harness-stability job) and
+    // scripts/ilo-harness.py shares the same contract.
+    if raw_args.get(1).map(|s| s.as_str()) == Some("harness") {
+        // Mirror scripts/ilo-harness.py exactly: "\n\n".join(modules) then
+        // one newline before the tools contract — byte-identical outputs.
+        let parts: Vec<&str> = ["ilo-language", "ilo-builtins-core", "ilo-builtins-sig"]
+            .iter()
+            .filter_map(|name| SKILLS.iter().find(|s| s.name == *name))
+            .map(|s| s.content)
+            .collect();
+        let mut spec = parts.join("\n\n");
+        let task = raw_args
+            .iter()
+            .skip(2)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut out = format!("{spec}\n\n{HARNESS_CONTRACT}");
+        if !task.trim().is_empty() {
+            out.push_str(&format!("\n# Task\n\n{task}\n"));
+        }
+        print!("{out}");
+        std::process::exit(0);
     }
 
     // Special-case: `ilo -ai` — serves the curated G2 resident set (~4.1k
