@@ -85,6 +85,11 @@ def main() -> int:
         unknown = rpc(7, "tools/call", {"name": "nope", "arguments": {}})
         assert unknown["error"]["code"] == -32602, unknown
 
+        missing = rpc(11, "tools/call", {"name": "demo:tri",
+                                         "arguments": {}})
+        assert missing["error"]["code"] == -32602, missing
+        assert "missing n" in missing["error"]["message"], missing
+
         gates_asap = rpc(8, "tools/call", {
             "name": "gates:route-priority",
             "arguments": {"subject": "ASAP: refund request"}})

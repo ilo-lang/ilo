@@ -205,8 +205,16 @@ def dispatch(req: dict, tools: list[Tool], ilo_bin: str):
                       if t.tool_name == params.get("name")), None)
         if match is None:
             return None, err(-32602, f"unknown tool: {params.get('name')}")
+        arguments = params.get("arguments", {}) or {}
+        required = match.input_schema.get("required", [])
+        missing = [k for k in required if k not in arguments]
+        if missing:
+            return None, err(
+                -32602,
+                f"invalid arguments for {match.tool_name}: "
+                f"missing {', '.join(missing)}")
         try:
-            return call_tool(match, ilo_bin, params.get("arguments", {})), None
+            return call_tool(match, ilo_bin, arguments), None
         except subprocess.TimeoutExpired:
             return ({"content": [{"type": "text", "text": "timeout"}],
                      "isError": True}), None
