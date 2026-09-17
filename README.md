@@ -255,6 +255,22 @@ ilo -ai              # compact spec for LLM system prompts
 ilo help lang        # full spec
 ```
 
+## Token-cost tooling
+
+The manifesto metric is total tokens from intent to working code. The
+in-repo tooling that measures and enforces it:
+
+| Tool | What it does |
+|---|---|
+| `scripts/ilo-harness.py --check` | Emits the cache-aligned system prompt and pins a sha256 stability digest — CI fails if the spec prefix drifts outside a version bump |
+| `scripts/closed-loop-bench.py` | Closed-loop $/successful-task vs Python (and any second CLI): warm + cold cache arms, per-attempt tokens, provider cache hit/miss |
+| `scripts/check-skill-tokens.ilo` + `scripts/check-skill-growth.py` | Resident spec budgets + eviction-linked growth gate (G2) |
+| `scripts/ilo-mcp-server.py` | Exposes ilo functions as MCP tools; inputSchema generated from the AST |
+| `bench/HONEST-NUMBERS.md` | Every published number, sourced, with limits — red rows stay red |
+
+Provider caching mechanics and break-even arithmetic: [`docs/caching.md`](docs/caching.md).
+Comparators welcome: [`docs/benchmark-invite.md`](docs/benchmark-invite.md).
+
 ## Key docs
 
 | | |
