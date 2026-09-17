@@ -132,6 +132,15 @@ Files: `bench/closed-loop-2026-09-17-warm-align-curated.json/.md`,
 | "Positional args risk parameter-swap errors" (early manifesto worry) | Refuted by our own 10-variant × 4-task test: 10/10 accuracy. Positional args stay |
 | Spec-only fluency claims ("agents learned the full vocabulary with 10/10 accuracy") | True of the 2026-Q1 micro suite only; not reproduced at current spec size or on the full persona set. Do not cite |
 | Any per-task dollar figure published before 2026-09-17 | Unsupported; the first measured figures are the tables above |
+## Comparator status
+
+- **Python**: measured (first cross-language rows, 2026-09-17).
+- **Mog**: attempt parked — standalone toolchain blockers (int printing
+  garbage, f-string segfault, async getenv typing). Findings and reproduce
+  steps: `bench/mog-comparator-findings.md`.
+- **Zero**: not installable from a public repo yet (paper + roadmap);
+  deferred per `constrain-design.md`-adjacent notes.
+
 ## Standing method notes
 
 - Token counts use cl100k_base (tiktoken) unless a provider's native usage
