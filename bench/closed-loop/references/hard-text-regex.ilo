@@ -1,0 +1,2 @@
+count-hay pat:t hay:t>t;str (len (rgxall pat hay))
+main>t;n=count-hay "ab" "abababab";prnt n;n

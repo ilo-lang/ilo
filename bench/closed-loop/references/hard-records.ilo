@@ -1,0 +1,8 @@
+type item{name:t;qty:n}
+run-report>n
+  a=item name:"a" qty:3;b=item name:"b" qty:5;c=item name:"c" qty:8;xs=[a b c]
+  big=flt {it> >it.qty 4} xs
+  qs=map {it>it.qty} big
+  s=sum qs
+  prnt str s
+  s
