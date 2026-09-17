@@ -131,15 +131,16 @@ disappear without explanation is the day to re-audit.
 
 ## Strategy 1, observational v1 (shipped 2026-09-17)
 
-`Parser::advance` now records consumed transitions, and four direct
-dispatch points (`stmt`, `expr`, `atom`, `pattern`) mark
+`Parser::advance` now records consumed transitions, and **all six
+dispatch points** (`decl`, `stmt`, `expr`, `pattern`, `type`, `atom`) mark
 `"<site>|after <prev>"` keys — production-path granularity, observed over
 the corpus. The empirical artifact carries a `sites` section alongside the
-bigram (e.g. `atom after !` → `[paren, ident, number, string]`).
-`parse_decl_body` and `parse_type_body` remain unmarked: their
-pre-processing blocks (reserved-word checks, boundary diagnostics) need
-per-site reading before a tag lands truthfully. Enabled only under
-`ILO_CONSTRAIN=1`; disabled cost is one branch in `advance`.
+bigram (e.g. `atom after !` → `[paren, ident, number, string]`;
+`decl after <START>` → `[Type, Tool, Use, ident, ...]`). The decl and type
+sites required per-site reading of their pre-processing blocks
+(reserved-word binding checks, boundary diagnostics) before the tags
+landed truthfully. Enabled only under `ILO_CONSTRAIN=1`; disabled cost is
+one branch in `advance`. Observational coverage: **6/6 dispatch points**.
 
 **Why probing instead of a hand-written grammar:** the oracle reuses the
 real parser, so the mask inherits every grammar change by construction and
