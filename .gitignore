@@ -63,3 +63,5 @@ zero-gap-specs/
 .claude/commands/
 .env.example
 .zero/
+
+# training artifacts\ bench/finetune/adapter/
