@@ -209,13 +209,31 @@ model at the edge of its capacity.
 
 ## Comparator status
 
+**Reference toolchain matrix (2026-09-18): all 8 benchmark tasks
+hand-authored and byte-exact validated in 6 languages — 48/48.**
+ilo 8/8 (fixed 3 latent double-print bugs in previously committed
+references: main tail auto-prints, so `prnt` + tail = duplicate output) ·
+bash 8/8 · Zero 8/8 · AILANG 8/8 (go1.27 via mise) · MoonBit 8/8 (moon
+0.1.20260915) · NanoLang 8/8 (2 `-Werror` source fixes; mandatory shadow
+tests). References: `bench/closed-loop/references-<lang>/`; rerunnable
+LLM legs: `bench/comparators/comparator-matrix.sh`.
+
+**Bash LLM leg (2026-09-18, DeepSeek V4.1-Flash, warm, n=8):** bash
+**7/8 first-attempt working** (~$0.0006/task, 2–5 s/task; the
+with-dependencies failure was a harness artifact, retried run worked) vs
+ilo 6/8 working at $0.0034–0.0080/task with 3–5 retries. **The
+pretraining-native floor is real: bash is ~8× cheaper than ilo on glue
+tasks.** ilo's claim cannot be $/task on this class; it is verified
+density (gates, tools) and the small-model arm. Published as a loss per
+the plan's risk table.
+
 - **Bash**: leg wired 2026-09-18 — reference solutions authored for all
   8 tasks (`bench/closed-loop/references-bash/`), each validated against
   the expected outputs; runner path (`run_lang2` with
   `/usr/bin/bash` + `.sh`) verified against `simple-function`. Rationale:
   agents emit as much bash as Python for glue tasks and bash is
   pretraining-native — **0 resident-spec tokens** — making it the honest
-  cost floor ilo competes against. LLM-run leg awaits funded key.
+  cost floor ilo competes against.
 - **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
   the five bench tasks were hand-authored as .0 projections and all run
   correctly through `bench/zero/zero-bench.sh` (init → import → run;
