@@ -590,6 +590,12 @@ def main() -> int:
     baseline_file = (REPO_ROOT / "bench" /
                      f"persona-smoke-baseline-{args.tag}.json") if args.tag \
         else BASELINE_FILE
+    if not args.tag and args.model != "haiku":
+        print("WARNING: no --tag given; comparing against the original "
+              f"haiku-era baseline while running model={args.model}. "
+              f"Token deltas will be meaningless. Pass e.g. "
+              f"--tag {args.model}-align-curated.")
+
 
     # Comparison mode
     if not baseline_file.exists():
