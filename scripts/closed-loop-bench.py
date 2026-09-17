@@ -135,6 +135,12 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
     return fallback
 
 
+def lang2_doc_text(lang: str, lang2_docs: str) -> str:
+    if lang2_docs and os.path.exists(lang2_docs):
+        return Path(lang2_docs).read_text()
+    return f"(No formal language documentation available for {lang}.)"
+
+
 def ilo_context(ilo_bin: str, context_mode: str = "curated") -> str:
     """Return the ilo skill documentation (cached).
 
@@ -356,7 +362,8 @@ def run_task(
     retry_cap: int,
     cache_mode: str,          # "warm" | "cold"
     align: bool,              # cache-aligned: spec in system, append-only repair
-    context_mode: str,        # "full" | "core" ilo skill modules
+    context_mode: str,        # "curated" | "full" | "core" ilo skill modules
+    lang2_docs: str,          # path to lang2 doc text ("" = none)
     ilo_bin: str,
     lang2_bin: str | None,
     lang2_ext: str,
@@ -382,7 +389,14 @@ def run_task(
             messages = [{"role": "user", "content":
                          make_initial_prompt(task, context, lang)}]
     else:
-        context = f"(No formal language documentation available for {lang}.)"
+        doc_text = ""
+        if lang2_docs and os.path.exists(lang2_docs):
+            doc_text = Path(lang2_docs).read_text()
+        if doc_text:
+            context = doc_text
+        else:
+            context = (f"(No formal language documentation available for "
+                       f"{lang}.)")
         system = LANG2_SYSTEM.format(lang_name=lang)
         run_fn = lambda code: run_lang2(code, lang2_bin, lang2_ext)  # noqa: E731
         messages = [{"role": "user", "content":
@@ -618,6 +632,10 @@ def main() -> int:
     parser.add_argument("--cache", choices=["warm", "cold"], default="warm",
                         help="warm: stable prefixes (provider cache hits). "
                              "cold: cache-busting nonce per attempt.")
+    parser.add_argument("--lang2-docs", default=None,
+                        help="Text file with language documentation for the "
+                             "second language (included in its system prompt, "
+                             "parity with ilo's curated spec).")
     parser.add_argument("--python", action="store_true",
                         help="Shorthand for --lang2-name python "
                              "--lang2-bin python3 --lang2-ext .py")
@@ -735,6 +753,7 @@ def main() -> int:
                     cache_mode=args.cache,
                     align=args.align,
                     context_mode=args.context,
+                    lang2_docs=args.lang2_docs or "",
                     ilo_bin=args.ilo,
                     lang2_bin=lang2_bin,
                     lang2_ext=args.lang2_ext,
