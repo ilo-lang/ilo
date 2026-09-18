@@ -147,6 +147,11 @@ pub struct Parser {
     /// `ILO-W003` advisory by `verify` so the agent learns the shorter
     /// shape (ILO-463). Carries the call-site span and the ref name.
     h_keyword_simple_ref_sites: Vec<(Span, String)>,
+    /// Set once `parse_program` accepts a top-level declaration named `main`.
+    /// A bare statement after it is unorderable (P104), but `parse_decl` errors
+    /// on that statement before the post-loop `script_stmts` check can see it —
+    /// so the conflict is surfaced from the two top-level guards below instead.
+    toplevel_main_declared: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -216,6 +221,7 @@ impl Parser {
             parse_failed_fns: HashMap::new(),
             glued_eq_binding_sites: HashSet::new(),
             h_keyword_simple_ref_sites: Vec::new(),
+            toplevel_main_declared: false,
         }
     }
 
@@ -668,6 +674,9 @@ impl Parser {
 
             match self.parse_decl() {
                 Ok(decl) => {
+                    if matches!(&decl, Decl::Function { name, .. } if name == "main") {
+                        self.toplevel_main_declared = true;
+                    }
                     declarations.push(decl);
                     suppress_p001 = false;
                 }
@@ -699,9 +708,7 @@ impl Parser {
         // is the shape a model writes when asked for a compact program, and
         // rejecting it cost retries on every task in the ILO-364 benchmark.
         if !script_stmts.is_empty() {
-            let has_explicit_main = declarations
-                .iter()
-                .any(|d| matches!(d, Decl::Function { name, .. } if name == "main"));
+            let has_explicit_main = self.toplevel_main_declared;
             if has_explicit_main {
                 // Two entry points, no way to order them. Refuse rather than
                 // silently picking one.
@@ -998,6 +1005,20 @@ impl Parser {
             && self.token_at(self.pos + 1) == Some(&Token::Eq)
         {
             let name = name.clone();
+            // A bare statement after an explicit `main` is unorderable, and the
+            // `outside any function declaration` wording below is then simply
+            // false — the file's first line *is* a declaration. Measured on the
+            // 2026-08-13 closed-loop run, that wording steers the model into
+            // adding a second wrapper, which fails as `ILO-T002 duplicate
+            // function definition 'main'`. Report the real conflict instead
+            // (the same P104 `parse_program` raises for collected statements).
+            if self.toplevel_main_declared {
+                return Err(self.error_hint(
+                    "ILO-P104",
+                    "file has both an explicit `main` and bare top-level statements".into(),
+                    "move the top-level statements into `main`, or remove the explicit `main` and let the statements become it.".into(),
+                ));
+            }
             return Err(self.error_hint(
                 "ILO-P102",
                 format!(
@@ -1058,6 +1079,15 @@ impl Parser {
                 // of falling through to parse_fn_decl which emits P011.
                 if Builtin::is_builtin(ident_str) && !self.line_has_return_type_marker() {
                     let name = ident_str.to_string();
+                    // Same conflict as the binding guard above: with an explicit
+                    // `main` already parsed, this statement has nowhere to go.
+                    if self.toplevel_main_declared {
+                        return Err(self.error_hint(
+                            "ILO-P104",
+                            "file has both an explicit `main` and bare top-level statements".into(),
+                            "move the top-level statements into `main`, or remove the explicit `main` and let the statements become it.".into(),
+                        ));
+                    }
                     return Err(self.error_hint(
                         "ILO-P102",
                         format!(
