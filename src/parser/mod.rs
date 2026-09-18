@@ -147,6 +147,10 @@ pub struct Parser {
     /// `ILO-W003` advisory by `verify` so the agent learns the shorter
     /// shape (ILO-463). Carries the call-site span and the ref name.
     h_keyword_simple_ref_sites: Vec<(Span, String)>,
+    /// Local-scope frames for the function bodies currently being parsed,
+    /// innermost last. A name listed in any frame shadows a builtin of the
+    /// same name for operand-position parsing (see `is_local_in_scope`).
+    local_scopes: Vec<HashSet<String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -216,6 +220,7 @@ impl Parser {
             parse_failed_fns: HashMap::new(),
             glued_eq_binding_sites: HashSet::new(),
             h_keyword_simple_ref_sites: Vec::new(),
+            local_scopes: Vec::new(),
         }
     }
 
@@ -582,6 +587,10 @@ impl Parser {
         let mut script_stmts: Vec<Spanned<Stmt>> = Vec::new();
         let mut script_span: Option<Span> = None;
 
+        // Bare top-level statements become main's body, so their bindings
+        // shadow builtins exactly like fn-body ones.
+        self.push_scope();
+
         while !self.at_end() {
             if errors.len() >= MAX_ERRORS {
                 break;
@@ -730,6 +739,7 @@ impl Parser {
         // Append synthetic decls emitted by inline-lambda lifting. Their names
         // start with `__lit_`, which is not a legal user ident (starts with
         // `_`), so there is no collision risk.
+        self.local_scopes.pop();
         declarations.append(&mut self.lifted_decls);
 
         (
@@ -2070,14 +2080,21 @@ statement boundary; bind the chain to a local first. For example, split \
         // pattern (`f p:pt>n;{x}=p;...`) — that's a statement, not a wrap.
         // Also skip when it looks like an anonymous record literal `{field:val ...}`:
         // that's a return-expression, not a brace-wrapped body.
-        let body = if self.peek() == Some(&Token::LBrace)
+        // Params shadow builtins for the whole body (see `is_local_in_scope`).
+        self.push_scope();
+        for p in &params {
+            self.note_scope_binding(&p.name);
+        }
+        let body_res = if self.peek() == Some(&Token::LBrace)
             && !self.is_destructure_pattern()
             && !self.is_anon_record_literal()
         {
-            self.parse_brace_body_or_record(&name)?
+            self.parse_brace_body_or_record(&name)
         } else {
-            self.parse_body_or_record(&name)?
+            self.parse_body_or_record(&name)
         };
+        self.local_scopes.pop();
+        let body = body_res?;
         let end = self.prev_span();
         Ok(Decl::Function {
             name,
@@ -2997,6 +3014,12 @@ statement boundary; bind the chain to a local first. For example, split \
             collect_call_callees(&value, &mut self.glued_eq_binding_sites);
         }
 
+        // The binding shadows a same-named builtin from here on (value
+        // position — see `is_local_in_scope`). Noted *after* the RHS so the
+        // RHS itself keeps its pre-existing parse: `len=+len 1` still expands
+        // the builtin, exactly as before.
+        self.note_scope_binding(&name);
+
         // Check if this is a ternary assignment: v=cond{then}{else}
         // or a conditional assignment: v=cond{body}
         if self.peek() == Some(&Token::LBrace) && is_guard_eligible_condition(&value) {
@@ -3078,6 +3101,9 @@ statement boundary; bind the chain to a local first. For example, split \
         self.expect(&Token::RBrace)?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
+        for b in &bindings {
+            self.note_scope_binding(b);
+        }
         Ok(Stmt::Destructure { bindings, value })
     }
 
@@ -3643,7 +3669,15 @@ statement boundary; bind the chain to a local first. For example, split \
             first
         };
         self.expect(&Token::Colon)?;
-        let body = self.parse_arm_body()?;
+        // Pattern bindings (`~v`, `^e`, `n v`, `Tag(v)`) shadow same-named
+        // builtins for the whole arm body, like a lambda parameter.
+        self.push_scope();
+        for b in Self::pattern_bindings(&pattern) {
+            self.note_scope_binding(&b);
+        }
+        let body_res = self.parse_arm_body();
+        self.local_scopes.pop();
+        let body = body_res?;
         Ok(MatchArm { pattern, body })
     }
 
@@ -3916,7 +3950,11 @@ statement boundary; bind the chain to a local first. For example, split \
                 None
             };
             self.pop_ctx(saved_ctx);
-            let body = self.parse_brace_body()?;
+            self.push_scope();
+            self.note_scope_binding(&binding);
+            let body_res = self.parse_brace_body();
+            self.local_scopes.pop();
+            let body = body_res?;
             return Ok(Stmt::ForRange {
                 binding,
                 start: start_expr,
@@ -3926,7 +3964,11 @@ statement boundary; bind the chain to a local first. For example, split \
             });
         }
         self.pop_ctx(saved_ctx);
-        let body = self.parse_brace_body()?;
+        self.push_scope();
+        self.note_scope_binding(&binding);
+        let body_res = self.parse_brace_body();
+        self.local_scopes.pop();
+        let body = body_res?;
         Ok(Stmt::ForEach {
             binding,
             collection: start_expr,
@@ -4073,7 +4115,15 @@ statement boundary; bind the chain to a local first. For example, split \
 
     fn parse_brace_body(&mut self) -> Result<Vec<Spanned<Stmt>>> {
         self.expect(&Token::LBrace)?;
-        let body = self.parse_body()?;
+        // A `{...}` statement block is a runtime scope of its own: a binding
+        // made inside it is gone once the block closes. Mirror that here so a
+        // builtin-named binding does not keep suppressing greedy operand
+        // expansion for the remainder of the enclosing body
+        // (`b{len=5};z=(>len [1 2 3] 2)` must still expand `len [1 2 3]`).
+        self.push_scope();
+        let body_res = self.parse_body();
+        self.local_scopes.pop();
+        let body = body_res?;
         self.expect(&Token::RBrace)?;
         Ok(body)
     }
@@ -4858,6 +4908,53 @@ or bind intermediates: `s1=+a b;s2=+s1 c;+s2 d`."
         })
     }
 
+    /// Whether `name` is bound in the innermost scope currently being parsed.
+    ///
+    /// Consulted only when a known-arity builtin name sits at an *operand*
+    /// position of a prefix operator. `g avg:n>n;+avg 1` binds `avg` as a
+    /// param, so the right operand must be the local: expanding greedily into
+    /// `+(avg 1)` leaves the outer operator one operand short and surfaces
+    /// `ILO-P009 expected expression, got ';'` (the dominant failure shape in
+    /// the 2026-08-13 closed-loop run: pipeline-report a1/a5, grade-calculator
+    /// a1/a5, text-analysis a2/a4). Call position is untouched — `avg xs`
+    /// still dispatches the builtin, and `(len xs)` is the escape hatch when
+    /// a program with a shadowing local genuinely wants the builtin here.
+    fn is_local_in_scope(&self, name: &str) -> bool {
+        self.local_scopes
+            .iter()
+            .rev()
+            .any(|frame| frame.contains(name))
+    }
+
+    /// Push an empty scope frame. Callers seed it with `note_scope_binding`
+    /// and MUST pop on every exit path (capture the fallible call in a local
+    /// first when a `?` or early `return` follows).
+    fn push_scope(&mut self) {
+        self.local_scopes.push(HashSet::new());
+    }
+
+    /// Record a binding parsed inside the current frame: `name=...`, a
+    /// destructure field, an `@`-loop binding, or a lambda/fn parameter.
+    fn note_scope_binding(&mut self, name: &str) {
+        if let Some(frame) = self.local_scopes.last_mut() {
+            frame.insert(name.to_string());
+        }
+    }
+
+    /// Names bound by a match pattern — the `local_scopes` entries an arm body
+    /// must see so an operand-position use resolves to the local, not the builtin.
+    fn pattern_bindings(pat: &Pattern) -> Vec<String> {
+        match pat {
+            Pattern::Err(b) | Pattern::Ok(b) => vec![b.clone()],
+            Pattern::TypeIs { binding, .. } => vec![binding.clone()],
+            Pattern::Variant { binding: Some(b), .. } => vec![b.clone()],
+            Pattern::Or(alts) => alts.iter().flat_map(Self::pattern_bindings).collect(),
+            Pattern::Literal(_)
+            | Pattern::Wildcard
+            | Pattern::Variant { binding: None, .. } => Vec::new(),
+        }
+    }
+
     /// Parse one operand of a prefix-binary operator (`>a b`, `&a b`, etc.).
     ///
     /// Dispatches to `parse_call_arg` when the ident at `self.pos` is a
@@ -4870,6 +4967,7 @@ or bind intermediates: `s1=+a b;s2=+s1 c;+s2 d`."
         if let Some(Token::Ident(name)) = self.peek()
             && let Some(&arity) = self.fn_arity.get(name)
             && arity > 0
+            && !self.is_local_in_scope(name)
         {
             // Mirror the suppression set in `parse_call_arg`'s expansion
             // arm: record-construction, field access, zero-arg paren-call,
@@ -6584,7 +6682,12 @@ For variable-position list indexing bind the head first: \
         // `)` as part of normal at-body-end logic — instead, parse a
         // semicolon-separated sequence that terminates on RParen.
         self.lambda_depth += 1;
+        self.push_scope();
+        for p in &params {
+            self.note_scope_binding(&p.name);
+        }
         let body_res = self.parse_lambda_body();
+        self.local_scopes.pop();
         self.lambda_depth -= 1;
         let body = body_res?;
         self.pop_ctx(saved_ctx);
@@ -6760,8 +6863,13 @@ For variable-position list indexing bind the head first: \
         // with ILO-P023 (their early-return targets the enclosing fn, not the
         // lambda — silent miscompile).
         self.lambda_depth += 1;
+        self.push_scope();
+        for p in &params {
+            self.note_scope_binding(&p.name);
+        }
         let body = self.parse_brace_lambda_body_inner();
         self.lambda_depth -= 1;
+        self.local_scopes.pop();
         let body = body?;
         let end = self.peek_span();
         self.expect(&Token::RBrace)?;
@@ -6990,7 +7098,14 @@ For variable-position list indexing bind the head first: \
                 // but we need to whitelist these so legitimate HOF use inside
                 // a lambda body (`srt slen xs` for a top-level `slen`) doesn't
                 // trip the closure check.
-                if self.fn_arity.contains_key(name) {
+                //
+                // Exception: a *local* that shadows the name is a value, not a
+                // fn-ref (the value-position rule `parse_prefix_binop_operand`
+                // also honours), so it must be captured. Without this a lambda
+                // closing over `len=5` resolved the free var to the `len`
+                // builtin and died at runtime with
+                // `unsupported operation: Add on Number(1.0) and FnRef("len")`.
+                if self.fn_arity.contains_key(name) && !self.is_local_in_scope(name) {
                     return;
                 }
                 if !free.iter().any(|n| n == name) {
