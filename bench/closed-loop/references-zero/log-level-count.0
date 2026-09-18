@@ -1,0 +1,47 @@
+// Count log lines beginning with ERROR, WARN and INFO.
+pub fn main(world: World) -> Void raises {
+    let text: Span<u8> = std.mem.span("INFO start\nERROR disk full\nINFO retry\nWARN slow\nERROR timeout\nINFO done\nWARN mem high\nERROR fatal")
+    let n: usize = std.mem.len(text)
+    var errors: i32 = 0
+    var warns: i32 = 0
+    var infos: i32 = 0
+    var i: usize = 0
+    var start: usize = 0
+    while i <= n {
+        if i == n || text[i] == 10_u8 {
+            let line: Span<u8> = std.mem.slice(text, start, i - start)
+            if std.str.startsWith(line, "ERROR") {
+                errors = errors + 1
+            }
+            if std.str.startsWith(line, "WARN") {
+                warns = warns + 1
+            }
+            if std.str.startsWith(line, "INFO") {
+                infos = infos + 1
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    var eb: [12]u8 = [0_u8; 12]
+    let em: Maybe<Span<u8>> = std.fmt.i32(eb, errors)
+    if em.has {
+        check world.out.write("ERROR=")
+        check world.out.write(em.value)
+        check world.out.write("\n")
+    }
+    var wb: [12]u8 = [0_u8; 12]
+    let wm: Maybe<Span<u8>> = std.fmt.i32(wb, warns)
+    if wm.has {
+        check world.out.write("WARN=")
+        check world.out.write(wm.value)
+        check world.out.write("\n")
+    }
+    var ib: [12]u8 = [0_u8; 12]
+    let im: Maybe<Span<u8>> = std.fmt.i32(ib, infos)
+    if im.has {
+        check world.out.write("INFO=")
+        check world.out.write(im.value)
+        check world.out.write("\n")
+    }
+}

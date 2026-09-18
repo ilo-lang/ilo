@@ -1,0 +1,29 @@
+// GCD and LCM of 48 and 18 via Euclid's algorithm.
+fn gcd(a: i32, b: i32) -> i32 {
+    var x: i32 = a
+    var y: i32 = b
+    while y != 0 {
+        let r: i32 = x % y
+        x = y
+        y = r
+    }
+    return x
+}
+
+pub fn main(world: World) -> Void raises {
+    let g: i32 = gcd(48, 18)
+    var gb: [12]u8 = [0_u8; 12]
+    let gm: Maybe<Span<u8>> = std.fmt.i32(gb, g)
+    if gm.has {
+        check world.out.write("gcd=")
+        check world.out.write(gm.value)
+        check world.out.write("\n")
+    }
+    var lb: [12]u8 = [0_u8; 12]
+    let lm: Maybe<Span<u8>> = std.fmt.i32(lb, (48 * 18) / g)
+    if lm.has {
+        check world.out.write("lcm=")
+        check world.out.write(lm.value)
+        check world.out.write("\n")
+    }
+}

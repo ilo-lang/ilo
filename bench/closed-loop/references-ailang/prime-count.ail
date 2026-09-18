@@ -1,0 +1,30 @@
+-- prime-count: primes below 30 are 2,3,5,7,11,13,17,19,23,29 -> count=10, largest=29.
+-- Run: ailang run -quiet --caps IO prime-count.ail
+module bench/prime_count
+
+import std/io (println)
+import std/list (filter, length, last, concat)
+
+-- Ascending [a..b]; [] when a > b.
+pure func range(a: int, b: int) -> [int] {
+  if a > b then [] else concat([a], range(a + 1, b))
+}
+
+pure func noDivisor(n: int, d: int) -> bool {
+  if d * d > n then true
+  else if n % d == 0 then false
+  else noDivisor(n, d + 1)
+}
+
+pure func isPrime(n: int) -> bool {
+  if n < 2 then false else noDivisor(n, 2)
+}
+
+export func main() -> () ! {IO} {
+  let primes = filter(isPrime, range(2, 29))
+  println("count=${show(length(primes))}")
+  match last(primes) {
+    Some(p) => println("largest=${show(p)}"),
+    None => println("largest=0")
+  }
+}

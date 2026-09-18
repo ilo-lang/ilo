@@ -1,0 +1,17 @@
+// Day of the week of 2026-09-18 by Zeller's congruence, no date
+// library. Day names live as (offset, len) into one literal because
+// span arrays are not supported.
+pub fn main(world: World) -> Void raises {
+    let q: i32 = 18
+    let m: i32 = 9
+    let year: i32 = 2026
+    let k: i32 = year % 100
+    let j: i32 = year / 100
+    let h: i32 = (q + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7
+    let names: String = "saturdaysundaymondaytuesdaywednesdaythursdayfriday"
+    let text: Span<u8> = std.mem.span(names)
+    let offs: [7]usize = [0, 8, 14, 20, 27, 36, 44]
+    let lens: [7]usize = [8, 6, 6, 7, 9, 8, 6]
+    check world.out.write(std.mem.slice(text, offs[h], lens[h]))
+    check world.out.write("\n")
+}

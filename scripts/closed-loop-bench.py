@@ -200,7 +200,11 @@ Rules:
 """
 
 
-def make_initial_prompt(task: dict[str, Any], context: str, lang: str) -> str:
+def make_initial_prompt(task: dict[str, Any], context: str) -> str:
+    # Deliberately does not name the target language: the leg's system prompt
+    # names it (ILO_SYSTEM / LANG2_SYSTEM.format). Naming it here too would
+    # duplicate, and the task description itself is guarded language-neutral
+    # by check_language_neutral, so every leg sees identical task text.
     return (
         f"Task: {task['description']}\n\n"
         f"Expected output: {task['expected_output']}\n\n"
@@ -345,6 +349,25 @@ def run_lang2(code: str, lang2_bin: str, ext: str) -> tuple[str, str, int]:
         os.unlink(tmp)
 
 
+# Names that must never appear in a task description. The description is sent
+# verbatim to every leg, so naming one language biases every other leg while
+# still producing a plausible-looking number.
+KNOWN_LANGS = frozenset(
+    {"ilo", "zero", "moonbit", "ailang", "nanolang", "bash", "python"}
+)
+
+
+def check_language_neutral(tasks: list[dict[str, Any]]) -> list[str]:
+    """Task ids whose description names a language — each would corrupt every
+    non-matching leg, so the run refuses to start."""
+    bad: list[str] = []
+    for t in tasks:
+        words = set(re.findall(r"[a-z0-9]+", t["description"].lower()))
+        if words & KNOWN_LANGS:
+            bad.append(t["id"])
+    return bad
+
+
 def classify_outcome(expected: str, stdout: str, stderr: str, rc: int) -> str:
     if rc != 0:
         return "failed"
@@ -394,7 +417,7 @@ def run_task(
         else:
             system = ILO_SYSTEM
             messages = [{"role": "user", "content":
-                         make_initial_prompt(task, context, lang)}]
+                         make_initial_prompt(task, context)}]
     else:
         doc_text = ""
         if lang2_docs and os.path.exists(lang2_docs):
@@ -407,13 +430,18 @@ def run_task(
         system = LANG2_SYSTEM.format(lang_name=lang)
         run_fn = lambda code: run_lang2(code, lang2_bin, lang2_ext)  # noqa: E731
         messages = [{"role": "user", "content":
-                     make_initial_prompt(task, context, lang)}]
+                     make_initial_prompt(task, context)}]
 
     total_gen_tokens = 0
     total_input_tokens = 0
     total_in_hit = 0
     total_in_miss = 0
     repair_tokens_by_turn: list[int] = []
+    # Characters of emitted code (not reasoning): the manifest's density metric
+    # is chars, not tokens, because reasoning tokens dominate out_tokens.
+    total_code_chars = 0
+    code_chars_by_turn: list[int] = []
+    code = ""
     attempts = 0
     outcome = "failed"
     wall_start = time.monotonic()
@@ -433,6 +461,8 @@ def run_task(
         code = resp["text"]
         gen_tok = resp["out_tokens"]
         total_gen_tokens += gen_tok
+        total_code_chars += len(code)
+        code_chars_by_turn.append(len(code))
         total_in_hit += resp["in_hit"]
         total_in_miss += resp["in_miss"]
         total_input_tokens += resp["in_hit"] + resp["in_miss"]
@@ -444,7 +474,7 @@ def run_task(
 
         print(
             f"      attempt={attempt} outcome={outcome} "
-            f"gen_tok={gen_tok} in_hit={resp['in_hit']} "
+            f"gen_tok={gen_tok} code_chars={len(code)} in_hit={resp['in_hit']} "
             f"in_miss={resp['in_miss']} rc={rc}",
             file=sys.stderr,
         )
@@ -498,6 +528,9 @@ def run_task(
             (total_in_hit * model_cfg["pricing"]["in_miss"]
              - total_in_hit * model_cfg["pricing"]["in_hit"]) / 1e6, 6),
         "repair_tokens_by_turn": repair_tokens_by_turn,
+        "generated_chars": total_code_chars,
+        "final_code_chars": len(code),
+        "code_chars_by_turn": code_chars_by_turn,
         "attempts_to_success": attempts_to_success,
         "attempts_total": attempts,
         "success_rate": 1.0 if outcome == "working" else 0.0,
@@ -510,21 +543,29 @@ def run_task(
 # Output helpers
 # ---------------------------------------------------------------------------
 
-def write_json(results: list[dict[str, Any]], date_str: str, cache_mode: str) -> Path:
-    out = BENCH_DIR / f"closed-loop-{date_str}-{cache_mode}.json"
+def write_json(results: list[dict[str, Any]], date_str: str, cache_mode: str,
+               leg: str | None = None) -> Path:
+    # The comparator matrix runs one leg per language on the same day with the
+    # same cache/context label; without the leg in the name every leg but the
+    # last overwrites the others, which reads as "only one comparator ran".
+    suffix = f"-{leg}" if leg else ""
+    out = BENCH_DIR / f"closed-loop-{date_str}-{cache_mode}{suffix}.json"
     payload = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "harness": "closed-loop-bench.py",
         "ticket": "ILO-364",
         "cache_mode": cache_mode,
+        "leg": leg,
         "results": results,
     }
     out.write_text(json.dumps(payload, indent=2))
     return out
 
 
-def write_markdown(results: list[dict[str, Any]], date_str: str, cache_mode: str) -> Path:
-    out = BENCH_DIR / f"closed-loop-{date_str}-{cache_mode}.md"
+def write_markdown(results: list[dict[str, Any]], date_str: str, cache_mode: str,
+                   leg: str | None = None) -> Path:
+    suffix = f"-{leg}" if leg else ""
+    out = BENCH_DIR / f"closed-loop-{date_str}-{cache_mode}{suffix}.md"
 
     # Index results: (task, lang, model) -> record
     idx: dict[tuple[str, str, str], dict] = {}
@@ -541,8 +582,10 @@ def write_markdown(results: list[dict[str, Any]], date_str: str, cache_mode: str
         if r["model"] not in models_seen:
             models_seen.append(r["model"])
 
+    comparators = [l for l in langs_seen if l != "ilo"]
+    vs = comparators[0] if len(comparators) == 1 else ("a comparator" if not comparators else ", ".join(comparators))
     lines: list[str] = [
-        f"# Closed-loop benchmark: ilo vs Zero per-task economics",
+        f"# Closed-loop benchmark: ilo vs {vs} per-task economics",
         f"",
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ",
         f"Ticket: [ILO-364](https://linear.app/ilo-lang/issue/ILO-364)  ",
@@ -674,6 +717,9 @@ def main() -> int:
     global BENCH_DIR
     if args.output_dir:
         BENCH_DIR = Path(args.output_dir)
+        # Created here so a run's measurement is never lost to a missing
+        # directory after the API has already been paid for.
+        BENCH_DIR.mkdir(parents=True, exist_ok=True)
 
 
     if args.python:
@@ -683,6 +729,14 @@ def main() -> int:
     # Load tasks
     tasks_data = json.loads(TASKS_FILE.read_text())
     all_tasks = tasks_data["tasks"]
+    named = check_language_neutral(all_tasks)
+    if named:
+        print("ERROR: task description names a language: " + ", ".join(named),
+              file=sys.stderr)
+        print("       Descriptions are sent verbatim to every leg; naming one "
+              "language scores the others on the wrong task. Reword to describe "
+              "the behaviour only.", file=sys.stderr)
+        return 2
     if args.task:
         all_tasks = [t for t in all_tasks if t["id"] == args.task]
         if not all_tasks:
@@ -785,8 +839,8 @@ def main() -> int:
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     label = args.cache + ("-align" if args.align else "") \
         + ("-core" if args.context == "core" else ("-curated" if args.context == "curated" else ("-full" if args.context == "full" else "")))
-    json_path = write_json(results, date_str, label)
-    md_path = write_markdown(results, date_str, label)
+    json_path = write_json(results, date_str, label, args.lang2_name)
+    md_path = write_markdown(results, date_str, label, args.lang2_name)
 
     print(f"\nResults written:")
     print(f"  JSON: {json_path}")
@@ -795,17 +849,47 @@ def main() -> int:
     # Summary table to stdout
     print("\nSummary:")
     print(f"{'task':<22} {'lang':<6} {'model':<8} {'gen_tok':>7} "
-          f"{'in_hit':>7} {'in_miss':>7} {'eff_in':>8} {'$':>8} {'att':>5} {'outcome':<8} {'time':>6}")
-    print("-" * 110)
+          f"{'chars':>6} {'in_hit':>7} {'in_miss':>7} {'eff_in':>8} {'$':>8} "
+          f"{'att':>5} {'outcome':<8} {'time':>6}")
+    print("-" * 118)
     for r in results:
         att = str(r["attempts_to_success"]) if r["attempts_to_success"] else "-"
         print(
             f"{r['task']:<22} {r['language']:<6} {r['model']:<8} "
-            f"{r['generation_tokens']:>7} {r['input_cache_hit_tokens']:>7} "
+            f"{r['generation_tokens']:>7} {r.get('generated_chars', 0):>6} "
+            f"{r['input_cache_hit_tokens']:>7} "
             f"{r['input_cache_miss_tokens']:>7} {r['effective_input_tokens']:>8} "
             f"{r['cost_usd']:>8.4f} "
             f"{att:>5} {r['final_outcome']:<8} "
             f"{r['wall_time_s']:>5.1f}s"
+        )
+
+    # Per-language economics: totals and per-task-row means, because the two
+    # answer different questions ("what did this sweep cost in total" versus
+    # "what does one program cost this language").
+    print("\nPer language (means are per task-row; code chars exclude reasoning):")
+    print(f"{'leg':<10} {'rows':>4} {'gen_tok':>9} {'tok/row':>8} {'chars':>7} "
+          f"{'ch/row':>7} {'ch/tok':>7} {'input':>9} {'$':>8} {'$/row':>8} "
+          f"{'wall':>8} {'s/row':>7} {'att/row':>7} {'working':>8}")
+    print("-" * 118)
+    for lang in sorted({r["language"] for r in results}):
+        rows = [r for r in results if r["language"] == lang]
+        char_rows = [r for r in rows if "generated_chars" in r]
+        gen = sum(r["generation_tokens"] for r in rows)
+        chars = sum(r["generated_chars"] for r in char_rows)
+        inp = sum(r["input_tokens"] for r in rows)
+        cost = sum(r["cost_usd"] for r in rows)
+        wall = sum(r["wall_time_s"] for r in rows)
+        att = [r["attempts_total"] for r in rows]
+        work = sum(1 for r in rows if r["final_outcome"] == "working")
+        mean = lambda v, n: f"{v / n:.1f}" if n else "-"
+        print(
+            f"{lang:<10} {len(rows):>4} {gen:>9,} {mean(gen, len(rows)):>8} "
+            f"{chars:>7,} {mean(chars, len(char_rows)):>7} "
+            f"{(f'{chars / gen:.2f}' if gen and char_rows else '-'):>7} "
+            f"{inp:>9,} {cost:>8.4f} {cost / len(rows):>8.4f} "
+            f"{wall:>7.1f}s {mean(wall, len(rows)):>7} {mean(sum(att), len(att)):>7} "
+            f"{work}/{len(rows):<6}"
         )
 
     success_count = sum(1 for r in results if r["final_outcome"] == "working")

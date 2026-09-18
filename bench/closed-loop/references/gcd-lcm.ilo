@@ -1,0 +1,5 @@
+gcd a:n b:n>n
+  ? (= b 0) a (gcd b (mod a b))
+main>t
+  g=gcd 48 18
+  fmt "gcd={}\nlcm={}" g (/ (* 48 18) g)

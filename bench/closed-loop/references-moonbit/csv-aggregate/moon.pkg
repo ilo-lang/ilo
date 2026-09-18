@@ -1,0 +1,6 @@
+// task: csv-aggregate — imports
+import {
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")

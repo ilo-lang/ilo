@@ -58,3 +58,4 @@ zero-gap-specs/
 bench/comparators/docs
 bench/comparators/logs
 bench/closed-loop/references-moonbit/_build/
+bench/report.html

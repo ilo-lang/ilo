@@ -1,0 +1,36 @@
+-- cron-expand: "1-3,7,9-10" -> 1 2 3 7 9 10.
+-- Run: ailang run -quiet --caps IO cron-expand.ail
+module bench/cron_expand
+
+import std/io (println)
+import std/list (flatMap, nth, map, concat)
+import std/string (split, stringToInt, intToStr, join)
+
+-- Ascending [a..b]; [] when a > b.
+pure func range(a: int, b: int) -> [int] {
+  if a > b then [] else concat([a], range(a + 1, b))
+}
+
+pure func parseOr(s: string) -> int {
+  match stringToInt(s) {
+    Some(n) => n,
+    None => 0
+  }
+}
+
+-- One comma-separated field: "a-b" expands to [a..b], a bare "n" is [n].
+pure func expandField(part: string) -> [int] {
+  match nth(split(part, "-"), 0) {
+    Some(a) =>
+      match nth(split(part, "-"), 1) {
+        Some(b) => range(parseOr(a), parseOr(b)),
+        None => [parseOr(a)]
+      },
+    None => []
+  }
+}
+
+export func main() -> () ! {IO} {
+  let values = flatMap(expandField, split("1-3,7,9-10", ","))
+  println(join(" ", map(intToStr, values)))
+}

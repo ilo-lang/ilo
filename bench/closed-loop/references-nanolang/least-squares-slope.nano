@@ -1,0 +1,80 @@
+# Task: least-squares-slope — line fit to (1,2),(2,4),(3,5),(4,4),(5,5)
+fn least_squares_slope(xs: array<int>, ys: array<int>) -> float {
+    let n: int = (array_length xs)
+    let mut sx: int = 0
+    let mut sy: int = 0
+    let mut sxy: int = 0
+    let mut sxx: int = 0
+    let mut i: int = 0
+    while (< i n) {
+        let x: int = (at xs i)
+        let y: int = (at ys i)
+        set sx (+ sx x)
+        set sy (+ sy y)
+        set sxy (+ sxy (* x y))
+        set sxx (+ sxx (* x x))
+        set i (+ i 1)
+    }
+    let num: float = (- (cast_float (* n sxy)) (* (cast_float sx) (cast_float sy)))
+    let den: float = (- (cast_float (* n sxx)) (* (cast_float sx) (cast_float sx)))
+    return (/ num den)
+}
+
+shadow least_squares_slope {
+    let xs: array<int> = [1, 2, 3, 4, 5]
+    let ys: array<int> = [2, 4, 5, 4, 5]
+    let s: float = (least_squares_slope xs ys)
+    assert (< (abs (- s 0.6)) 0.0001)
+    let horiz: array<int> = [1, 2, 3]
+    assert (< (abs (- (least_squares_slope horiz horiz) 1.0)) 0.0001)
+}
+
+fn least_squares_intercept(xs: array<int>, ys: array<int>) -> float {
+    let n: float = (cast_float (array_length xs))
+    let mut sx: int = 0
+    let mut sy: int = 0
+    let mut i: int = 0
+    while (< i (array_length xs)) {
+        set sx (+ sx (at xs i))
+        set sy (+ sy (at ys i))
+        set i (+ i 1)
+    }
+    let mx: float = (/ (cast_float sx) n)
+    let my: float = (/ (cast_float sy) n)
+    return (- my (* (least_squares_slope xs ys) mx))
+}
+
+shadow least_squares_intercept {
+    let xs: array<int> = [1, 2, 3, 4, 5]
+    let ys: array<int> = [2, 4, 5, 4, 5]
+    let b: float = (least_squares_intercept xs ys)
+    assert (< (abs (- b 2.2)) 0.0001)
+}
+
+fn fmt2(x: float) -> string {
+    let cents: int = (cast_int (round (* x 100.0)))
+    let frac: int = (% cents 100)
+    let mut frac_s: string = (int_to_string frac)
+    if (< frac 10) {
+        set frac_s (str_concat "0" frac_s)
+    }
+    return (str_concat (str_concat (int_to_string (/ cents 100)) ".") frac_s)
+}
+
+shadow fmt2 {
+    assert (str_equals (fmt2 0.6) "0.60")
+    assert (str_equals (fmt2 2.2) "2.20")
+    assert (str_equals (fmt2 (- 0.0)) "0.00")
+}
+
+fn main() -> int {
+    let xs: array<int> = [1, 2, 3, 4, 5]
+    let ys: array<int> = [2, 4, 5, 4, 5]
+    (println (str_concat "slope=" (fmt2 (least_squares_slope xs ys))))
+    (println (str_concat "intercept=" (fmt2 (least_squares_intercept xs ys))))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

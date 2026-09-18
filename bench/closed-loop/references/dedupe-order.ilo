@@ -1,0 +1,4 @@
+main>t
+  xs=[3,1,3,2,1,4]
+  keep=fld (a:_ x:n>L n;? (= (len (flt (y:n>b;= y x) a)) 0) (+ a [x]) a) xs []
+  cat (map (v:n>t;str v) keep) " "

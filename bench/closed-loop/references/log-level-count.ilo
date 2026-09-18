@@ -1,0 +1,6 @@
+hits p:t ls:L t>n
+  len (flt (l:t>b;= (slc l 0 (len p)) p) ls)
+main>t
+  raw="INFO start\nERROR disk full\nINFO retry\nWARN slow\nERROR timeout\nINFO done\nWARN mem high\nERROR fatal"
+  ls=spl raw "\n"
+  fmt "ERROR={}\nWARN={}\nINFO={}" (hits "ERROR" ls) (hits "WARN" ls) (hits "INFO" ls)

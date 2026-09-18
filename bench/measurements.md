@@ -228,7 +228,7 @@ density (gates, tools) and the small-model arm. Published as a loss per
 the plan's risk table.
 
 - **Bash**: leg wired 2026-09-18 — reference solutions authored for all
-  8 tasks (`bench/closed-loop/references-bash/`), each validated against
+  24 tasks (`bench/closed-loop/references-bash/`), each validated against
   the expected outputs; runner path (`run_lang2` with
   `/usr/bin/bash` + `.sh`) verified against `simple-function`. Rationale:
   agents emit as much bash as Python for glue tasks and bash is

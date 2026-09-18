@@ -1,0 +1,63 @@
+// Text stats: word count, char count (spaces included), average word length
+// to 1 decimal, longest and shortest word (first encountered wins ties).
+// Each formatted number needs its own buffer: the returned span borrows it
+// for as long as the Maybe binding is live.
+pub fn main(world: World) -> Void raises {
+    let data: String = "the quick brown fox jumps over the lazy dog the fox runs fast"
+    let text: Span<u8> = std.mem.span(data)
+    let words: usize = std.str.fieldCountAscii(text)
+    let chars: usize = std.mem.len(text)
+    var letters: usize = 0
+    var longest: Span<u8> = std.mem.span("")
+    var shortest: Span<u8> = text
+    var i: usize = 0
+    while i < words {
+        let word: Maybe<Span<u8>> = std.str.fieldAscii(text, i)
+        if word.has {
+            let len: usize = std.mem.len(word.value)
+            letters = letters + len
+            if std.mem.len(longest) < len {
+                longest = word.value
+            }
+            if std.mem.len(shortest) > len {
+                shortest = word.value
+            }
+        }
+        i = i + 1
+    }
+    // Round half up at one decimal: 49*10 = 490; (490 + 6) / 13 = 38 -> "3.8".
+    let scaled: usize = (letters * 10 + words / 2) / words
+    var wordsBuf: [24]u8 = [0_u8; 24]
+    var charsBuf: [24]u8 = [0_u8; 24]
+    var wholeBuf: [24]u8 = [0_u8; 24]
+    var fracBuf: [24]u8 = [0_u8; 24]
+    check world.out.write("words=")
+    let wm: Maybe<Span<u8>> = std.fmt.usize(wordsBuf, words)
+    if wm.has {
+        check world.out.write(wm.value)
+    }
+    check world.out.write("\n")
+    check world.out.write("chars=")
+    let cm: Maybe<Span<u8>> = std.fmt.usize(charsBuf, chars)
+    if cm.has {
+        check world.out.write(cm.value)
+    }
+    check world.out.write("\n")
+    check world.out.write("avg_len=")
+    let am: Maybe<Span<u8>> = std.fmt.usize(wholeBuf, scaled / 10)
+    if am.has {
+        check world.out.write(am.value)
+    }
+    check world.out.write(".")
+    let fm: Maybe<Span<u8>> = std.fmt.usize(fracBuf, scaled % 10)
+    if fm.has {
+        check world.out.write(fm.value)
+    }
+    check world.out.write("\n")
+    check world.out.write("longest=")
+    check world.out.write(longest)
+    check world.out.write("\n")
+    check world.out.write("shortest=")
+    check world.out.write(shortest)
+    check world.out.write("\n")
+}

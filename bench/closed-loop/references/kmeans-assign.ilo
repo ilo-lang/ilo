@@ -1,0 +1,8 @@
+near p:n>n
+  ? (<= (abs (- p 2)) (abs (- p 11))) 0 1
+main>t
+  ps=[1.0,2.0,3.0,10.0,11.0,12.0]
+  a=map (p:n>n;near p) ps
+  c0=avg (flt (p:n>b;= (near p) 0) ps)
+  c1=avg (flt (p:n>b;= (near p) 1) ps)
+  fmt "{}\nc0={:.2f}\nc1={:.2f}" (cat (map (v:n>t;str v) a) ",") c0 c1

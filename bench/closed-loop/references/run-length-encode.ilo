@@ -1,0 +1,4 @@
+main>t
+  s="aaabbccccd"
+  ps=fld (a:_ c:t>_;? (= (len a) 0) [[c 1]] (? (= (at (at a -1) 0) c) (lset a (- (len a) 1) [(at (at a -1) 0) (+ (at (at a -1) 1) 1)]) (+ a [[c 1]]))) (chars s) []
+  cat (map (p:_>t;fmt "{}{}" (at p 0) (at p 1)) ps) ""

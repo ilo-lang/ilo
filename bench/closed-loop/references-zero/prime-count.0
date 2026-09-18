@@ -1,0 +1,41 @@
+// Primes below 30: how many there are, and the largest of them.
+fn isPrime(n: i32) -> Bool {
+    if n < 2 {
+        return false
+    }
+    var d: i32 = 2
+    while d * d <= n {
+        if n % d == 0 {
+            return false
+        }
+        d = d + 1
+    }
+    return true
+}
+
+pub fn main(world: World) -> Void raises {
+    var count: i32 = 0
+    var largest: i32 = 0
+    var n: i32 = 2
+    while n < 30 {
+        if isPrime(n) {
+            count = count + 1
+            largest = n
+        }
+        n = n + 1
+    }
+    var cb: [12]u8 = [0_u8; 12]
+    let cm: Maybe<Span<u8>> = std.fmt.i32(cb, count)
+    if cm.has {
+        check world.out.write("count=")
+        check world.out.write(cm.value)
+        check world.out.write("\n")
+    }
+    var lb: [12]u8 = [0_u8; 12]
+    let lm: Maybe<Span<u8>> = std.fmt.i32(lb, largest)
+    if lm.has {
+        check world.out.write("largest=")
+        check world.out.write(lm.value)
+        check world.out.write("\n")
+    }
+}

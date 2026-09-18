@@ -1,0 +1,11 @@
+main>t
+  xs=[1.0,2.0,3.0,4.0,5.0]
+  ys=[2.0,4.0,5.0,4.0,5.0]
+  n=len xs
+  mx=(/ (sum xs) n)
+  my=(/ (sum ys) n)
+  dx=map (i:n>n;(- (at xs i) mx)) (range 0 n)
+  dy=map (i:n>n;(- (at ys i) my)) (range 0 n)
+  s=(/ (sum (map (i:n>n;* (at dx i) (at dy i)) (range 0 n))) (sum (map (v:n>n;* v v) dx)))
+  b=(- my (* s mx))
+  fmt "slope={:.2f}\nintercept={:.2f}" s b

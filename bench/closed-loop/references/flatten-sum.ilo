@@ -1,0 +1,4 @@
+main>t
+  xs=[[1,2],[3,4],[5]]
+  fs=flat xs
+  fmt "flat={}\nsum={}" (cat (map (v:n>t;str v) fs) " ") (sum fs)

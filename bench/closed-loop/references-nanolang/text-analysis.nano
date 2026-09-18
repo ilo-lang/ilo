@@ -1,0 +1,113 @@
+# Task: text-analysis — word count, character count (including spaces),
+# average word length to 1 decimal, longest word, shortest word.
+#
+# Longest and shortest keep the FIRST word on ties, matching the published
+# expectation: longest=quick (first of the 5-letter words), shortest=the
+# (first of the 3-letter words). Average is rounded half-up to tenths using
+# integer math only: tenths = floor(sum*10/count + 1/2). Words are split
+# manually with str_index_of / str_substring because str_split under the
+# interpreter frees its segments after pushing them (dangling pointers).
+
+struct Stats {
+    count: int,
+    sum: int,
+    longest: string,
+    shortest: string
+}
+
+fn absorb(s: Stats, word: string) -> Stats {
+    let wlen: int = (str_length word)
+    let llen: int = (str_length s.longest)
+    let slen: int = (str_length s.shortest)
+    let mut longest: string = s.longest
+    let mut shortest: string = s.shortest
+    if (== longest "") {
+        set longest word
+    } else {
+        if (> wlen llen) {
+            set longest word
+        }
+    }
+    if (== shortest "") {
+        set shortest word
+    } else {
+        if (< wlen slen) {
+            set shortest word
+        }
+    }
+    return Stats { count: (+ s.count 1), sum: (+ s.sum wlen), longest: longest, shortest: shortest }
+}
+
+shadow absorb {
+    let s: Stats = (absorb Stats { count: 0, sum: 0, longest: "", shortest: "" } "the")
+    assert (== s.count 1)
+    assert (== s.sum 3)
+    assert (str_equals s.longest "the")
+    assert (str_equals s.shortest "the")
+    let t: Stats = (absorb s "quick")
+    assert (== t.count 2)
+    assert (== t.sum 8)
+    assert (str_equals t.longest "quick")
+    assert (str_equals t.shortest "the")
+    let u: Stats = (absorb t "fox")
+    assert (str_equals u.longest "quick")
+    # "fox" ties "the" at 3 chars; strict < keeps the first -> "the".
+    assert (str_equals u.shortest "the")
+}
+
+fn avg_tenths(sum: int, count: int) -> int {
+    return (/ (+ (* sum 20) count) (* count 2))
+}
+
+shadow avg_tenths {
+    assert (== (avg_tenths 49 13) 38)
+    assert (== (avg_tenths 10 4) 25)
+    assert (== (avg_tenths 1 1) 10)
+    assert (== (avg_tenths 0 3) 0)
+}
+
+fn format_tenths(tenths: int) -> string {
+    return (str_concat (int_to_string (/ tenths 10)) (str_concat "." (int_to_string (% tenths 10))))
+}
+
+shadow format_tenths {
+    assert (str_equals (format_tenths 38) "3.8")
+    assert (str_equals (format_tenths 40) "4.0")
+    assert (str_equals (format_tenths 5) "0.5")
+}
+
+fn main() -> int {
+    let text: string = "the quick brown fox jumps over the lazy dog the fox runs fast"
+    let mut stats: Stats = Stats { count: 0, sum: 0, longest: "", shortest: "" }
+    let len: int = (str_length text)
+    let mut pos: int = 0
+    # Loop only while a nonempty remainder exists: str_substring on the
+    # compiled runtime errors when start == length, so pos < len is required.
+    while (< pos len) {
+        let rest: string = (str_substring text pos len)
+        let sp: int = (str_index_of rest " ")
+        let mut word: string = rest
+        if (>= sp 0) {
+            set word (str_substring rest 0 sp)
+        }
+        let wlen: int = (str_length word)
+        if (> wlen 0) {
+            set stats (absorb stats word)
+        }
+        if (< sp 0) {
+            set pos len
+        } else {
+            set pos (+ pos (+ sp 1))
+        }
+    }
+    (println (str_concat "words=" (int_to_string stats.count)))
+    (println (str_concat "chars=" (int_to_string len)))
+    (println (str_concat "avg_len=" (format_tenths (avg_tenths stats.sum stats.count))))
+    (println (str_concat "longest=" stats.longest))
+    (println (str_concat "shortest=" stats.shortest))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

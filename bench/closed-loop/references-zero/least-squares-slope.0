@@ -1,0 +1,51 @@
+// Least-squares line through (1,2), (2,4), (3,5), (4,4), (5,5).
+// Slope and intercept are exact rationals here, so they are computed
+// from integer sums and printed from integer hundredths; the .0
+// projection has no float formatting.
+fn writeCents(world: World, cents: i32) -> Void raises {
+    var ib: [12]u8 = [0_u8; 12]
+    let im: Maybe<Span<u8>> = std.fmt.i32(ib, cents / 100)
+    if im.has {
+        check world.out.write(im.value)
+    }
+    check world.out.write(".")
+    var cb: [12]u8 = [0_u8; 12]
+    let cm: Maybe<Span<u8>> = std.fmt.i32(cb, cents % 100)
+    if cm.has {
+        var pb: [16]u8 = [0_u8; 16]
+        let pm: Maybe<Span<u8>> = std.fmt.padLeft(pb, cm.value, 2, 48_u8)
+        if pm.has {
+            check world.out.write(pm.value)
+        }
+    }
+}
+
+pub fn main(world: World) -> Void raises {
+    let xs: [5]i32 = [1, 2, 3, 4, 5]
+    let ys: [5]i32 = [2, 4, 5, 4, 5]
+    let n: i32 = 5
+    var sx: i32 = 0
+    var sy: i32 = 0
+    var sxy: i32 = 0
+    var sxx: i32 = 0
+    var i: i32 = 0
+    while i < n {
+        sx = sx + xs[i]
+        sy = sy + ys[i]
+        sxy = sxy + xs[i] * ys[i]
+        sxx = sxx + xs[i] * xs[i]
+        i = i + 1
+    }
+    let num: i32 = n * sxy - sx * sy
+    let den: i32 = n * sxx - sx * sx
+    let slopeCents: i32 = num * 100 / den
+    let inum: i32 = sy * den - num * sx
+    let iden: i32 = den * n
+    let interceptCents: i32 = inum * 100 / iden
+    check world.out.write("slope=")
+    check writeCents(world, slopeCents)
+    check world.out.write("\n")
+    check world.out.write("intercept=")
+    check writeCents(world, interceptCents)
+    check world.out.write("\n")
+}

@@ -1,0 +1,37 @@
+-- record-summary: qty*price over records = 50+45+56 -> total=151.00; all three exceed 40.
+-- Run: ailang run -quiet --caps IO record-summary.ail
+module bench/record_summary
+
+import std/io (println)
+import std/list (foldl, filter, map)
+import std/string (intToStr, join)
+import std/math (round, floatToInt, intToFloat)
+
+type Item = { name: string, qty: int, price: float }
+
+-- Zero-pad fraction part: 5 -> "05".
+pure func pad2(n: int) -> string {
+  if n < 10 then "0${intToStr(n)}" else intToStr(n)
+}
+
+-- Format money exactly two decimals: 151.0 -> "151.00".
+pure func money2(x: float) -> string {
+  let cents = floatToInt(round(x * 100.0))
+  "${intToStr(cents / 100)}.${pad2(cents % 100)}"
+}
+
+pure func value(it: Item) -> float {
+  intToFloat(it.qty) * it.price
+}
+
+export func main() -> () ! {IO} {
+  let items = [
+    { name: "widget", qty: 10, price: 5.00 },
+    { name: "gadget", qty: 3, price: 15.00 },
+    { name: "gizmo", qty: 7, price: 8.00 }
+  ]
+  let total = foldl(\acc. \it. acc + value(it), 0.0, items)
+  let over = map(\it. it.name, filter(\it. value(it) > 40.0, items))
+  println("total=${money2(total)}")
+  println("over=${join(",", over)}")
+}

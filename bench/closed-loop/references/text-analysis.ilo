@@ -1,0 +1,11 @@
+main>t
+  tx="the quick brown fox jumps over the lazy dog the fox runs fast"
+  ws=spl tx " "
+  n=len ws
+  ch=len tx
+  av=/ (sum (map (w:t>n;len w) ws)) n
+  mx=max (map (w:t>n;len w) ws)
+  mn=min (map (w:t>n;len w) ws)
+  lg=hd (flt (w:t>b;= (len w) mx) ws)
+  sh=hd (flt (w:t>b;= (len w) mn) ws)
+  fmt "words={}\nchars={}\navg_len={:.1f}\nlongest={}\nshortest={}" n ch av lg sh

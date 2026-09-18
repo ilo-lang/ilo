@@ -1,0 +1,19 @@
+-- log-level-count: count lines by leading level -> ERROR=3, WARN=2, INFO=3.
+-- Run: ailang run -quiet --caps IO log-level-count.ail
+module bench/log_level_count
+
+import std/io (println)
+import std/list (filter, length)
+import std/string (split, startsWith)
+
+pure func countLevel(lines: [string], prefix: string) -> int {
+  length(filter(\l. startsWith(l, prefix), lines))
+}
+
+export func main() -> () ! {IO} {
+  let raw = "INFO start\nERROR disk full\nINFO retry\nWARN slow\nERROR timeout\nINFO done\nWARN mem high\nERROR fatal"
+  let lines = split(raw, "\n")
+  println("ERROR=${show(countLevel(lines, "ERROR"))}")
+  println("WARN=${show(countLevel(lines, "WARN"))}")
+  println("INFO=${show(countLevel(lines, "INFO"))}")
+}

@@ -1,0 +1,63 @@
+-- csv-aggregate: sum amount per region; regions alphabetical; totals to 2 decimals.
+-- Run: ailang run -quiet --caps IO csv-aggregate.ail
+module bench/csv_aggregate
+
+import std/io (println)
+import std/list (flatMap, foldl, nth, map, any, concat, sortBy, forEachE)
+import std/string (split, stringToFloat, intToStr)
+import std/math (round, floatToInt)
+
+type Row = { region: string, amount: float }
+
+-- Zero-pad fraction part: 5 -> "05".
+pure func pad2(n: int) -> string {
+  if n < 10 then "0${intToStr(n)}" else intToStr(n)
+}
+
+-- Format money exactly two decimals: 17.0 -> "17.00".
+pure func money2(x: float) -> string {
+  let cents = floatToInt(round(x * 100.0))
+  "${intToStr(cents / 100)}.${pad2(cents % 100)}"
+}
+
+pure func seen(xs: [string], x: string) -> bool {
+  any(\y. y == x, xs)
+}
+
+-- Unique regions, first-occurrence order.
+pure func unique(xs: [string]) -> [string] {
+  foldl(\acc. \x. if seen(acc, x) then acc else concat(acc, [x]), [], xs)
+}
+
+-- Alphabetical region order.
+pure func byName(a: string, b: string) -> int {
+  if a < b then -1 else if a > b then 1 else 0
+}
+
+pure func totalFor(rows: [Row], region: string) -> float {
+  foldl(\acc. \r. if r.region == region then acc + r.amount else acc, 0.0, rows)
+}
+
+-- Parse one "region,amount" line into [Row]; [] malformed.
+pure func parseRow(line: string) -> [Row] {
+  match nth(split(line, ","), 0) {
+    Some(region) =>
+      match nth(split(line, ","), 1) {
+        Some(amount) =>
+          match stringToFloat(amount) {
+            Some(a) => [{ region: region, amount: a }],
+            None => []
+          },
+        None => []
+      },
+    None => []
+  }
+}
+
+export func main() -> () ! {IO} {
+  let raw = "east,10.5\nwest,4.25\neast,6.5\nnorth,3.0\nwest,2.5"
+  let rows = flatMap(parseRow, split(raw, "\n"))
+  let regions = sortBy(byName, unique(map(\r. r.region, rows)))
+  let lines = map(\region. "${region}: ${money2(totalFor(rows, region))}", regions)
+  forEachE(println, lines)
+}

@@ -1,0 +1,6 @@
+main>t
+  rows="east,10.5\nwest,4.25\neast,6.5\nnorth,3.0\nwest,2.5"
+  recs=map (l:t>L t;spl l ",") (spl rows "\n")
+  regs=srt (unq (map (r:_>t;at r 0) recs))
+  tot=map (g:t>n;sum (map (r:_>n;default-on-err (num (at r 1)) 0.0) (flt (r:_>b;= (at r 0) g) recs))) regs
+  cat (map (i:n>t;fmt "{}: {:.2f}" (at regs i) (at tot i)) (range 0 (len regs))) "\n"

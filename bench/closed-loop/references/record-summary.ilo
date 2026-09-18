@@ -1,0 +1,10 @@
+type line{name:t;qty:n;price:n}
+val l:line>n;*l.qty l.price
+main>t
+  a=line name:"widget" qty:10 price:5.0
+  b=line name:"gadget" qty:3 price:15.0
+  c=line name:"gizmo" qty:7 price:8.0
+  xs=[a b c]
+  tot=sum (map (l:line>n;val l) xs)
+  over=cat (map (l:line>t;l.name) (flt (l:line>b;> (val l) 40.0) xs)) ","
+  fmt "total={:.2f}\nover={}" tot over

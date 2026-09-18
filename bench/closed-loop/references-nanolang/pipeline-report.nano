@@ -1,0 +1,151 @@
+# Task: pipeline-report — parse name:qty:price records, keep revenue > 20,
+# sort by revenue descending, print "name: revenue" with 2 decimal places.
+#
+# All money math is done in integer cents, so comparisons and formatting are
+# exact. Splitting is done manually with str_index_of / str_substring because
+# str_split under the interpreter frees its segments after pushing them
+# (dangling pointers). str_substring(s, start, len) is clamped to the string
+# end, which makes "rest of string" easy: (str_substring s start (str_length s)).
+
+fn index_from(text: string, sep: string, start: int) -> int {
+    # start >= length: no separator can follow; also keeps str_substring in
+    # bounds on the compiled runtime (it errors when start == length).
+    let tlen: int = (str_length text)
+    if (>= start tlen) {
+        return -1
+    }
+    let rest: string = (str_substring text start tlen)
+    let idx: int = (str_index_of rest sep)
+    if (< idx 0) {
+        return -1
+    }
+    return (+ start idx)
+}
+
+shadow index_from {
+    assert (== (index_from "a,b,c" "," 0) 1)
+    assert (== (index_from "a,b,c" "," 2) 3)
+    assert (== (index_from "a,b" "," 2) -1)
+    assert (== (index_from "a,b" "," 3) -1)
+}
+
+fn price_cents(price: string) -> int {
+    let dot: int = (str_index_of price ".")
+    if (< dot 0) {
+        return (* (string_to_int price) 100)
+    }
+    let plen: int = (str_length price)
+    let whole_cents: int = (* (string_to_int (str_substring price 0 dot)) 100)
+    let frac_start: int = (+ dot 1)
+    let frac_len: int = (- plen frac_start)
+    let mut frac_cents: int = 0
+    if (== frac_len 1) {
+        set frac_cents (* (string_to_int (str_substring price frac_start plen)) 10)
+    } else {
+        set frac_cents (string_to_int (str_substring price frac_start 2))
+    }
+    return (+ whole_cents frac_cents)
+}
+
+shadow price_cents {
+    assert (== (price_cents "5.00") 500)
+    assert (== (price_cents "8.00") 800)
+    assert (== (price_cents "2.5") 250)
+    assert (== (price_cents "20") 2000)
+    assert (== (price_cents "0.99") 99)
+}
+
+struct Record {
+    name: string,
+    qty: int,
+    rev_cents: int
+}
+
+fn parse_record(rec: string) -> Record {
+    let c1: int = (str_index_of rec ":")
+    let c2: int = (index_from rec ":" (+ c1 1))
+    let name: string = (str_substring rec 0 c1)
+    let qty: int = (string_to_int (str_substring rec (+ c1 1) (- c2 (+ c1 1))))
+    let price: string = (str_substring rec (+ c2 1) (str_length rec))
+    return Record { name: name, qty: qty, rev_cents: (* qty (price_cents price)) }
+}
+
+shadow parse_record {
+    let r: Record = (parse_record "gizmo:7:8.00")
+    assert (str_equals r.name "gizmo")
+    assert (== r.qty 7)
+    assert (== r.rev_cents 5600)
+    let t: Record = (parse_record "tool:2:20.00")
+    assert (== t.rev_cents 4000)
+}
+
+fn format_cents(cents: int) -> string {
+    let dollars: int = (/ cents 100)
+    let mut frac: string = (int_to_string (% cents 100))
+    let flen: int = (str_length frac)
+    if (< flen 2) {
+        set frac (str_concat "0" frac)
+    }
+    return (str_concat (int_to_string dollars) (str_concat "." frac))
+}
+
+shadow format_cents {
+    assert (str_equals (format_cents 5600) "56.00")
+    assert (str_equals (format_cents 3050) "30.50")
+    assert (str_equals (format_cents 105) "1.05")
+    assert (str_equals (format_cents 5) "0.05")
+}
+
+fn main() -> int {
+    let text: string = "widget:10:5.00,gadget:3:15.00,gizmo:7:8.00,tool:2:20.00,book:15:2.00"
+    let mut names: array<string> = []
+    let mut revs: array<int> = []
+    let mut pos: int = 0
+    let mut running: bool = true
+    while running {
+        let comma: int = (index_from text "," pos)
+        let mut rec: string = (str_substring text pos (str_length text))
+        if (>= comma 0) {
+            set rec (str_substring text pos (- comma pos))
+        }
+        let r: Record = (parse_record rec)
+        set names (array_push names r.name)
+        set revs (array_push revs r.rev_cents)
+        if (< comma 0) {
+            set running false
+        } else {
+            set pos (+ comma 1)
+        }
+    }
+    # Selection sort by revenue descending (in place, parallel arrays).
+    let n: int = (array_length names)
+    let mut i: int = 0
+    while (< i n) {
+        let mut j: int = (+ i 1)
+        while (< j n) {
+            if (> (at revs j) (at revs i)) {
+                let tn: string = (at names i)
+                let tr: int = (at revs i)
+                (array_set names i (at names j))
+                (array_set revs i (at revs j))
+                (array_set names j tn)
+                (array_set revs j tr)
+            }
+            set j (+ j 1)
+        }
+        set i (+ i 1)
+    }
+    set i 0
+    while (< i n) {
+        if (> (at revs i) 2000) {
+            let line: string = (str_concat (at names i) (str_concat ": " (format_cents (at revs i))))
+            (println line)
+        }
+        set i (+ i 1)
+    }
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

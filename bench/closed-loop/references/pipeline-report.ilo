@@ -1,0 +1,7 @@
+main>t
+  s="widget:10:5.00,gadget:3:15.00,gizmo:7:8.00,tool:2:20.00,book:15:2.00"
+  recs=map (r:t>L t;spl r ":") (spl s ",")
+  revs=map (r:_>L _;[at r 0 (* (default-on-err (num (at r 1)) 0.0) (default-on-err (num (at r 2)) 0.0))]) recs
+  keep=flt (p:_>b;> (at p 1) 20.0) revs
+  order=argsort (map (p:_>n;(- 0 (at p 1))) keep)
+  cat (map (i:n>t;fmt "{}: {:.2f}" (at (at keep i) 0) (at (at keep i) 1)) order) "\n"

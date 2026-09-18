@@ -1,0 +1,38 @@
+-- kmeans-assign: 1-D points [1,2,3,10,11,12] to centroids 2 and 11 -> 0,0,0,1,1,1; c0=2.00 c1=11.00.
+-- Run: ailang run -quiet --caps IO kmeans-assign.ail
+module bench/kmeans_assign
+
+import std/io (println)
+import std/list (map, filter, foldl, length)
+import std/string (intToStr, join)
+import std/math (abs_Float, round, floatToInt, intToFloat)
+
+-- Zero-pad fraction part: 5 -> "05".
+pure func pad2(n: int) -> string {
+  if n < 10 then "0${intToStr(n)}" else intToStr(n)
+}
+
+-- Format number exactly two decimals: 2.0 -> "2.00".
+pure func money2(x: float) -> string {
+  let cents = floatToInt(round(x * 100.0))
+  "${intToStr(cents / 100)}.${pad2(cents % 100)}"
+}
+
+-- 0 is the first centroid (2.0); a tie goes to the first.
+pure func nearer(p: float) -> int {
+  if abs_Float(p - 2.0) <= abs_Float(p - 11.0) then 0 else 1
+}
+
+pure func mean(xs: [float]) -> float {
+  foldl(\acc. \x. acc + x, 0.0, xs) / intToFloat(length(xs))
+}
+
+export func main() -> () ! {IO} {
+  let points = [1.0, 2.0, 3.0, 10.0, 11.0, 12.0]
+  let assigns = join(",", map(\p. show(nearer(p)), points))
+  let c0 = mean(filter(\p. nearer(p) == 0, points))
+  let c1 = mean(filter(\p. nearer(p) == 1, points))
+  println(assigns)
+  println("c0=${money2(c0)}")
+  println("c1=${money2(c1)}")
+}

@@ -1,0 +1,22 @@
+// Run-length encode "aaabbccccd" as each character followed by its
+// repeat count.
+pub fn main(world: World) -> Void raises {
+    let text: Span<u8> = std.mem.span("aaabbccccd")
+    let n: usize = std.mem.len(text)
+    var i: usize = 0
+    while i < n {
+        let ch: u8 = text[i]
+        var run: usize = 0
+        while i + run < n && text[i + run] == ch {
+            run = run + 1
+        }
+        check world.out.write(std.mem.slice(text, i, 1))
+        var b: [12]u8 = [0_u8; 12]
+        let m: Maybe<Span<u8>> = std.fmt.usize(b, run)
+        if m.has {
+            check world.out.write(m.value)
+        }
+        i = i + run
+    }
+    check world.out.write("\n")
+}

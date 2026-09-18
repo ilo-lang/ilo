@@ -1,0 +1,77 @@
+# Task: cron-expand — expand range-list field "1-3,7,9-10" into 1 2 3 7 9 10
+fn parse_field(part: string) -> array<int> {
+    let mut xs: array<int> = []
+    let dash: int = (str_index_of part "-")
+    if (< dash 0) {
+        set xs (array_push xs (string_to_int part))
+        return xs
+    }
+    let lo: int = (string_to_int (str_substring part 0 dash))
+    let hi: int = (string_to_int (str_substring part (+ dash 1) (str_length part)))
+    let mut v: int = lo
+    while (<= v hi) {
+        set xs (array_push xs v)
+        set v (+ v 1)
+    }
+    return xs
+}
+
+shadow parse_field {
+    let one: array<int> = (parse_field "7")
+    assert (== (array_length one) 1)
+    assert (== (at one 0) 7)
+    let rng: array<int> = (parse_field "9-10")
+    assert (== (array_length rng) 2)
+    assert (== (at rng 0) 9)
+    assert (== (at rng 1) 10)
+}
+
+fn split_char(s: string, sep: string) -> array<string> {
+    let mut parts: array<string> = []
+    let seplen: int = (str_length sep)
+    let mut rest: string = s
+    let mut idx: int = (str_index_of rest sep)
+    while (>= idx 0) {
+        set parts (array_push parts (str_substring rest 0 idx))
+        set rest (str_substring rest (+ idx seplen) (str_length rest))
+        set idx (str_index_of rest sep)
+    }
+    set parts (array_push parts rest)
+    return parts
+}
+
+shadow split_char {
+    let parts: array<string> = (split_char "1-3,7,9-10" ",")
+    assert (== (array_length parts) 3)
+    assert (str_equals (at parts 1) "7")
+}
+
+fn main() -> int {
+    let fields: array<string> = (split_char "1-3,7,9-10" ",")
+    let mut values: array<int> = []
+    let mut i: int = 0
+    while (< i (array_length fields)) {
+        let xs: array<int> = (parse_field (at fields i))
+        let mut j: int = 0
+        while (< j (array_length xs)) {
+            set values (array_push values (at xs j))
+            set j (+ j 1)
+        }
+        set i (+ i 1)
+    }
+    let mut line: string = ""
+    set i 0
+    while (< i (array_length values)) {
+        if (> i 0) {
+            set line (str_concat line " ")
+        }
+        set line (str_concat line (int_to_string (at values i)))
+        set i (+ i 1)
+    }
+    (println line)
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

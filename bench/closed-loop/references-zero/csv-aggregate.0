@@ -1,0 +1,127 @@
+// Sum amounts per region from CSV rows "region,amount" and print one
+// line per region as "region: total" with 2 decimals, regions in
+// alphabetical order. Amounts carry at most 2 decimals, so totals are
+// computed in integer cents.
+fn toInt(s: Span<u8>) -> i32 {
+    let m: Maybe<i32> = std.parse.parseI32(s)
+    if m.has {
+        return m.value
+    }
+    return 0
+}
+
+// "10.5" -> 1050, "4.25" -> 425, "3.0" -> 300
+fn parseCents(s: Span<u8>) -> i32 {
+    let n: usize = std.mem.len(s)
+    var dot: usize = n
+    var i: usize = 0
+    while i < n {
+        if s[i] == 46_u8 {
+            dot = i
+        }
+        i = i + 1
+    }
+    var cents: i32 = toInt(std.mem.slice(s, 0, dot)) * 100
+    if dot < n {
+        let flen: usize = n - dot - 1
+        let f: i32 = toInt(std.mem.slice(s, dot + 1, flen))
+        if flen == 1 {
+            cents = cents + f * 10
+        } else {
+            cents = cents + f
+        }
+    }
+    return cents
+}
+
+fn writeCents(world: World, cents: i32) -> Void raises {
+    var ib: [12]u8 = [0_u8; 12]
+    let im: Maybe<Span<u8>> = std.fmt.i32(ib, cents / 100)
+    if im.has {
+        check world.out.write(im.value)
+    }
+    check world.out.write(".")
+    var cb: [12]u8 = [0_u8; 12]
+    let cm: Maybe<Span<u8>> = std.fmt.i32(cb, cents % 100)
+    if cm.has {
+        var pb: [16]u8 = [0_u8; 16]
+        let pm: Maybe<Span<u8>> = std.fmt.padLeft(pb, cm.value, 2, 48_u8)
+        if pm.has {
+            check world.out.write(pm.value)
+        }
+    }
+}
+
+pub fn main(world: World) -> Void raises {
+    let text: Span<u8> = std.mem.span("east,10.5\nwest,4.25\neast,6.5\nnorth,3.0\nwest,2.5")
+    let n: usize = std.mem.len(text)
+    var ls: [5]usize = [0, 0, 0, 0, 0]
+    var ll: [5]usize = [0, 0, 0, 0, 0]
+    var lines: usize = 0
+    var i: usize = 0
+    var start: usize = 0
+    while i <= n {
+        if i == n || text[i] == 10_u8 {
+            ls[lines] = start
+            ll[lines] = i - start
+            lines = lines + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+    var rs: [3]usize = [0, 0, 0]
+    var rl: [3]usize = [0, 0, 0]
+    var sum: [3]i32 = [0, 0, 0]
+    var regions: usize = 0
+    var li: usize = 0
+    while li < lines {
+        var comma: usize = ll[li]
+        var c: usize = 0
+        while c < ll[li] {
+            if text[ls[li] + c] == 44_u8 {
+                comma = c
+            }
+            c = c + 1
+        }
+        let cents: i32 = parseCents(std.mem.slice(text, ls[li] + comma + 1, ll[li] - comma - 1))
+        var d: usize = 0
+        var found: usize = 3
+        while d < regions {
+            if std.mem.eqlBytes(std.mem.slice(text, ls[li], comma), std.mem.slice(text, rs[d], rl[d])) {
+                found = d
+            }
+            d = d + 1
+        }
+        if found == 3 {
+            rs[regions] = ls[li]
+            rl[regions] = comma
+            sum[regions] = cents
+            regions = regions + 1
+        } else {
+            sum[found] = sum[found] + cents
+        }
+        li = li + 1
+    }
+    var used: [3]usize = [0, 0, 0]
+    var done: usize = 0
+    while done < regions {
+        var best: usize = 9
+        var d: usize = 0
+        while d < regions {
+            if used[d] == 0 {
+                if best == 9 {
+                    best = d
+                } else if std.mem.compareBytes(std.mem.slice(text, rs[d], rl[d]), std.mem.slice(text, rs[best], rl[best])) < 0 {
+                    best = d
+                }
+            }
+            d = d + 1
+        }
+        used[best] = 1
+        check world.out.write(std.mem.slice(text, rs[best], rl[best]))
+        check world.out.write(": ")
+        check writeCents(world, sum[best])
+        check world.out.write("\n")
+        done = done + 1
+    }
+}

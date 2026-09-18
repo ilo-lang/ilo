@@ -1,0 +1,127 @@
+# Task: top-words — three most frequent words in a text, ties broken alphabetically
+# str_split is unreliable under bin/nano (interpreter), so tokens are split
+# manually with str_index_of + str_substring.
+fn split_char(s: string, sep: string) -> array<string> {
+    let mut parts: array<string> = []
+    let seplen: int = (str_length sep)
+    let mut rest: string = s
+    let mut idx: int = (str_index_of rest sep)
+    while (>= idx 0) {
+        set parts (array_push parts (str_substring rest 0 idx))
+        set rest (str_substring rest (+ idx seplen) (str_length rest))
+        set idx (str_index_of rest sep)
+    }
+    set parts (array_push parts rest)
+    return parts
+}
+
+shadow split_char {
+    let parts: array<string> = (split_char "a,b,c" ",")
+    assert (== (array_length parts) 3)
+    assert (str_equals (at parts 0) "a")
+    assert (str_equals (at parts 2) "c")
+}
+
+fn word_less(a: string, b: string) -> bool {
+    let m: int = (min (str_length a) (str_length b))
+    let mut i: int = 0
+    while (< i m) {
+        let ca: int = (char_at a i)
+        let cb: int = (char_at b i)
+        if (!= ca cb) {
+            return (< ca cb)
+        }
+        set i (+ i 1)
+    }
+    return (< (str_length a) (str_length b))
+}
+
+shadow word_less {
+    assert (== (word_less "go" "stop") true)
+    assert (== (word_less "stop" "go") false)
+    assert (== (word_less "run" "runs") true)
+}
+
+fn index_of_word(words: array<string>, w: string) -> int {
+    let mut i: int = 0
+    while (< i (array_length words)) {
+        if (str_equals (at words i) w) {
+            return i
+        }
+        set i (+ i 1)
+    }
+    return -1
+}
+
+shadow index_of_word {
+    let ws: array<string> = ["go", "stop"]
+    assert (== (index_of_word ws "stop") 1)
+    assert (== (index_of_word ws "run") -1)
+}
+
+# Selection sort words/counts in place: count descending, word ascending on ties.
+fn sort_by_count(words: array<string>, counts: array<int>) -> int {
+    let n: int = (array_length words)
+    let mut i: int = 0
+    while (< i n) {
+        let mut best: int = i
+        let mut j: int = (+ i 1)
+        while (< j n) {
+            let cj: int = (at counts j)
+            let cb: int = (at counts best)
+            let take: bool = if (!= cj cb) { (> cj cb) } else { (word_less (at words j) (at words best)) }
+            if take {
+                set best j
+            }
+            set j (+ j 1)
+        }
+        if (!= best i) {
+            let tw: string = (at words i)
+            let tc: int = (at counts i)
+            (array_set words i (at words best))
+            (array_set counts i (at counts best))
+            (array_set words best tw)
+            (array_set counts best tc)
+        }
+        set i (+ i 1)
+    }
+    return 0
+}
+
+shadow sort_by_count {
+    let ws: array<string> = ["go", "stop", "run"]
+    let cs: array<int> = [2, 3, 4]
+    (sort_by_count ws cs)
+    assert (str_equals (at ws 0) "run")
+    assert (str_equals (at ws 1) "stop")
+    assert (str_equals (at ws 2) "go")
+}
+
+fn main() -> int {
+    let tokens: array<string> = (split_char "go go stop stop stop run run run run" " ")
+    let mut words: array<string> = []
+    let mut counts: array<int> = []
+    let mut i: int = 0
+    while (< i (array_length tokens)) {
+        let w: string = (at tokens i)
+        let idx: int = (index_of_word words w)
+        if (< idx 0) {
+            set words (array_push words w)
+            set counts (array_push counts 1)
+        } else {
+            (array_set counts idx (+ (at counts idx) 1))
+        }
+        set i (+ i 1)
+    }
+    (sort_by_count words counts)
+    set i 0
+    while (< i (array_length words)) {
+        (println (str_concat (str_concat (at words i) " ") (int_to_string (at counts i))))
+        set i (+ i 1)
+    }
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

@@ -1,0 +1,6 @@
+// task: cron-expand — imports
+import {
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")

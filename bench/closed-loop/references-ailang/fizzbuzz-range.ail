@@ -1,0 +1,23 @@
+-- fizzbuzz-range: classic FizzBuzz for 1..15, joined by commas.
+-- Run: ailang run -quiet --caps IO fizzbuzz-range.ail
+module bench/fizzbuzz_range
+
+import std/io (println)
+import std/list (map, concat)
+import std/string (intToStr, join)
+
+-- Ascending [a..b]; [] when a > b.
+pure func range(a: int, b: int) -> [int] {
+  if a > b then [] else concat([a], range(a + 1, b))
+}
+
+pure func fizzbuzz(n: int) -> string {
+  if n % 15 == 0 then "FizzBuzz"
+  else if n % 3 == 0 then "Fizz"
+  else if n % 5 == 0 then "Buzz"
+  else intToStr(n)
+}
+
+export func main() -> () ! {IO} {
+  println(join(",", map(fizzbuzz, range(1, 15))))
+}

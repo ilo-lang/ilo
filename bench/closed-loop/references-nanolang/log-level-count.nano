@@ -1,0 +1,53 @@
+# Task: log-level-count — count ERROR/WARN/INFO lines in a log
+# str_split is unreliable under bin/nano (interpreter), so lines are split
+# manually with str_index_of + str_substring.
+fn split_char(s: string, sep: string) -> array<string> {
+    let mut parts: array<string> = []
+    let seplen: int = (str_length sep)
+    let mut rest: string = s
+    let mut idx: int = (str_index_of rest sep)
+    while (>= idx 0) {
+        set parts (array_push parts (str_substring rest 0 idx))
+        set rest (str_substring rest (+ idx seplen) (str_length rest))
+        set idx (str_index_of rest sep)
+    }
+    set parts (array_push parts rest)
+    return parts
+}
+
+shadow split_char {
+    let parts: array<string> = (split_char "a\nb\nc" "\n")
+    assert (== (array_length parts) 3)
+    assert (str_equals (at parts 1) "b")
+}
+
+fn count_prefix(lines: array<string>, prefix: string) -> int {
+    let mut count: int = 0
+    let mut i: int = 0
+    while (< i (array_length lines)) {
+        if (str_starts_with (at lines i) prefix) {
+            set count (+ count 1)
+        }
+        set i (+ i 1)
+    }
+    return count
+}
+
+shadow count_prefix {
+    let lines: array<string> = ["ERROR disk full", "INFO start", "ERROR timeout", "WARN slow"]
+    assert (== (count_prefix lines "ERROR") 2)
+    assert (== (count_prefix lines "WARN") 1)
+    assert (== (count_prefix lines "INFO") 1)
+}
+
+fn main() -> int {
+    let lines: array<string> = (split_char "INFO start\nERROR disk full\nINFO retry\nWARN slow\nERROR timeout\nINFO done\nWARN mem high\nERROR fatal" "\n")
+    (println (str_concat "ERROR=" (int_to_string (count_prefix lines "ERROR"))))
+    (println (str_concat "WARN=" (int_to_string (count_prefix lines "WARN"))))
+    (println (str_concat "INFO=" (int_to_string (count_prefix lines "INFO"))))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

@@ -2,59 +2,171 @@
   "tasks": [
     {
       "id": "simple-function",
-      "description": "Write an ilo function that takes an integer n and returns n*(n+1)/2 (triangular number). Call it with n=10 and print the result.",
+      "description": "Write a function that takes an integer n and returns n*(n+1)/2 (the triangular number). Call it with n=10 and print the result.",
       "expected_output": "55",
       "difficulty": "easy",
       "category": "arithmetic"
     },
     {
       "id": "with-dependencies",
-      "description": "Write an ilo program that defines a helper function `double` (returns 2*x) and a function `quad` that calls double twice. Call quad with 7 and print the result.",
+      "description": "Define a helper function `double` that returns 2*x, and a function `quad` that calls `double` twice. Call `quad` with 7 and print the result.",
       "expected_output": "28",
       "difficulty": "easy",
       "category": "function-composition"
     },
     {
       "id": "data-transform",
-      "description": "Write an ilo program that creates a list of integers [1, 2, 3, 4, 5], maps each element to its square, filters for values greater than 10, and prints the sum.",
+      "description": "Create a list of integers [1, 2, 3, 4, 5], map each element to its square, keep only the values greater than 10, and print their sum.",
       "expected_output": "41",
       "difficulty": "medium",
       "category": "list-processing"
     },
     {
       "id": "tool-interaction",
-      "description": "Write an ilo program that uses the `env` builtin to read an environment variable named BENCH_VAR (default to 'hello' if missing), appends ' world' to it, and prints the result. Assume BENCH_VAR is not set.",
+      "description": "Read the environment variable BENCH_VAR, falling back to the text \"hello\" when it is not set, append \" world\" to it, and print the result. Assume BENCH_VAR is not set.",
       "expected_output": "hello world",
       "difficulty": "medium",
       "category": "io-env"
     },
     {
       "id": "workflow-rollback",
-      "description": "Write an ilo program that defines a function `safe-div` which divides two numbers but returns 0 if the divisor is zero (using an if expression). Call it with (10, 2) and (5, 0), print both results separated by a newline.",
+      "description": "Define a function `safe-div` that divides two numbers and returns 0 when the divisor is 0. Call it with (10, 2) and (5, 0) and print both results, one per line.",
       "expected_output": "5\n0",
       "difficulty": "medium",
       "category": "control-flow"
     },
     {
       "id": "hard-recursion",
-      "description": "Write recursive functions in ilo: fib(n) with fib(0)=0, fib(1)=1, using bind-first pattern for the recursive calls. Compute fib(15) and fib(12), print their sum.",
+      "description": "Write a recursive function fib(n) with fib(0)=0 and fib(1)=1. Compute fib(15) and fib(12), and print their sum.",
       "expected_output": "754",
       "difficulty": "hard",
       "category": "recursion"
     },
     {
       "id": "hard-records",
-      "description": "Define a record type item with a text field name and a number field qty. Build a list of three items with quantities 3, 5, and 8. Filter to items with qty greater than 4, sum their quantities, and print the result.",
+      "description": "Define a record type with a text field `name` and a number field `qty`. Build a list of three records with quantities 3, 5 and 8. Keep only the records whose qty is greater than 4, sum their quantities, and print the result.",
       "expected_output": "13",
       "difficulty": "hard",
       "category": "records-collections"
     },
     {
       "id": "hard-text-regex",
-      "description": "Count the non-overlapping occurrences of the pattern ab in the text abababab using rgxall, and print the count as text.",
+      "description": "Count the non-overlapping occurrences of the pattern \"ab\" in the text \"abababab\" and print the count as text.",
       "expected_output": "4",
       "difficulty": "medium",
       "category": "text-regex"
+    },
+    {
+      "id": "pipeline-report",
+      "description": "Parse this CSV-like string of product records: \"widget:10:5.00,gadget:3:15.00,gizmo:7:8.00,tool:2:20.00,book:15:2.00\". Each record is name:quantity:price. Compute revenue (quantity * price) for each product. Filter to only products with revenue > 20. Sort by revenue descending. Print each as \"name: revenue\" with revenue formatted to 2 decimal places, one per line.",
+      "expected_output": "gizmo: 56.00\nwidget: 50.00\ngadget: 45.00\ntool: 40.00\nbook: 30.00",
+      "difficulty": "hard",
+      "category": "data-pipeline"
+    },
+    {
+      "id": "text-analysis",
+      "description": "Analyze this text: \"the quick brown fox jumps over the lazy dog the fox runs fast\". Compute and print 5 lines: word count (words=N), character count including spaces (chars=N), average word length to 1 decimal (avg_len=N.N), the longest word (longest=WORD), and the shortest word (shortest=WORD).",
+      "expected_output": "words=13\nchars=61\navg_len=3.8\nlongest=quick\nshortest=the",
+      "difficulty": "hard",
+      "category": "text-processing"
+    },
+    {
+      "id": "gcd-lcm",
+      "description": "Compute the greatest common divisor and the least common multiple of 48 and 18. Print \"gcd=<n>\" then \"lcm=<n>\".",
+      "expected_output": "gcd=6\nlcm=144",
+      "difficulty": "easy",
+      "category": "arithmetic"
+    },
+    {
+      "id": "prime-count",
+      "description": "Consider the integers below 30. Print \"count=<n>\" with how many of them are prime, then \"largest=<n>\" with the largest prime below 30.",
+      "expected_output": "count=10\nlargest=29",
+      "difficulty": "easy",
+      "category": "arithmetic"
+    },
+    {
+      "id": "fizzbuzz-range",
+      "description": "For the integers 1 to 15 in order, emit the classic FizzBuzz value: \"Fizz\" when the number is divisible by 3, \"Buzz\" when divisible by 5, \"FizzBuzz\" when divisible by both, otherwise the number as text. Print the values joined by commas on one line.",
+      "expected_output": "1,2,Fizz,4,Buzz,Fizz,7,8,Fizz,Buzz,11,Fizz,13,14,FizzBuzz",
+      "difficulty": "easy",
+      "category": "control-flow"
+    },
+    {
+      "id": "flatten-sum",
+      "description": "Flatten the nested list [[1, 2], [3, 4], [5]] to a single level. Print \"flat=<values>\" with the flattened values space-separated, then \"sum=<n>\" with their sum.",
+      "expected_output": "flat=1 2 3 4 5\nsum=15",
+      "difficulty": "easy",
+      "category": "list-processing"
+    },
+    {
+      "id": "dedupe-order",
+      "description": "Remove duplicates from the list [3, 1, 3, 2, 1, 4], keeping the first occurrence of each value. Print the result space-separated on one line.",
+      "expected_output": "3 1 2 4",
+      "difficulty": "easy",
+      "category": "list-processing"
+    },
+    {
+      "id": "run-length-encode",
+      "description": "Run-length encode the text \"aaabbccccd\": each maximal run of one repeated character becomes that character followed by the number of repetitions. Print the encoded text.",
+      "expected_output": "a3b2c4d1",
+      "difficulty": "medium",
+      "category": "text-processing"
+    },
+    {
+      "id": "top-words",
+      "description": "Count how often each word occurs in the text \"go go stop stop stop run run run run\". Print the three most frequent words, most frequent first, as \"word count\" lines. Break ties alphabetically.",
+      "expected_output": "run 4\nstop 3\ngo 2",
+      "difficulty": "medium",
+      "category": "text-processing"
+    },
+    {
+      "id": "cron-expand",
+      "description": "Expand the range-list field \"1-3,7,9-10\" into the explicit ascending list of integers it denotes. Print the values space-separated on one line.",
+      "expected_output": "1 2 3 7 9 10",
+      "difficulty": "medium",
+      "category": "text-processing"
+    },
+    {
+      "id": "record-summary",
+      "description": "Define a record type with fields name (text), quantity (number) and price (number). Build three records: (\"widget\", 10, 5.00), (\"gadget\", 3, 15.00), (\"gizmo\", 7, 8.00). Print \"total=<sum>\" where the sum is quantity times price summed over all records, to 2 decimals; then print \"over=<names>\" listing, in the order given, the names whose value exceeds 40, comma-separated.",
+      "expected_output": "total=151.00\nover=widget,gadget,gizmo",
+      "difficulty": "medium",
+      "category": "records"
+    },
+    {
+      "id": "csv-aggregate",
+      "description": "Given this CSV data (one record per line; fields are region,amount): \"east,10.5\\nwest,4.25\\neast,6.5\\nnorth,3.0\\nwest,2.5\". Sum the amount for each region and print one line per region as \"region: total\" with the total to 2 decimal places, regions in alphabetical order.",
+      "expected_output": "east: 17.00\nnorth: 3.00\nwest: 6.75",
+      "difficulty": "medium",
+      "category": "text-processing"
+    },
+    {
+      "id": "log-level-count",
+      "description": "Given this log text: \"INFO start\\nERROR disk full\\nINFO retry\\nWARN slow\\nERROR timeout\\nINFO done\\nWARN mem high\\nERROR fatal\". Count the lines beginning with each of ERROR, WARN and INFO, and print exactly three lines in that order: \"ERROR=<n>\", \"WARN=<n>\", \"INFO=<n>\".",
+      "expected_output": "ERROR=3\nWARN=2\nINFO=3",
+      "difficulty": "medium",
+      "category": "text-processing"
+    },
+    {
+      "id": "weekday-of-date",
+      "description": "Compute the day of the week of 2026-09-18 using Zeller's congruence, without a date library. Print the English day name in lower case.",
+      "expected_output": "friday",
+      "difficulty": "hard",
+      "category": "date-math"
+    },
+    {
+      "id": "least-squares-slope",
+      "description": "Fit a least-squares straight line to the points (1,2), (2,4), (3,5), (4,4), (5,5). Print \"slope=S\" then \"intercept=I\", each rounded to 2 decimal places.",
+      "expected_output": "slope=0.60\nintercept=2.20",
+      "difficulty": "hard",
+      "category": "numeric"
+    },
+    {
+      "id": "kmeans-assign",
+      "description": "Given the 1-D points [1, 2, 3, 10, 11, 12] and two fixed centroids at 2 and 11, assign each point to the nearer centroid (a tie goes to the first). Print the assignment of each point in input order as a comma-separated list of 0/1, where 0 is the first centroid; then print the mean of each cluster to 2 decimals as \"c0=<mean>\" and \"c1=<mean>\".",
+      "expected_output": "0,0,0,1,1,1\nc0=2.00\nc1=11.00",
+      "difficulty": "hard",
+      "category": "numeric"
     }
   ]
 }

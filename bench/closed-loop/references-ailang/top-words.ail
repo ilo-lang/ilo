@@ -1,0 +1,39 @@
+-- top-words: "go go stop stop stop run run run run" -> run 4 / stop 3 / go 2.
+-- Run: ailang run -quiet --caps IO top-words.ail
+module bench/top_words
+
+import std/io (println)
+import std/list (foldl, map, filter, length, any, concat, sortBy, take, forEachE)
+import std/string (split)
+
+type Counted = { word: string, n: int }
+
+pure func seen(xs: [string], x: string) -> bool {
+  any(\y. y == x, xs)
+}
+
+-- Unique words, first-occurrence order preserved.
+pure func unique(xs: [string]) -> [string] {
+  foldl(\acc. \x. if seen(acc, x) then acc else concat(acc, [x]), [], xs)
+}
+
+pure func countOf(xs: [string], w: string) -> int {
+  length(filter(\x. x == w, xs))
+}
+
+-- Most frequent first; ties broken alphabetically.
+pure func byCountDesc(a: Counted, b: Counted) -> int {
+  if a.n > b.n then -1
+  else if a.n < b.n then 1
+  else if a.word < b.word then -1
+  else if a.word > b.word then 1
+  else 0
+}
+
+export func main() -> () ! {IO} {
+  let words = split("go go stop stop stop run run run run", " ")
+  let counted = map(\w. { word: w, n: countOf(words, w) }, unique(words))
+  let top3 = take(3, sortBy(byCountDesc, counted))
+  let lines = map(\c. "${c.word} ${show(c.n)}", top3)
+  forEachE(println, lines)
+}

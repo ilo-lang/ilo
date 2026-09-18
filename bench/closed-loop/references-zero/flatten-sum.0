@@ -1,0 +1,38 @@
+// Flatten the nested list [[1, 2], [3, 4], [5]] and sum it.
+// The .0 projection has no nested arrays, so the list is carried as a
+// flat value row plus one length per sublist.
+pub fn main(world: World) -> Void raises {
+    let values: [5]i32 = [1, 2, 3, 4, 5]
+    let lens: [3]i32 = [2, 2, 1]
+    var sum: i32 = 0
+    var emitted: i32 = 0
+    var row: i32 = 0
+    var pos: i32 = 0
+    check world.out.write("flat=")
+    while row < 3 {
+        var k: i32 = 0
+        while k < lens[row] {
+            if emitted > 0 {
+                check world.out.write(" ")
+            }
+            var b: [12]u8 = [0_u8; 12]
+            let m: Maybe<Span<u8>> = std.fmt.i32(b, values[pos + k])
+            if m.has {
+                check world.out.write(m.value)
+            }
+            sum = sum + values[pos + k]
+            emitted = emitted + 1
+            k = k + 1
+        }
+        pos = pos + lens[row]
+        row = row + 1
+    }
+    check world.out.write("\n")
+    check world.out.write("sum=")
+    var sb: [12]u8 = [0_u8; 12]
+    let sm: Maybe<Span<u8>> = std.fmt.i32(sb, sum)
+    if sm.has {
+        check world.out.write(sm.value)
+    }
+    check world.out.write("\n")
+}

@@ -1,0 +1,62 @@
+# Task: record-summary — total value of three records, names over 40
+# float_to_string is %g-style, so 2-decimal output is built from integer cents.
+struct Line {
+    name: string,
+    qty: int,
+    price: float
+}
+
+fn line_value(l: Line) -> float {
+    return (* (cast_float l.qty) l.price)
+}
+
+shadow line_value {
+    assert (== (line_value Line { name: "w", qty: 10, price: 5.0 }) 50.0)
+    assert (== (line_value Line { name: "x", qty: 0, price: 9.0 }) 0.0)
+}
+
+fn fmt2(x: float) -> string {
+    let cents: int = (cast_int (round (* x 100.0)))
+    let frac: int = (% cents 100)
+    let mut frac_s: string = (int_to_string frac)
+    if (< frac 10) {
+        set frac_s (str_concat "0" frac_s)
+    }
+    return (str_concat (str_concat (int_to_string (/ cents 100)) ".") frac_s)
+}
+
+shadow fmt2 {
+    assert (str_equals (fmt2 151.0) "151.00")
+    assert (str_equals (fmt2 6.75) "6.75")
+    assert (str_equals (fmt2 0.6) "0.60")
+    assert (str_equals (fmt2 3.0) "3.00")
+}
+
+fn main() -> int {
+    let a: Line = Line { name: "widget", qty: 10, price: 5.0 }
+    let b: Line = Line { name: "gadget", qty: 3, price: 15.0 }
+    let c: Line = Line { name: "gizmo", qty: 7, price: 8.0 }
+    let items: array<Line> = [a, b, c]
+    let mut total: float = 0.0
+    let mut over: string = ""
+    let mut i: int = 0
+    while (< i (array_length items)) {
+        let l: Line = (at items i)
+        let v: float = (line_value l)
+        set total (+ total v)
+        if (> v 40.0) {
+            if (> (str_length over) 0) {
+                set over (str_concat over ",")
+            }
+            set over (str_concat over l.name)
+        }
+        set i (+ i 1)
+    }
+    (println (str_concat "total=" (fmt2 total)))
+    (println (str_concat "over=" over))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

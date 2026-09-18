@@ -13,7 +13,7 @@ pub fn main(world: World) -> Void raises {
         check world.out.write(m1.value)
     }
     check world.out.write("\n")
-    let m2: Maybe<Span<u8>> = std.fmt.i32(out2, safe_div(10, 0))
+    let m2: Maybe<Span<u8>> = std.fmt.i32(out2, safe_div(5, 0))
     if m2.has {
         check world.out.write(m2.value)
     }

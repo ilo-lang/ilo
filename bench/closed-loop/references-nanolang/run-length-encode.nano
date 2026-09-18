@@ -1,0 +1,39 @@
+# Task: run-length-encode — "aaabbccccd" -> "a3b2c4d1"
+fn rle(text: string) -> string {
+    let mut out: string = ""
+    let n: int = (str_length text)
+    let mut i: int = 0
+    while (< i n) {
+        let c: int = (char_at text i)
+        let mut count: int = 1
+        set i (+ i 1)
+        let mut counting: bool = true
+        while (and counting (< i n)) {
+            if (== (char_at text i) c) {
+                set count (+ count 1)
+                set i (+ i 1)
+            } else {
+                set counting false
+            }
+        }
+        set out (str_concat out (string_from_char c))
+        set out (str_concat out (int_to_string count))
+    }
+    return out
+}
+
+shadow rle {
+    assert (str_equals (rle "aaabbccccd") "a3b2c4d1")
+    assert (str_equals (rle "a") "a1")
+    assert (str_equals (rle "abab") "a1b1a1b1")
+    assert (str_equals (rle "") "")
+}
+
+fn main() -> int {
+    (println (rle "aaabbccccd"))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

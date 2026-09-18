@@ -1,0 +1,32 @@
+# Task: gcd-lcm — gcd(48,18)=6, lcm(48,18)=144
+fn gcd(a: int, b: int) -> int {
+    if (== b 0) {
+        return a
+    }
+    return (gcd b (% a b))
+}
+
+shadow gcd {
+    assert (== (gcd 48 18) 6)
+    assert (== (gcd 18 48) 6)
+    assert (== (gcd 7 13) 1)
+}
+
+fn lcm(a: int, b: int) -> int {
+    return (/ (* a b) (gcd a b))
+}
+
+shadow lcm {
+    assert (== (lcm 48 18) 144)
+    assert (== (lcm 4 6) 12)
+}
+
+fn main() -> int {
+    (println (str_concat "gcd=" (int_to_string (gcd 48 18))))
+    (println (str_concat "lcm=" (int_to_string (lcm 48 18))))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

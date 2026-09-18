@@ -1,0 +1,25 @@
+-- run-length-encode: "aaabbccccd" -> a3b2c4d1.
+-- Run: ailang run -quiet --caps IO run-length-encode.ail
+module bench/run_length_encode
+
+import std/io (println)
+import std/list (foldl, last, take, length, concat, map)
+import std/string (chars, join, intToStr)
+
+type Run = { ch: string, n: int }
+
+-- Append c to the runs: extend the trailing run on a match, else start a new run.
+pure func push(rs: [Run], c: string) -> [Run] {
+  match last(rs) {
+    Some(r) =>
+      if r.ch == c
+        then concat(take(length(rs) - 1, rs), [{ ch: c, n: r.n + 1 }])
+        else concat(rs, [{ ch: c, n: 1 }]),
+    None => [{ ch: c, n: 1 }]
+  }
+}
+
+export func main() -> () ! {IO} {
+  let runs = foldl(\rs. \c. push(rs, c), [], chars("aaabbccccd"))
+  println(join("", map(\r. "${r.ch}${intToStr(r.n)}", runs)))
+}

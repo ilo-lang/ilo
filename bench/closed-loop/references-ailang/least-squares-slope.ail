@@ -1,0 +1,49 @@
+-- least-squares-slope: fit points (1,2),(2,4),(3,5),(4,4),(5,5) -> slope=0.60, intercept=2.20.
+-- Run: ailang run -quiet --caps IO least-squares-slope.ail
+module bench/least_squares_slope
+
+import std/io (println)
+import std/list (foldl, nth, length, concat, map)
+import std/string (intToStr)
+import std/math (round, floatToInt, intToFloat)
+
+-- Zero-pad fraction part: 5 -> "05".
+pure func pad2(n: int) -> string {
+  if n < 10 then "0${intToStr(n)}" else intToStr(n)
+}
+
+-- Format number exactly two decimals: 0.6 -> "0.60".
+pure func money2(x: float) -> string {
+  let cents = floatToInt(round(x * 100.0))
+  "${intToStr(cents / 100)}.${pad2(cents % 100)}"
+}
+
+-- Ascending [a..b]; [] when a > b.
+pure func range(a: int, b: int) -> [int] {
+  if a > b then [] else concat([a], range(a + 1, b))
+}
+
+pure func at(xs: [float], i: int) -> float {
+  match nth(xs, i) {
+    Some(v) => v,
+    None => 0.0
+  }
+}
+
+pure func sum(xs: [float]) -> float {
+  foldl(\acc. \x. acc + x, 0.0, xs)
+}
+
+export func main() -> () ! {IO} {
+  let xs = [1.0, 2.0, 3.0, 4.0, 5.0]
+  let ys = [2.0, 4.0, 5.0, 4.0, 5.0]
+  let n = intToFloat(length(xs))
+  let mx = sum(xs) / n
+  let my = sum(ys) / n
+  let num = foldl(\acc. \i. acc + (at(xs, i) - mx) * (at(ys, i) - my), 0.0, range(0, length(xs) - 1))
+  let den = foldl(\acc. \i. acc + (at(xs, i) - mx) * (at(xs, i) - mx), 0.0, range(0, length(xs) - 1))
+  let slope = num / den
+  let intercept = my - slope * mx
+  println("slope=${money2(slope)}")
+  println("intercept=${money2(intercept)}")
+}

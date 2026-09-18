@@ -1,0 +1,24 @@
+-- weekday-of-date: Zeller's congruence for 2026-09-18 -> friday.
+-- Run: ailang run -quiet --caps IO weekday-of-date.ail
+module bench/weekday_of_date
+
+import std/io (println)
+import std/list (nth)
+
+-- Zeller's congruence: returns 0=Saturday, 1=Sunday, ..., 6=Friday.
+pure func zeller(y: int, m: int, q: int) -> int {
+  let yy = if m < 3 then y - 1 else y
+  let mm = if m < 3 then m + 12 else m
+  let k = yy % 100
+  let j = yy / 100
+  let term = q + (13 * (mm + 1)) / 5 + k + k / 4 + j / 4 + 5 * j
+  term % 7
+}
+
+export func main() -> () ! {IO} {
+  let names = ["saturday", "sunday", "monday", "tuesday", "wednesday", "thursday", "friday"]
+  match nth(names, zeller(2026, 9, 18)) {
+    Some(day) => println(day),
+    None => println("")
+  }
+}

@@ -1,0 +1,46 @@
+# Task: flatten-sum — flatten [[1,2],[3,4],[5]] and sum it
+fn sum_nested(xs: array<array<int>>) -> int {
+    let mut total: int = 0
+    let mut i: int = 0
+    while (< i (array_length xs)) {
+        let inner: array<int> = (at xs i)
+        let mut j: int = 0
+        while (< j (array_length inner)) {
+            set total (+ total (at inner j))
+            set j (+ j 1)
+        }
+        set i (+ i 1)
+    }
+    return total
+}
+
+shadow sum_nested {
+    let nested: array<array<int>> = [[1, 2], [3, 4], [5]]
+    assert (== (sum_nested nested) 15)
+    assert (== (sum_nested []) 0)
+}
+
+fn main() -> int {
+    let nested: array<array<int>> = [[1, 2], [3, 4], [5]]
+    let mut flat: string = ""
+    let mut i: int = 0
+    while (< i (array_length nested)) {
+        let inner: array<int> = (at nested i)
+        let mut j: int = 0
+        while (< j (array_length inner)) {
+            if (> (str_length flat) 0) {
+                set flat (str_concat flat " ")
+            }
+            set flat (str_concat flat (int_to_string (at inner j)))
+            set j (+ j 1)
+        }
+        set i (+ i 1)
+    }
+    (println (str_concat "flat=" flat))
+    (println (str_concat "sum=" (int_to_string (sum_nested nested))))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

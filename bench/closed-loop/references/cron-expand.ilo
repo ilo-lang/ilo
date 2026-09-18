@@ -1,0 +1,6 @@
+expand ps:L t>L n
+  ? (= (len ps) 1) [(default-on-err (num (at ps 0)) 0)] (range (default-on-err (num (at ps 0)) 0) (+ (default-on-err (num (at ps 1)) 0) 1))
+field s:t>L n
+  flat (map (p:t>L n;expand (spl p "-")) (spl s ","))
+main>t
+  cat (map (v:n>t;str v) (field "1-3,7,9-10")) " "

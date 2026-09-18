@@ -1,0 +1,62 @@
+# Task: weekday-of-date — day of week of 2026-09-18 via Zeller's congruence
+fn zeller(q: int, m: int, year: int) -> int {
+    # January and February count as months 13 and 14 of the previous year.
+    let mut mm: int = m
+    let mut y: int = year
+    if (< mm 3) {
+        set mm (+ mm 12)
+        set y (- y 1)
+    }
+    let k: int = (% y 100)
+    let j: int = (/ y 100)
+    let t1: int = (+ q (/ (* 13 (+ mm 1)) 5))
+    let t2: int = (+ t1 k)
+    let t3: int = (+ t2 (/ k 4))
+    let t4: int = (+ t3 (/ j 4))
+    let h: int = (% (+ t4 (* 5 j)) 7)
+    return h
+}
+
+shadow zeller {
+    # 2026-09-18 is a Friday: h = 6
+    assert (== (zeller 18 9 2026) 6)
+    # 2000-01-01 was a Saturday: h = 0
+    assert (== (zeller 1 1 2000) 0)
+}
+
+fn day_name(h: int) -> string {
+    # Zeller: 0=Saturday .. 6=Friday
+    if (== h 0) {
+        return "saturday"
+    }
+    if (== h 1) {
+        return "sunday"
+    }
+    if (== h 2) {
+        return "monday"
+    }
+    if (== h 3) {
+        return "tuesday"
+    }
+    if (== h 4) {
+        return "wednesday"
+    }
+    if (== h 5) {
+        return "thursday"
+    }
+    return "friday"
+}
+
+shadow day_name {
+    assert (str_equals (day_name 6) "friday")
+    assert (str_equals (day_name 0) "saturday")
+}
+
+fn main() -> int {
+    (println (day_name (zeller 18 9 2026)))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

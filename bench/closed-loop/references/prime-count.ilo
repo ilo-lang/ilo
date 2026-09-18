@@ -1,0 +1,6 @@
+isprime n:n>b
+  c=len (flt (d:n>b;= (mod n d) 0) (range 2 n))
+  = c 0
+main>t
+  ps=flt (n:n>b;isprime n) (range 2 30)
+  fmt "count={}\nlargest={}" (len ps) (at ps -1)

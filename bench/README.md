@@ -23,9 +23,10 @@ index below, then jump to the section you need:
 | `run.sh` | Runtime micro-suite (5 micro-benchmarks × 5 engines) | shell + inline python | §1 |
 | `results.json`, `perf-table.md` | Micro-suite output + generated table | — | §1 |
 | `fib/ hof/ listproc/ pattern-match/ sum-loop/` | Micro-benchmark sources (`.ilo .rs .js .py` each) | `run.sh` | hand |
-| `closed-loop/tasks.json` | 8 LLM tasks (the task set the invite shares) | — | hand |
+| `closed-loop/tasks.json` | 24 LLM tasks (the task set the invite shares) | — | hand |
 | `closed-loop/references*/` | Reference solutions per language (incl. `references-bash`) | — | hand |
 | `closed-loop-<date>-*.{json,md}` | Closed-loop run output | `scripts/closed-loop-bench.py` | §2 |
+| `report.html` | Rendered view of the run JSONs (one table per task, all legs) | `scripts/closed-loop-report-html.py` | §2 |
 | `comparators/` | Multi-language comparator legs (clone + build + run) | `comparators/comparator-matrix.sh` | §3 |
 | `zero/` | Zero comparator wrapper, rerun script, verified `.0` tasks | §4 | §4 |
 | `variance/ variance-cold/ variance-local/` | Repeat runs for spread, per arm | `--output-dir` + `summarize-variance.py` | §5 |
@@ -127,7 +128,7 @@ DEEPSEEK_API_KEY=sk-... python3 scripts/closed-loop-bench.py --model dsflash --c
 | `--context` | `curated` | ilo resident spec: `curated` (~4.1k), `full` (pre-G2), `core` (G2 experiment arm) |
 | `--align` / `--no-align` | aligned | Spec in the system message + append-only repair. `--no-align` is the legacy shape (spec in user turn, repair rewrites it) |
 | `--retry-cap N` | 5 | Max repair attempts per task |
-| `--task ID` | all 8 | Run a single task (see `bench/closed-loop/tasks.json`) |
+| `--task ID` | all 24 | Run a single task (see `bench/closed-loop/tasks.json`) |
 | `--python` | off | Shorthand for the Python baseline leg (`--lang2-name python --lang2-bin python3 --lang2-ext .py`) |
 | `--lang2-name/-bin/-ext` | — | Any second language CLI: invoked as `LANG file.ext`, must exit non-zero on error |
 | `--lang2-docs PATH` | — | Your language's spec, injected into *its* system prompt at parity with ilo's curated spec |
@@ -137,17 +138,40 @@ DEEPSEEK_API_KEY=sk-... python3 scripts/closed-loop-bench.py --model dsflash --c
 Outputs land in `bench/` (or `--output-dir`):
 
 ```
-closed-loop-<date>-<cache>[-align][-context].json   structured dataset
-closed-loop-<date>-<cache>[-align][-context].md     writeup + headline table
+closed-loop-<date>-<cache>[-align][-context][-<leg>].json   structured dataset
+closed-loop-<date>-<cache>[-align][-context][-<leg>].md     writeup + headline table
 ```
 
+The `-<leg>` suffix is the `--lang2-name` of the comparator, so the matrix's
+legs never overwrite each other's file; re-rendering (`closed-loop-report-html.py`)
+merges the leg files of one sweep back into a single tab.
+
 Per task/lang/model the JSON records `generation_tokens`,
-`repair_tokens_by_turn`, `input_tokens` (with provider cache hit/miss), 
-`attempts_to_success`, `success_rate`, `wall_time_s`, `final_outcome`.
+`generated_chars` / `final_code_chars` / `code_chars_by_turn` (characters of the
+emitted *code*, reasoning excluded — the density metric), `repair_tokens_by_turn`,
+`input_tokens` (with provider cache hit/miss), `attempts_to_success`,
+`success_rate`, `wall_time_s`, `final_outcome`.
+
+**Task descriptions are language-neutral, and enforced.** Every leg receives
+`tasks.json`'s `description` verbatim, so a description that names a language or
+API biases every other leg while looking like a language result. The harness
+refuses to start if any description contains a language name or a language-
+specific identifier (`check_language_neutral`); the failure it prevents was real
+— an earlier sweep told the Zero, bash, AILANG, NanoLang and MoonBit legs to
+"Write an ilo program".
 
 **Doc parity matters.** Always pass `--lang2-docs`. Comparing a language
 without its spec in-context measures documentation, not the language — the same
 reason the ilo arm carries its curated spec.
+
+### Reading the results
+
+`python3 scripts/closed-loop-report-html.py` -> `bench/report.html`:
+self-contained HTML (no CDN, no network) rendered *from* the run JSONs, so any
+run already on disk re-renders without re-spending tokens. It merges the leg
+files of one sweep into one tab and leads with one table per task, every
+language side by side. Tab labels come from the rows, not the filename --
+filenames have lied before (`warm-from-log`).
 
 ## 3. Comparator matrix
 

@@ -1,0 +1,38 @@
+// Remove duplicates from [3, 1, 3, 2, 1, 4], keeping first occurrences.
+pub fn main(world: World) -> Void raises {
+    let input: [6]i32 = [3, 1, 3, 2, 1, 4]
+    var kept: [6]i32 = [0, 0, 0, 0, 0, 0]
+    var n: i32 = 0
+    var i: i32 = 0
+    while i < 6 {
+        var seen: Bool = false
+        var j: i32 = 0
+        while j < n {
+            if input[i] == kept[j] {
+                seen = true
+            }
+            j = j + 1
+        }
+        if !seen {
+            kept[n] = input[i]
+            n = n + 1
+        }
+        i = i + 1
+    }
+    var first: Bool = true
+    var k: i32 = 0
+    while k < n {
+        if first {
+            first = false
+        } else {
+            check world.out.write(" ")
+        }
+        var b: [12]u8 = [0_u8; 12]
+        let m: Maybe<Span<u8>> = std.fmt.i32(b, kept[k])
+        if m.has {
+            check world.out.write(m.value)
+        }
+        k = k + 1
+    }
+    check world.out.write("\n")
+}

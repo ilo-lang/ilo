@@ -1,0 +1,55 @@
+// Record summary: total value (quantity * price) over three records,
+// then the names whose value exceeds 40. Prices carry 2 decimals, so
+// values are integer cents. The .0 projection has no struct
+// declarations and no float formatting, so records are parallel arrays
+// with names as (offset, len) into one backing literal.
+fn writeCents(world: World, cents: i32) -> Void raises {
+    var ib: [12]u8 = [0_u8; 12]
+    let im: Maybe<Span<u8>> = std.fmt.i32(ib, cents / 100)
+    if im.has {
+        check world.out.write(im.value)
+    }
+    check world.out.write(".")
+    var cb: [12]u8 = [0_u8; 12]
+    let cm: Maybe<Span<u8>> = std.fmt.i32(cb, cents % 100)
+    if cm.has {
+        var pb: [16]u8 = [0_u8; 16]
+        let pm: Maybe<Span<u8>> = std.fmt.padLeft(pb, cm.value, 2, 48_u8)
+        if pm.has {
+            check world.out.write(pm.value)
+        }
+    }
+}
+
+pub fn main(world: World) -> Void raises {
+    let names: String = "widgetgadgetgizmo"
+    let nameStart: [3]usize = [0, 6, 12]
+    let nameLen: [3]usize = [6, 6, 5]
+    let qty: [3]i32 = [10, 3, 7]
+    let priceCents: [3]i32 = [500, 1500, 800]
+    let text: Span<u8> = std.mem.span(names)
+    var totalCents: i32 = 0
+    var i: i32 = 0
+    while i < 3 {
+        totalCents = totalCents + qty[i] * priceCents[i]
+        i = i + 1
+    }
+    check world.out.write("total=")
+    check writeCents(world, totalCents)
+    check world.out.write("\n")
+    check world.out.write("over=")
+    var first: Bool = true
+    i = 0
+    while i < 3 {
+        if qty[i] * priceCents[i] > 4000 {
+            if first {
+                first = false
+            } else {
+                check world.out.write(",")
+            }
+            check world.out.write(std.mem.slice(text, nameStart[i], nameLen[i]))
+        }
+        i = i + 1
+    }
+    check world.out.write("\n")
+}

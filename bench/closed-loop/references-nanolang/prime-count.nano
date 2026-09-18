@@ -1,0 +1,43 @@
+# Task: prime-count — 10 primes below 30, largest is 29
+fn is_prime(n: int) -> bool {
+    if (< n 2) {
+        return false
+    }
+    let mut i: int = 2
+    while (<= (* i i) n) {
+        if (== (% n i) 0) {
+            return false
+        }
+        set i (+ i 1)
+    }
+    return true
+}
+
+shadow is_prime {
+    assert (== (is_prime 2) true)
+    assert (== (is_prime 29) true)
+    assert (== (is_prime 9) false)
+    assert (== (is_prime 25) false)
+    assert (== (is_prime 1) false)
+    assert (== (is_prime 4) false)
+}
+
+fn main() -> int {
+    let mut count: int = 0
+    let mut largest: int = 0
+    let mut n: int = 2
+    while (< n 30) {
+        if (is_prime n) {
+            set count (+ count 1)
+            set largest n
+        }
+        set n (+ n 1)
+    }
+    (println (str_concat "count=" (int_to_string count)))
+    (println (str_concat "largest=" (int_to_string largest)))
+    return 0
+}
+
+shadow main {
+    assert (== (main) 0)
+}

@@ -1,0 +1,62 @@
+-- pipeline-report: revenue = qty * price; keep revenue > 20; sort desc; print "name: revenue".
+-- Run: ailang run -quiet --caps IO,Env pipeline-report.ail
+module bench/pipeline_report
+
+import std/io (println)
+import std/string (split, stringToInt, stringToFloat, intToStr)
+import std/list (map, filter, sortBy, flatMap, nth, forEachE)
+import std/math (round, floatToInt, intToFloat)
+
+type Product = { name: string, revenue: float }
+
+-- Zero-pad a fraction part: 5 -> "05".
+pure func pad2(n: int) -> string {
+  if n < 10 then "0${intToStr(n)}" else intToStr(n)
+}
+
+-- Format a revenue to exactly two decimals: 56.0 -> "56.00".
+pure func money2(x: float) -> string {
+  let cents = floatToInt(round(x * 100.0))
+  "${intToStr(cents / 100)}.${pad2(cents % 100)}"
+}
+
+-- Parse one "name:qty:price" record into [Product]; [] when malformed.
+pure func parseRecord(rec: string) -> [Product] {
+  let parts = split(rec, ":")
+  match nth(parts, 0) {
+    Some(name) =>
+      match nth(parts, 1) {
+        Some(qty) =>
+          match nth(parts, 2) {
+            Some(price) =>
+              match stringToInt(qty) {
+                Some(q) =>
+                  match stringToFloat(price) {
+                    Some(p) => [{ name: name, revenue: intToFloat(q) * p }],
+                    None => []
+                  },
+                None => []
+              },
+            None => []
+          },
+        None => []
+      },
+    None => []
+  }
+}
+
+-- Comparison for descending revenue order.
+pure func byRevenueDesc(a: Product, b: Product) -> int {
+  if a.revenue > b.revenue then -1
+  else if a.revenue < b.revenue then 1
+  else 0
+}
+
+export func main() -> () ! {IO} {
+  let raw = "widget:10:5.00,gadget:3:15.00,gizmo:7:8.00,tool:2:20.00,book:15:2.00"
+  let products = flatMap(parseRecord, split(raw, ","))
+  let big = filter(\p. p.revenue > 20.0, products)
+  let sorted = sortBy(byRevenueDesc, big)
+  let lines = map(\p. "${p.name}: ${money2(p.revenue)}", sorted)
+  forEachE(println, lines)
+}

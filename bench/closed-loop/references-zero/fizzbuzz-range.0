@@ -1,0 +1,27 @@
+// Classic FizzBuzz over 1..15, comma-separated on one line.
+pub fn main(world: World) -> Void raises {
+    var i: i32 = 1
+    var first: Bool = true
+    while i <= 15 {
+        if first {
+            first = false
+        } else {
+            check world.out.write(",")
+        }
+        if i % 15 == 0 {
+            check world.out.write("FizzBuzz")
+        } else if i % 3 == 0 {
+            check world.out.write("Fizz")
+        } else if i % 5 == 0 {
+            check world.out.write("Buzz")
+        } else {
+            var b: [12]u8 = [0_u8; 12]
+            let m: Maybe<Span<u8>> = std.fmt.i32(b, i)
+            if m.has {
+                check world.out.write(m.value)
+            }
+        }
+        i = i + 1
+    }
+    check world.out.write("\n")
+}

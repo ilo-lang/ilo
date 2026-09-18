@@ -1,0 +1,76 @@
+// Print the three most frequent words in
+// "go go stop stop stop run run run run", most frequent first, ties
+// broken alphabetically. Words are scanned as (start, len) pairs into
+// the source bytes because span arrays are not supported.
+pub fn main(world: World) -> Void raises {
+    let text: Span<u8> = std.mem.span("go go stop stop stop run run run run")
+    let n: usize = std.mem.len(text)
+    var starts: [9]usize = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var lens: [9]usize = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var words: usize = 0
+    var i: usize = 0
+    var start: usize = 0
+    while i <= n {
+        if i == n || text[i] == 32_u8 {
+            if i > start {
+                starts[words] = start
+                lens[words] = i - start
+                words = words + 1
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    var dstart: [9]usize = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var dlen: [9]usize = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var dcount: [9]usize = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var used: [9]usize = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var distinct: usize = 0
+    var w: usize = 0
+    while w < words {
+        var d: usize = 0
+        var found: usize = 9
+        while d < distinct {
+            if std.mem.eqlBytes(std.mem.slice(text, starts[w], lens[w]), std.mem.slice(text, dstart[d], dlen[d])) {
+                found = d
+            }
+            d = d + 1
+        }
+        if found == 9 {
+            dstart[distinct] = starts[w]
+            dlen[distinct] = lens[w]
+            dcount[distinct] = 1
+            distinct = distinct + 1
+        } else {
+            dcount[found] = dcount[found] + 1
+        }
+        w = w + 1
+    }
+    var rank: usize = 0
+    while rank < 3 {
+        var best: usize = 9
+        var d: usize = 0
+        while d < distinct {
+            if used[d] == 0 {
+                if best == 9 {
+                    best = d
+                } else if dcount[d] > dcount[best] {
+                    best = d
+                } else if dcount[d] == dcount[best] && std.mem.compareBytes(std.mem.slice(text, dstart[d], dlen[d]), std.mem.slice(text, dstart[best], dlen[best])) < 0 {
+                    best = d
+                }
+            }
+            d = d + 1
+        }
+        used[best] = 1
+        check world.out.write(std.mem.slice(text, dstart[best], dlen[best]))
+        check world.out.write(" ")
+        var b: [12]u8 = [0_u8; 12]
+        let m: Maybe<Span<u8>> = std.fmt.usize(b, dcount[best])
+        if m.has {
+            check world.out.write(m.value)
+        }
+        check world.out.write("\n")
+        rank = rank + 1
+    }
+}

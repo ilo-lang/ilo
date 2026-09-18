@@ -1,0 +1,18 @@
+-- flatten-sum: [[1,2],[3,4],[5]] -> flat=1 2 3 4 5, sum=15.
+-- Run: ailang run -quiet --caps IO flatten-sum.ail
+module bench/flatten_sum
+
+import std/io (println)
+import std/list (flatMap, foldl, map)
+import std/string (intToStr, join)
+
+pure func sum(xs: [int]) -> int {
+  foldl(\acc. \x. acc + x, 0, xs)
+}
+
+export func main() -> () ! {IO} {
+  let rows = [[1, 2], [3, 4], [5]]
+  let flat = flatMap(\row. row, rows)
+  println("flat=${join(" ", map(intToStr, flat))}")
+  println("sum=${show(sum(flat))}")
+}

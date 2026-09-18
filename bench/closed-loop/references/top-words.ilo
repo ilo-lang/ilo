@@ -1,0 +1,7 @@
+main>t
+  ws=spl "go go stop stop stop run run run run" " "
+  us=srt (unq ws)
+  cs=map (w:t>n;ct (x:t>b;= x w) ws) us
+  order=argsort (map (c:n>n;(- 0 c)) cs)
+  cat (map (i:n>t;fmt "{} {}" (at us i) (at cs i)) (take 3 order)) "\n"
+

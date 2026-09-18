@@ -1,0 +1,45 @@
+-- text-analysis: word/char counts, average word length, longest and shortest word.
+-- Run: ailang run -quiet --caps IO,Env text-analysis.ail
+module bench/text_analysis
+
+import std/io (println)
+import std/list (head, tail, foldl, length)
+import std/string as S
+import std/math (round, floatToInt, intToFloat)
+
+-- Sum of word lengths.
+pure func totalLen(ws: [string]) -> int {
+  foldl(\acc. \w. acc + S.length(w), 0, ws)
+}
+
+-- First longest word (ties keep the earlier word).
+pure func longestWord(ws: [string]) -> string {
+  match head(ws) {
+    Some(first) => foldl(\acc. \w. if S.length(w) > S.length(acc) then w else acc, first, tail(ws)),
+    None => ""
+  }
+}
+
+-- First shortest word (ties keep the earlier word).
+pure func shortestWord(ws: [string]) -> string {
+  match head(ws) {
+    Some(first) => foldl(\acc. \w. if S.length(w) < S.length(acc) then w else acc, first, tail(ws)),
+    None => ""
+  }
+}
+
+-- Average word length rounded to exactly one decimal: 49/13 -> "3.8".
+pure func avgLen1(total: int, count: int) -> string {
+  let tenths = floatToInt(round(intToFloat(total) / intToFloat(count) * 10.0))
+  "${S.intToStr(tenths / 10)}.${S.intToStr(tenths % 10)}"
+}
+
+export func main() -> () ! {IO} {
+  let text = "the quick brown fox jumps over the lazy dog the fox runs fast"
+  let ws = S.words(text)
+  println("words=${length(ws)}")
+  println("chars=${S.length(text)}")
+  println("avg_len=${avgLen1(totalLen(ws), length(ws))}")
+  println("longest=${longestWord(ws)}")
+  println("shortest=${shortestWord(ws)}")
+}

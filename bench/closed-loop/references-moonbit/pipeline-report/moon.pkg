@@ -1,0 +1,6 @@
+// task: pipeline-report — imports
+import {
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")

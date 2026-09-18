@@ -1,0 +1,70 @@
+// Assign the 1-D points [1, 2, 3, 10, 11, 12] to the nearer of the
+// fixed centroids 2 and 11 (ties to the first), then report each
+// cluster mean with 2 decimals. Means are exact here, so they are
+// computed in integer hundredths.
+fn dist(p: i32, c: i32) -> i32 {
+    var d: i32 = p - c
+    if d < 0 {
+        d = 0 - d
+    }
+    return d
+}
+
+fn writeCents(world: World, cents: i32) -> Void raises {
+    var ib: [12]u8 = [0_u8; 12]
+    let im: Maybe<Span<u8>> = std.fmt.i32(ib, cents / 100)
+    if im.has {
+        check world.out.write(im.value)
+    }
+    check world.out.write(".")
+    var cb: [12]u8 = [0_u8; 12]
+    let cm: Maybe<Span<u8>> = std.fmt.i32(cb, cents % 100)
+    if cm.has {
+        var pb: [16]u8 = [0_u8; 16]
+        let pm: Maybe<Span<u8>> = std.fmt.padLeft(pb, cm.value, 2, 48_u8)
+        if pm.has {
+            check world.out.write(pm.value)
+        }
+    }
+}
+
+pub fn main(world: World) -> Void raises {
+    let pts: [6]i32 = [1, 2, 3, 10, 11, 12]
+    var sum0: i32 = 0
+    var n0: i32 = 0
+    var sum1: i32 = 0
+    var n1: i32 = 0
+    var first: Bool = true
+    var i: i32 = 0
+    while i < 6 {
+        var c: i32 = 1
+        if dist(pts[i], 2) <= dist(pts[i], 11) {
+            c = 0
+        }
+        if first {
+            first = false
+        } else {
+            check world.out.write(",")
+        }
+        var b: [12]u8 = [0_u8; 12]
+        let m: Maybe<Span<u8>> = std.fmt.i32(b, c)
+        if m.has {
+            check world.out.write(m.value)
+        }
+        if c == 0 {
+            sum0 = sum0 + pts[i]
+            n0 = n0 + 1
+        } else {
+            sum1 = sum1 + pts[i]
+            n1 = n1 + 1
+        }
+        i = i + 1
+    }
+    check world.out.write("\n")
+    check world.out.write("c0=")
+    check writeCents(world, sum0 * 100 / n0)
+    check world.out.write("\n")
+    check world.out.write("c1=")
+    check writeCents(world, sum1 * 100 / n1)
+    check world.out.write("\n")
+}

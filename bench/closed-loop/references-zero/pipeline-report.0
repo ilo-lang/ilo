@@ -1,0 +1,88 @@
+// Revenue report: parse "name:qty:price" CSV records, keep revenue > 20,
+// sort descending. Prices have 2 decimals, so work in integer cents.
+fn recordRevenue(record: Span<u8>) -> i32 {
+    let qtyText: Maybe<Span<u8>> = std.str.split(record, ":", 1)
+    let priceText: Maybe<Span<u8>> = std.str.split(record, ":", 2)
+    if qtyText.has && priceText.has {
+        let qty: Maybe<i32> = std.parse.parseI32(qtyText.value)
+        let dollars: Maybe<Span<u8>> = std.str.split(priceText.value, ".", 0)
+        let cents: Maybe<Span<u8>> = std.str.split(priceText.value, ".", 1)
+        if qty.has && dollars.has && cents.has {
+            let d: Maybe<i32> = std.parse.parseI32(dollars.value)
+            let c: Maybe<i32> = std.parse.parseI32(cents.value)
+            if d.has && c.has {
+                return qty.value * (d.value * 100 + c.value)
+            }
+        }
+    }
+    return 0
+}
+
+pub fn main(world: World) -> Void raises {
+    let data: String = "widget:10:5.00,gadget:3:15.00,gizmo:7:8.00,tool:2:20.00,book:15:2.00"
+    let text: Span<u8> = std.mem.span(data)
+    let total: usize = std.str.splitCount(text, ",")
+    var revenues: [5]i32 = [0, 0, 0, 0, 0]
+    var order: [5]usize = [0, 1, 2, 3, 4]
+    var count: usize = 0
+    var i: usize = 0
+    while i < total {
+        let record: Maybe<Span<u8>> = std.str.split(text, ",", i)
+        if record.has {
+            let name: Maybe<Span<u8>> = std.str.split(record.value, ":", 0)
+            let revenue: i32 = recordRevenue(record.value)
+            if name.has && revenue > 2000 {
+                revenues[count] = revenue
+                order[count] = i
+                count = count + 1
+            }
+        }
+        i = i + 1
+    }
+    var a: usize = 1
+    while a < count {
+        var b: usize = a
+        while b > 0 {
+            if revenues[b - 1] < revenues[b] {
+                let tr: i32 = revenues[b]
+                revenues[b] = revenues[b - 1]
+                revenues[b - 1] = tr
+                let to: usize = order[b]
+                order[b] = order[b - 1]
+                order[b - 1] = to
+                b = b - 1
+            } else {
+                break
+            }
+        }
+        a = a + 1
+    }
+    var p: usize = 0
+    while p < count {
+        let record: Maybe<Span<u8>> = std.str.split(text, ",", order[p])
+        if record.has {
+            let name: Maybe<Span<u8>> = std.str.split(record.value, ":", 0)
+            if name.has {
+                check world.out.write(name.value)
+                check world.out.write(": ")
+                var dollarBuf: [16]u8 = [0_u8; 16]
+                let dm: Maybe<Span<u8>> = std.fmt.i32(dollarBuf, revenues[p] / 100)
+                if dm.has {
+                    check world.out.write(dm.value)
+                }
+                check world.out.write(".")
+                var centBuf: [16]u8 = [0_u8; 16]
+                let cm: Maybe<Span<u8>> = std.fmt.i32(centBuf, revenues[p] % 100)
+                if cm.has {
+                    var padBuf: [16]u8 = [0_u8; 16]
+                    let pm: Maybe<Span<u8>> = std.fmt.padLeft(padBuf, cm.value, 2, 48_u8)
+                    if pm.has {
+                        check world.out.write(pm.value)
+                    }
+                }
+                check world.out.write("\n")
+            }
+        }
+        p = p + 1
+    }
+}

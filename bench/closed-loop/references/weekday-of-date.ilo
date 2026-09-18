@@ -1,0 +1,9 @@
+zell y:n m:n q:n>n
+  yy=? (< m 3) (- y 1) y
+  mm=? (< m 3) (+ m 12) m
+  k=mod yy 100
+  j=flr (/ yy 100)
+  mod (sum [q (flr (/ (* 13 (+ mm 1)) 5)) k (flr (/ k 4)) (flr (/ j 4)) (* 5 j)]) 7
+main>t
+  ns=["saturday" "sunday" "monday" "tuesday" "wednesday" "thursday" "friday"]
+  at ns (zell 2026 9 18)
