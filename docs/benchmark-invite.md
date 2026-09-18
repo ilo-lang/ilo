@@ -53,4 +53,8 @@ fix. ilo ships its own results first, red rows included — see
 Status, caveats, and known limits of the harness are documented in
 `bench/measurements.md`. PRs against `scripts/closed-loop-bench.py` and
 `bench/closed-loop/tasks.json` welcome — especially task-set additions from
-languages whose strengths the current 5 tasks don't exercise.
+languages whose strengths the current 24 tasks don't exercise. The set
+deliberately spans arithmetic, function composition, transform pipelines,
+records/collections, text and regex, date arithmetic, numerics, and tool/
+environment interaction, with every task's expected output pinned and every
+language's reference solution validated against it.

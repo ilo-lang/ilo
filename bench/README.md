@@ -220,6 +220,11 @@ Behaviour:
   that is missing or not a regular file and **skips the leg** (bundle failure
   also marks the run failed), so a broken path can never be scored as a
   doc-less arm.
+- **Superseded runs** live in `bench/superseded/`, outside the report's glob:
+  a run whose harness had a defect that would misstate the languages (e.g. the
+  2026-09-18 leg that measured a self-imposed `max_tokens` rather than the
+  language). Kept as evidence, never as a number.
+
 - **Runs** the closed-loop leg for every language whose toolchain built, echoing
   the binary and bundle path and teeing the leg's own output to
   `bench/comparators/logs/<name>-leg.log`; build logs are

@@ -267,9 +267,11 @@ the 24-task set. Treat this row as historical until that run lands.
   `comparator-matrix.sh` runs `python` and `bash` first, doc-less, then the
   five spec-carrying legs with their bundled agent docs.
 - **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
-  the five bench tasks were hand-authored as .0 projections and all run
-  correctly through `bench/zero/zero-bench.sh` (init → import → run;
-  outputs 55 / 28 / 41 / hello world / 5,0). Notable toolchain facts: For
+  all 24 bench tasks were hand-authored as `.0` projections and all 24 run
+  byte-exact through `bench/zero/zero-bench.sh` (init → import → run) — the
+  three that needed two rewrites were the ones reaching for unsupported
+  typed-MIR constructs (fixed-array locals, generic slice specialization).
+  Notable toolchain facts: For
   loops are unsupported in the typed-MIR executable path (use while);
   i32 division truncates; borrow rules force split output buffers.
   The LLM comparison itself is **blocked: the DeepSeek key ran out of
