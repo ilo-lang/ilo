@@ -36,9 +36,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-SRC=bench/comparators/src
-LOGS=bench/comparators/logs
-DOCS=bench/comparators/docs
+# Absolute, because the build functions redirect into $LOGS from inside a
+# subshell that has already `cd`-ed into the clone: a relative $LOGS there
+# resolves *under the source tree*, the redirection itself fails, and the leg is
+# skipped as if the toolchain were unsupported. That silently dropped the
+# ailang and nanolang legs on every run.
+ROOT=$(pwd)
+SRC="$ROOT/bench/comparators/src"
+LOGS="$ROOT/bench/comparators/logs"
+DOCS="$ROOT/bench/comparators/docs"
 ZERO_HOME=${ZERO_HOME:-/tmp/agentlangs/zerolang}
 export ZERO_HOME
 mkdir -p "$SRC" "$LOGS" "$DOCS"
@@ -85,13 +91,21 @@ clone() { # clone <repo> <dir>
 
 build_ailang() {
   clone sunholo-data/ailang ailang || return 1
-  (cd "$SRC/ailang" && make build >"$LOGS/ailang.build.log" 2>&1) || return 1
+  # `make build` shells out to `go`. A non-login shell (job runner, cron, CI)
+  # drops /usr/local/go/bin from PATH, the build dies with 127, and the leg
+  # reads as unsupported rather than unbuilt.
+  if ! command -v go >/dev/null 2>&1 && [ -d /usr/local/go/bin ]; then
+    PATH="/usr/local/go/bin:$PATH"
+  fi
+  (cd "$SRC/ailang" && make build >"$LOGS/ailang.build.log" 2>&1) \
+    || { echo "[setup] ailang: build failed — $LOGS/ailang.build.log" >&2; return 1; }
   [ -x "$SRC/ailang/bin/ailang" ] && echo "$SRC/ailang/bin/ailang"
 }
 
 build_nanolang() {
   clone jordanhubbard/nanolang nanolang || return 1
-  (cd "$SRC/nanolang" && make -j4 >"$LOGS/nanolang.build.log" 2>&1) || return 1
+  (cd "$SRC/nanolang" && make -j4 >"$LOGS/nanolang.build.log" 2>&1) \
+    || { echo "[setup] nanolang: build failed — $LOGS/nanolang.build.log" >&2; return 1; }
   # nano is the interpreter: it takes a .nano file and runs it (nanoc transpiles
   # to C first, which the bench's single-argument contract cannot express).
   [ -x "$SRC/nanolang/bin/nano" ] && echo "$SRC/nanolang/bin/nano"
