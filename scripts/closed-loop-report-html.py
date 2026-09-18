@@ -217,6 +217,13 @@ def load_runs(paths: list[Path]) -> list[dict]:
             run["_legs"] = sorted({m["leg"] for m in members if m.get("leg")})
             run["_sources"] = sorted(m["_source"] for m in members)
             run["cache_mode"] = label
+            # A sweep's legs land hours apart and members[0] is only whichever
+            # file the glob listed first, so carry the *latest* leg's stamp:
+            # the header's "newest" would otherwise be the oldest leg's, on a
+            # page whose whole claim is that the JSON is the measurement.
+            stamps = [m["generated"] for m in members if m.get("generated")]
+            if stamps:
+                run["generated"] = max(stamps)
         runs.append(run)
 
     # Oldest → newest so the tab strip reads chronologically; newest is shown.
