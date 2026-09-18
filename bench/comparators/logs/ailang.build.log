@@ -1,4 +1,0 @@
-Building ailang...
-go build -ldflags "-X github.com/sunholo-data/ailang/internal/version.Version=500a7b9c -X github.com/sunholo-data/ailang/internal/version.Commit=500a7b9cc4002fde8ef7fc674168ed3849efeea6 -X github.com/sunholo-data/ailang/internal/version.BuildTime=2026-09-17_22:36:17" -o bin/ailang ./cmd/ailang
-/bin/sh: line 1: go: command not found
-make: *** [make/build.mk:24: build] Error 127

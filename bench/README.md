@@ -155,12 +155,12 @@ Clone + build + run each comparator language in one pass. Clones are cached.
 
 ```sh
 DEEPSEEK_API_KEY=sk-... bench/comparators/comparator-matrix.sh \
-    --langs zero,bash,ailang,nanolang --cache warm
+    --langs zero,bash,ailang,nanolang,moonbit --cache warm
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--langs LIST` | `zero,bash,ailang,nanolang` | Comma-separated subset; also accepts `moonbit` |
+| `--langs LIST` | `zero,bash,ailang,nanolang,moonbit` | Comma-separated subset |
 | `--cache` | `warm` | Passed through to each leg |
 | `--force` | off | Re-clone even if a cached checkout exists |
 
@@ -168,15 +168,54 @@ Behaviour:
 
 - **Clones** each language (shallow) into `bench/comparators/src/<name>/`. That
   path is gitignored and script-managed — never edit it by hand.
-- **Builds** it: `ailang` via `make build`; `nanolang` via `make -j4`;
-  `moonbit` needs the `moon` CLI and clones `moonbitlang/core`.
-- **Runs** the closed-loop leg for every language whose toolchain built, logging
-  to `bench/comparators/logs/<name>.build.log` and `*-leg.log`.
-- A language that fails to build is **reported and skipped, not fatal**.
+- **Builds** it: `ailang` via `make build` (binary `bin/ailang`); `nanolang` via
+  `make -j4` (interpreter `bin/nano`); `moonbit` needs the `moon` CLI and clones
+  `moonbitlang/core` for docs.
+- **Bundles resident docs** per leg into `bench/comparators/docs/<lang>.md` and
+  passes that file as `--lang2-docs` (also gitignored, script-managed). The
+  harness reads `--lang2-docs` as **one text file**; handing it a directory (or
+  a path that does not exist) silently degrades the leg to
+  `(No formal language documentation available …)` — a documentation cost, not
+  a language cost. `docs_bundle` concatenates source files; `zero_docs` captures
+  the CLI-served `zero skills get language|stdlib`. `run_leg` refuses a bundle
+  that is missing or not a regular file and **skips the leg** (bundle failure
+  also marks the run failed), so a broken path can never be scored as a
+  doc-less arm.
+- **Runs** the closed-loop leg for every language whose toolchain built, echoing
+  the binary and bundle path and teeing the leg's own output to
+  `bench/comparators/logs/<name>-leg.log`; build logs are
+  `bench/comparators/logs/<name>.build.log` (untracked, like `src/` and
+  `docs/`).
+- `run_leg` refuses to start without `DEEPSEEK_API_KEY`, and returns the
+  harness's own exit status, so a leg that failed the API still fails the run.
+- A language that fails to build, or whose docs cannot be bundled, is
+  **reported and skipped, not scored**; the script exits non-zero. A skipped
+  leg is never silently scored as a doc-less arm.
+
+**Doc parity sources** (each language's own agent-facing entry point, so every
+leg carries the reference its maintainers publish):
+
+| Leg | `--lang2-docs` bundle sources |
+|---|---|
+| ilo | curated skill modules (`--context curated`) |
+| zero | `zero skills get language` + `stdlib` |
+| ailang | `.agents/skills/use-ailang/SKILL.md` + `AGENTS.md` |
+| nanolang | `AGENTS.md` + `docs/QUICK_REFERENCE.md` |
+| moonbit | `AGENTS.md` + `README.md` (from `moonbitlang/core`) |
+| bash | none — pretraining-native cost floor |
+
+MoonBit's offline reference remains the weakest of the set; that asymmetry is
+recorded rather than hidden.
 
 The `bash` leg needs no build: it is the pretraining-native cost floor
 (zero resident-spec tokens). Per-language reference solutions live in
 `bench/closed-loop/references-<lang>/`.
+
+**Package runners.** `--lang2-bin` is invoked as `LANG file.ext` (one argument).
+`ailang` and `moonbit` resolve modules/packages, not files, so they run through
+`bench/ailang/ailang-bench.sh` and `bench/moonbit/moonbit-bench.sh`, which stage
+the source into a throwaway module root; `zero` does the same via
+`bench/zero/zero-bench.sh`.
 
 **Adding a language:** anything that runs `LANG file.ext` and exits non-zero on
 error works. Add a `build_<name>`/`want <name>` case to `comparator-matrix.sh`,
