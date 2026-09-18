@@ -183,9 +183,24 @@ reason the ilo arm carries its curated spec.
 `python3 scripts/closed-loop-report-html.py` -> `bench/report.html`:
 self-contained HTML (no CDN, no network) rendered *from* the run JSONs, so any
 run already on disk re-renders without re-spending tokens. It merges the leg
-files of one sweep into one tab and leads with one table per task, every
-language side by side. Tab labels come from the rows, not the filename --
-filenames have lied before (`warm-from-log`).
+files of one sweep into one tab and leads with one table per task, every leg
+that tab **measured** side by side. Tab labels come from the rows, not the
+filename -- filenames have lied before (`warm-from-log`).
+
+Every number in those tables is the whole attempt-set — generation tokens,
+input, total, code characters, cost and wall time all fold in retries, repair
+turns and discarded drafts, on both sides. `total` is `gen + input`, priced
+pre-cache; `code chars` is the emitted program only and `chars/att` divides it
+by attempts (reasoning-free, so it compares program size across legs), while
+`tok/char` is the price of a character of code and deliberately *not* density,
+because reasoning dominates the token count.
+
+A leg the sweep never ran is **named in the coverage note** above the tables
+and left out of them — a row of dashes reads like a set of measured zeros,
+which is the one thing it is not. The language table and the head-to-head
+ratios cover the same set of legs for the same reason. Their `working` cell
+counts *measurements*, not task-rows: the matrix measures the ilo arm once per
+comparator leg, so ilo shows `×N` and a row-vs-row count would be unfair to it.
 
 ## 3. Comparator matrix
 
@@ -209,7 +224,9 @@ Behaviour:
   `nanolang`, `moonbit`, each with its maintainers' own agent-facing docs.
 - **Clones** each language (shallow) into `bench/comparators/src/<name>/`. That
   path is gitignored and script-managed — never edit it by hand.
-- **Builds** it: `ailang` via `make build` (binary `bin/ailang`); `nanolang` via
+- **Builds** it: `ailang` via `make build` (binary `bin/ailang` — needs `go`,
+  which the script puts on `PATH` when a non-login shell has dropped it);
+  `nanolang` via
   `make -j4` (interpreter `bin/nano`); `moonbit` needs the `moon` CLI and clones
   `moonbitlang/core` for docs.
 - **Bundles resident docs** per leg into `bench/comparators/docs/<lang>.md` and
