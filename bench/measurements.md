@@ -235,6 +235,16 @@ on glue tasks.** ilo's claim cannot be $/task on this class; it is
 verified density (gates, tools) and the small-model arm. Published as a
 loss per the plan's risk table.
 
+*Caveat on the run that replaced it (2026-09-18).* The first 24-task sweep
+was stopped after one leg: `dsflash`'s reasoning trace exceeded the harness's
+`max_tokens=16384`, so attempts ended with `finish_reason=length` and emitted
+**no code**, which the harness recorded as an ordinary failure — the ilo
+`run-length-encode` row shows `code_chars_by_turn=[329,288,0,0,274]`, two of
+five attempts billing a full cap for nothing. The cap is now 65 536 (the
+endpoint's maximum, probed), every row carries `truncated_attempts`, the CLI
+warns, and the HTML report marks the cell and leads the tab with a banner. That
+leg's output is kept, unmeasured, in `bench/superseded/`.
+
 *Caveat on that row (2026-09-18).* It was measured on the old 8-task set
 under a prompt that named ilo in every task description (see G1 in
 `docs/cadence/2026-09.md`). The bias ran against bash, so the conclusion
@@ -249,6 +259,13 @@ the 24-task set. Treat this row as historical until that run lands.
   agents emit as much bash as Python for glue tasks and bash is
   pretraining-native — **0 resident-spec tokens** — making it the honest
   cost floor ilo competes against.
+- **Python**: leg wired 2026-09-18 alongside bash, and for the same reason —
+  it is the language an agent writes with no resident spec, so it is the
+  comparison the manifesto claim has to survive. Runs doc-less
+  (`--lang2-name python --lang2-bin python3 --lang2-ext .py`); no reference
+  solutions are needed because the model writes the program it is measured on.
+  `comparator-matrix.sh` runs `python` and `bash` first, doc-less, then the
+  five spec-carrying legs with their bundled agent docs.
 - **Zero (vercel-labs/zerolang 0.3.4)**: pipeline built and validated —
   the five bench tasks were hand-authored as .0 projections and all run
   correctly through `bench/zero/zero-bench.sh` (init → import → run;

@@ -6,13 +6,14 @@
 # Clones are cached: re-runs skip setup unless --force.
 #
 # Usage:
-#   DEEPSEEK_API_KEY=sk-... bench/comparators/comparator-matrix.sh [--langs zero,bash,ailang,nanolang,moonbit] [--force] [--cache warm|cold]
+#   DEEPSEEK_API_KEY=sk-... bench/comparators/comparator-matrix.sh [--langs python,bash,zero,ailang,nanolang,moonbit] [--force] [--cache warm|cold]
 #
 # Any language whose build fails is reported and skipped, not fatal.
 #
 # Legs whose CLI runs packages rather than single files (ailang, moonbit) go
 # through a wrapper in bench/<lang>/ so the bench's `LANG file.ext` contract
-# still holds.
+# still holds. `python` and `bash` run doc-less: they are the pretraining-native
+# floor, carrying no resident spec.
 #
 # Resident docs: the harness reads --lang2-docs as one text file
 # (closed-loop-bench.py reads it with Path(...).read_text()), so each leg's
@@ -23,7 +24,7 @@
 set -u
 cd "$(dirname "$0")/../.."   # repo root
 
-LANGS="zero,bash,ailang,nanolang,moonbit"
+LANGS="python,bash,zero,ailang,nanolang,moonbit"
 FORCE=0
 CACHE=warm
 while [ $# -gt 0 ]; do
@@ -110,8 +111,9 @@ run_leg() { # run_leg <name> <bin> <ext> [docs] — docs required unless omitted
   # The harness reads --lang2-docs as one text file; a directory, a missing
   # path, or a failed bundle builder (empty substitution) would silently drop
   # the leg to "(No formal language documentation available …)" and score
-  # documentation instead of language. Only `bash` runs doc-less, by design:
-  # it is the pretraining-native floor with no spec to carry.
+  # documentation instead of language. Only the pretraining-native floor
+  # (`python`, `bash`) runs doc-less, by design: those two carry no resident
+  # spec because no spec is needed to write them.
   if [ "$ndocs" -ge 4 ] && { [ -z "$docs" ] || [ ! -f "$docs" ]; }; then
     echo "[leg] $name: docs bundle missing, empty, or not a file ('$docs') — skipping" >&2
     return 1
@@ -125,6 +127,12 @@ run_leg() { # run_leg <name> <bin> <ext> [docs] — docs required unless omitted
 }
 
 STATUS=0
+# The pretraining-native floor: python and bash carry no resident spec, so they
+# are the honest baseline the spec-carrying languages are measured against.
+if want python; then
+  py=$(command -v python3 || true)
+  [ -n "$py" ] && run_leg python "$py" .py || { [ -n "$py" ] && STATUS=1; }
+fi
 if want bash; then
   run_leg bash "$(command -v bash || echo /bin/bash)" .sh || STATUS=1
 fi

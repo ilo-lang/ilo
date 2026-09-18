@@ -150,7 +150,19 @@ Per task/lang/model the JSON records `generation_tokens`,
 `generated_chars` / `final_code_chars` / `code_chars_by_turn` (characters of the
 emitted *code*, reasoning excluded — the density metric), `repair_tokens_by_turn`,
 `input_tokens` (with provider cache hit/miss), `attempts_to_success`,
-`success_rate`, `wall_time_s`, `final_outcome`.
+`success_rate`, `wall_time_s`, `final_outcome`, `finish_reasons` and
+`truncated_attempts`.
+
+**The output cap is a measurement input, not an implementation detail.** A
+reasoning model bills thinking tokens as output and counts them against
+`max_tokens`, so a cap set too low ends an attempt with
+`finish_reason=length` and *zero* code — which reads as an ordinary failure
+while actually measuring the cap. `dsflash` runs at 65 536 (the endpoint's
+maximum, probed 2026-09-18); the field was 16 384, and one ilo row in the first
+24-task sweep lost attempts 3–4 to it. Every row now carries
+`truncated_attempts`; the CLI prints a run-level warning and the HTML report
+marks the cell and leads the tab with a cap-limited banner. A row with a
+non-zero count is not a language result until it is re-run above the cap.
 
 **Task descriptions are language-neutral, and enforced.** Every leg receives
 `tasks.json`'s `description` verbatim, so a description that names a language or
@@ -179,17 +191,20 @@ Clone + build + run each comparator language in one pass. Clones are cached.
 
 ```sh
 DEEPSEEK_API_KEY=sk-... bench/comparators/comparator-matrix.sh \
-    --langs zero,bash,ailang,nanolang,moonbit --cache warm
+    --langs python,bash,zero,ailang,nanolang,moonbit --cache warm
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--langs LIST` | `zero,bash,ailang,nanolang,moonbit` | Comma-separated subset |
+| `--langs LIST` | `python,bash,zero,ailang,nanolang,moonbit` | Comma-separated subset |
 | `--cache` | `warm` | Passed through to each leg |
 | `--force` | off | Re-clone even if a cached checkout exists |
 
 Behaviour:
 
+- **Runs six legs**: `python` and `bash` doc-less (the pretraining-native
+  floor — no resident spec, nothing to carry), then `zero`, `ailang`,
+  `nanolang`, `moonbit`, each with its maintainers' own agent-facing docs.
 - **Clones** each language (shallow) into `bench/comparators/src/<name>/`. That
   path is gitignored and script-managed — never edit it by hand.
 - **Builds** it: `ailang` via `make build` (binary `bin/ailang`); `nanolang` via

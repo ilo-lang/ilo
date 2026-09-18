@@ -461,6 +461,14 @@ def task_blocks(st: dict) -> str:
                     'legs that solved this task"'
                     if best_gen is not None and gen == best_gen else ' class="num"')
             dens_cell = "—" if dens is None else f"{dens:.2f}"
+            # Truncation is a *cause* of failure, not a failure: the attempt hit
+            # the model's output cap, emitted no code, and reads as ordinary.
+            # Absent on rows written before the field existed — dash, not zero.
+            trunc = r.get("truncated_attempts")
+            trunc_cell = ("—" if trunc is None else
+                          f'<span class="badmark" title="attempts that hit '
+                          f'max_tokens and emitted no code">{trunc}</span>'
+                          if trunc else "0")
             body.append(
                 f'<tr><td class="lang">{E(r["language"])}{rep}</td>'
                 f'<td{mark}>{fmt_int(gen)}</td>'
@@ -469,6 +477,7 @@ def task_blocks(st: dict) -> str:
                 f'<td class="num">{fmt_int(r.get("input_tokens"))}</td>'
                 f'<td class="num">{fmt_money(r.get("cost_usd"))}</td>'
                 f'<td class="num">{r.get("attempts_total") or "—"}</td>'
+                f'<td class="num">{trunc_cell}</td>'
                 f'<td class="num">{fmt_s(r.get("wall_time_s"))}</td>'
                 f'<td>{outcome_cell(r.get("final_outcome"))}</td></tr>'
             )
@@ -490,7 +499,9 @@ def task_blocks(st: dict) -> str:
             '<th>leg</th><th>gen tokens</th>'
             '<th title="characters of emitted code, excluding reasoning">code chars</th>'
             '<th title="emitted characters per generation token; higher is denser">chars/tok</th>'
-            '<th>input</th><th>cost</th><th>attempts</th><th>wall</th>'
+            '<th>input</th><th>cost</th><th>attempts</th>'
+            '<th title="attempts that hit the model output cap and emitted no code">trunc</th>'
+            '<th>wall</th>'
             '<th>outcome</th></tr></thead><tbody>'
             + "".join(body) + "</tbody></table></div>" + note + "</div>"
         )
@@ -518,13 +529,43 @@ def run_section(run: dict, idx: int, active: bool) -> str:
         meta.append(f"{E(cfg['context'])} spec set")
     if len(sources) > 1:
         meta.append(f"merged from {len(sources)} leg files")
+    # The leg universe is known (LEG_ORDER); what a tab measured is known; the
+    # complement is the honest part of the header. A sweep that ran 2 of 6 legs
+    # must say so where a reader looks first, not only inside each task table.
+    missing = [l for l in LEG_ORDER if l not in st["langs"]]
+    partial = ""
+    if missing and len(st["langs"]) < len(LEG_ORDER):
+        partial = (
+            f'<p class="warn"><strong>Partial sweep.</strong> '
+            f'Measured: {", ".join(E(l) for l in st["langs"])}. '
+            f'Not measured here: {", ".join(E(l) for l in missing)} — no run on '
+            f'this task set in this tab, so no comparison against '
+            f'{E("them" if len(missing) > 1 else "it")} is available yet.</p>'
+        )
     ratio = ratio_table(st)
+    trunc_rows = [r for r in st["results"] if (r.get("truncated_attempts") or 0)]
+    trunc_total = sum(r["truncated_attempts"] for r in trunc_rows)
+    banner = ""
+    if trunc_rows:
+        affected = ", ".join(
+            f"{E(r['language'])}/{E(r['task'])}" for r in trunc_rows[:6]
+        )
+        more = f" (+{len(trunc_rows) - 6} more)" if len(trunc_rows) > 6 else ""
+        banner = (
+            f'<p class="warn"><strong>Cap-limited rows.</strong> '
+            f'{trunc_total} attempt(s) across {len(trunc_rows)} row(s) stopped at '
+            f'the model output cap and emitted no code — {affected}{more}. Those '
+            f'rows measure the cap, not the language; a re-run with a higher cap '
+            f'is required before they can be read as losses.</p>'
+        )
     return f"""
 <section class="run{' active' if active else ''}" id="run-{idx}">
   <h2>{E(run_title(run))}</h2>
   <div class="meta">{' · '.join(meta)}</div>
   <div class="sub">Sources: {' '.join(f'<code>{E(s)}</code>' for s in sources)}</div>
   {cards(st)}
+  {banner}
+  {partial}
   <h3>Per task, by language</h3>
   <p class="note">One table per task — every language measured on that task, on the same
   program. <em>gen tokens</em> is everything the model emitted (reasoning included);
@@ -596,6 +637,7 @@ def build_html(runs: list[dict]) -> str:
       <dt>reps</dt><dd>Measurements averaged into a task-row. The comparator matrix measures the ilo arm once per comparator leg, so ilo rows show ×N.</dd>
       <dt>working</dt><dd>Task-rows whose program ran and printed the expected output within the retry cap.</dd>
       <dt>best</dt><dd>In a per-task table, the fewest generation tokens among the languages that solved that task. It says who got there with the least emitted text, not who is fastest overall.</dd>
+      <dt>trunc</dt><dd>Attempts that stopped at the model's output-token cap (<code>finish_reason=length</code>) and emitted no code at all. A truncated attempt is billed like any other and reads as an ordinary failure, so a non-zero count here means the row is measuring the cap, not the language. A dash means the run predates this field.</dd>
     </dl>
   </details>
   {sections}
@@ -675,6 +717,9 @@ letter-spacing:.06em;color:var(--dim);font-weight:600}
 .sub{color:var(--dim);font-size:12px;margin-top:2px}
 .sub code{color:var(--fg);opacity:.8}
 .note{color:var(--dim);font-size:12.5px;margin:0 0 10px;max-width:105ch}
+.warn{color:var(--fg);font-size:13px;margin:0 0 14px;max-width:110ch;padding:10px 13px;
+border:1px solid var(--bad);border-left-width:4px;border-radius:8px;background:var(--panel)}
+.warn strong{color:var(--bad)}
 .taskblock{margin:0 0 16px}
 .taskhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 4px}
 .taskhead .tid{font-weight:700;font-size:13.5px;letter-spacing:-.01em}
@@ -682,6 +727,7 @@ letter-spacing:.06em;color:var(--dim);font-weight:600}
 border:1px solid var(--line);border-radius:6px;padding:1px 7px}
 .taskblock .note{margin:0 0 8px;max-width:100ch}
 td.best{color:var(--ok);font-weight:700}
+.badmark{color:var(--bad);font-weight:700}
 .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 table.grid{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
 table.grid th{position:sticky;top:0;background:var(--panel2);text-align:right;

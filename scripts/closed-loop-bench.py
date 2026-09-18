@@ -98,11 +98,15 @@ MODELS = {
     },
     "dsflash": {
         # DeepSeek V4.1-Flash.  Peak $/M; off-peak halves.  Reasoning tokens
-        # bill as output and count against max_tokens.
+        # bill as output and count against max_tokens, so the cap must clear a
+        # full reasoning trace plus the program: at 16384 a long trace ended
+        # with finish_reason=length and **zero** code emitted, which the run
+        # recorded as an ordinary failure (see finish_reasons on each row).
+        # 65536 is the largest the endpoint accepts (probed 2026-09-18).
         "id": "deepseek-flash", "api": "openai",
         "base_url": "https://api.deepseek.com",
         "key_env": "DEEPSEEK_API_KEY",
-        "max_tokens": 16384,
+        "max_tokens": 65536,
         "pricing": {"in_miss": 0.3, "in_hit": 0.006, "out": 1.2},
     },
 }
@@ -241,8 +245,14 @@ def call_llm(
     """Call the model; returns token accounting.
 
     Keys: text, out_tokens, in_hit, in_miss (input tokens split by cache
-    status).  ``cache_nonce`` prepends a one-off marker to the system prompt
-    to defeat provider prefix caching -- that is the cold arm.
+    status), finish_reason.  ``cache_nonce`` prepends a one-off marker to the
+    system prompt to defeat provider prefix caching -- that is the cold arm.
+
+    ``finish_reason`` is recorded because a reasoning model that exhausts
+    ``max_tokens`` mid-thought returns **no code at all**: the attempt then
+    reads as a plain task failure and the truncation is invisible.  That
+    silently inflates the retry count and generation tokens of whichever
+    language needs the longest reasoning trace.
     """
     import urllib.request
 
@@ -275,6 +285,7 @@ def call_llm(
             "out_tokens": usage.get("output_tokens", 0) or 0,
             "in_hit": usage.get("cache_read_input_tokens", 0) or 0,
             "in_miss": usage.get("input_tokens", 0) or 0,
+            "finish_reason": body.get("stop_reason"),
         }
 
     # OpenAI-compatible (DeepSeek, OpenRouter, ...)
@@ -304,6 +315,7 @@ def call_llm(
         "out_tokens": usage.get("completion_tokens", 0) or 0,
         "in_hit": in_hit,
         "in_miss": in_total - in_hit,
+        "finish_reason": body["choices"][0].get("finish_reason"),
     }
 
 
@@ -449,6 +461,10 @@ def run_task(
     # is chars, not tokens, because reasoning tokens dominate out_tokens.
     total_code_chars = 0
     code_chars_by_turn: list[int] = []
+    # finish_reason per billed attempt, plus how many of them hit max_tokens.
+    # A truncated attempt emits no code, so it looks like an ordinary failure;
+    # recording it keeps that distinguishable from a wrong program.
+    finish_reasons: list[str | None] = []
     code = ""
     attempts = 0
     outcome = "failed"
@@ -471,6 +487,7 @@ def run_task(
         total_gen_tokens += gen_tok
         total_code_chars += len(code)
         code_chars_by_turn.append(len(code))
+        finish_reasons.append(resp.get("finish_reason"))
         total_in_hit += resp["in_hit"]
         total_in_miss += resp["in_miss"]
         total_input_tokens += resp["in_hit"] + resp["in_miss"]
@@ -483,7 +500,10 @@ def run_task(
         print(
             f"      attempt={attempt} outcome={outcome} "
             f"gen_tok={gen_tok} code_chars={len(code)} in_hit={resp['in_hit']} "
-            f"in_miss={resp['in_miss']} rc={rc}",
+            f"in_miss={resp['in_miss']} rc={rc} "
+            f"finish={resp.get('finish_reason')}"
+            + ("  ← TRUNCATED at max_tokens: no code emitted"
+               if resp.get("finish_reason") == "length" else ""),
             file=sys.stderr,
         )
 
@@ -539,6 +559,8 @@ def run_task(
         "generated_chars": total_code_chars,
         "final_code_chars": len(code),
         "code_chars_by_turn": code_chars_by_turn,
+        "finish_reasons": finish_reasons,
+        "truncated_attempts": sum(1 for r in finish_reasons if r == "length"),
         "attempts_to_success": attempts_to_success,
         "attempts_total": attempts,
         "success_rate": 1.0 if outcome == "working" else 0.0,
@@ -902,6 +924,18 @@ def main() -> int:
 
     success_count = sum(1 for r in results if r["final_outcome"] == "working")
     print(f"\n{success_count}/{total_runs} runs succeeded.")
+
+    # A truncated attempt is billed like any other yet emits no code, so it
+    # lands in the numbers as an ordinary failure. If it happened, the run has
+    # measured the model's output cap on those rows, not the language.
+    trunc_rows = [r for r in results if r.get("truncated_attempts")]
+    trunc_total = sum(r["truncated_attempts"] for r in trunc_rows)
+    if trunc_rows:
+        caps = ", ".join(f"{k}={MODELS[k]['max_tokens']}" for k in model_keys)
+        print(f"\nWARNING: {trunc_total} attempt(s) across {len(trunc_rows)} row(s) "
+              f"hit max_tokens ({caps}) and emitted no code "
+              f"(finish_reason=length). Those rows measure the cap, not the "
+              f"language — see truncated_attempts/finish_reasons on each row.")
     return 0
 
 
