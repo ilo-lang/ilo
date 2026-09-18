@@ -600,9 +600,20 @@ def run_section(run: dict, idx: int, active: bool) -> str:
     # The leg universe is known (LEG_ORDER); what a tab measured is known; the
     # complement is the honest part of the header. A sweep that ran 2 of 6 legs
     # must say so where a reader looks first, not only inside each task table.
+    #
+    # Only for runs on the current task set: an older run that predates both the
+    # extra legs and the extra tasks is *historical*, and calling five legs
+    # "not measured" there reads as a defect in a run that simply came first.
+    n_tasks = len(st["tasks"])
     missing = [l for l in LEG_ORDER if l not in st["langs"]]
     partial = ""
-    if missing and len(st["langs"]) < len(LEG_ORDER):
+    if n_tasks < len(TASK_META):
+        partial = (
+            f'<p class="note"><strong>Historical set.</strong> This run covers '
+            f'{n_tasks} of the {len(TASK_META)} tasks in the current set — kept '
+            f'for the record; only same-set runs compare row for row.</p>'
+        )
+    elif missing and len(st["langs"]) < len(LEG_ORDER):
         partial = (
             f'<p class="warn"><strong>Partial sweep.</strong> '
             f'Measured: {", ".join(E(l) for l in st["langs"])}. '
@@ -792,6 +803,7 @@ letter-spacing:.06em;color:var(--dim);font-weight:600}
 .sub{color:var(--dim);font-size:12px;margin-top:2px}
 .sub code{color:var(--fg);opacity:.8}
 .note{color:var(--dim);font-size:12.5px;margin:0 0 10px;max-width:105ch}
+.note strong{color:var(--fg);font-weight:600}
 .warn{color:var(--fg);font-size:13px;margin:0 0 14px;max-width:110ch;padding:10px 13px;
 border:1px solid var(--bad);border-left-width:4px;border-radius:8px;background:var(--panel)}
 .warn strong{color:var(--bad)}
