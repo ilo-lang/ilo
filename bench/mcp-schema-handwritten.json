@@ -1,5 +1,5 @@
 {
- "_note": "Hand-written equivalent of the nine ilo-generated tool schemas (demo trio, gates trio, numbers pair, lists pair), authored to MCP best-practice verbosity (descriptions on every tool and property, required arrays). Used by bench/HONEST-NUMBERS.md for the generated-vs-handwritten schema-cost delta. Not a working server \u2014 measurement fixture only.",
+ "_note": "Hand-written equivalent of the nine ilo-generated tool schemas (demo trio, gates trio, numbers pair, lists pair), authored to MCP best-practice verbosity (descriptions on every tool and property, required arrays). Used by bench/measurements.md for the generated-vs-handwritten schema-cost delta. Not a working server \u2014 measurement fixture only.",
  "tools": [
   {
    "name": "tri",

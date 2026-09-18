@@ -267,6 +267,7 @@ in-repo tooling that measures and enforces it:
 | `scripts/check-skill-tokens.ilo` + `scripts/check-skill-growth.py` | Resident spec budgets + eviction-linked growth gate (G2) |
 | `scripts/ilo-mcp-server.py` | Exposes ilo functions as MCP tools; inputSchema generated from the AST |
 | `bench/measurements.md` | Every published number, sourced, with limits — red rows stay red |
+| [`bench/README.md`](bench/README.md) | Runbook: how to run every bench under `bench/` (prereqs, comparators, keys, outputs) |
 
 Provider caching mechanics and break-even arithmetic: [`docs/caching.md`](docs/caching.md).
 Comparators welcome: [`docs/benchmark-invite.md`](docs/benchmark-invite.md).

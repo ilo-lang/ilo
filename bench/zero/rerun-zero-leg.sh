@@ -7,7 +7,7 @@
 #   2. Zero built: make -C /tmp/agentlangs/zerolang/native/zero-c
 #   3. ILO built: cargo build --release
 #
-# Blocks: see bench/HONEST-NUMBERS.md "Comparator status" — the 2026-09-17
+# Blocks: see bench/measurements.md "Comparator status" — the 2026-09-17
 # attempt ended with DeepSeek balance -$0.42 before any LLM call succeeded.
 set -e
 cd "$(dirname "$0")/.."
