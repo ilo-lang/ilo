@@ -4947,11 +4947,13 @@ or bind intermediates: `s1=+a b;s2=+s1 c;+s2 d`."
         match pat {
             Pattern::Err(b) | Pattern::Ok(b) => vec![b.clone()],
             Pattern::TypeIs { binding, .. } => vec![binding.clone()],
-            Pattern::Variant { binding: Some(b), .. } => vec![b.clone()],
+            Pattern::Variant {
+                binding: Some(b), ..
+            } => vec![b.clone()],
             Pattern::Or(alts) => alts.iter().flat_map(Self::pattern_bindings).collect(),
-            Pattern::Literal(_)
-            | Pattern::Wildcard
-            | Pattern::Variant { binding: None, .. } => Vec::new(),
+            Pattern::Literal(_) | Pattern::Wildcard | Pattern::Variant { binding: None, .. } => {
+                Vec::new()
+            }
         }
     }
 
