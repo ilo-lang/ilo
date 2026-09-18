@@ -353,17 +353,25 @@ def run_lang2(code: str, lang2_bin: str, ext: str) -> tuple[str, str, int]:
 # verbatim to every leg, so naming one language biases every other leg while
 # still producing a plausible-looking number.
 KNOWN_LANGS = frozenset(
-    {"ilo", "zero", "moonbit", "ailang", "nanolang", "bash", "python"}
+    {"ilo", "zero", "moonbit", "ailang", "nanolang", "bash", "python",
+     "rust", "javascript", "typescript", "node"}
 )
 
 
-def check_language_neutral(tasks: list[dict[str, Any]]) -> list[str]:
+def check_language_neutral(tasks: list[dict[str, Any]],
+                           langs: Iterable[str] = ()) -> list[str]:
     """Task ids whose description names a language — each would corrupt every
-    non-matching leg, so the run refuses to start."""
+    non-matching leg, so the run refuses to start.
+
+    ``langs`` adds the comparators this invocation will actually run: the
+    KNOWN_LANGS set is the usual suspects, but a leg named on the command line
+    is exactly the one whose name in a description would go unnoticed.
+    """
+    names = KNOWN_LANGS | {str(l).lower() for l in langs if l}
     bad: list[str] = []
     for t in tasks:
         words = set(re.findall(r"[a-z0-9]+", t["description"].lower()))
-        if words & KNOWN_LANGS:
+        if words & names:
             bad.append(t["id"])
     return bad
 
@@ -729,7 +737,7 @@ def main() -> int:
     # Load tasks
     tasks_data = json.loads(TASKS_FILE.read_text())
     all_tasks = tasks_data["tasks"]
-    named = check_language_neutral(all_tasks)
+    named = check_language_neutral(all_tasks, [args.lang2_name])
     if named:
         print("ERROR: task description names a language: " + ", ".join(named),
               file=sys.stderr)
