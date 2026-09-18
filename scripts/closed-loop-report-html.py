@@ -108,6 +108,11 @@ def mean_rows(rows: list[dict]) -> dict:
 
     The matrix measures the ilo arm once per leg, so without this the same ilo
     task would appear five times and every total would count it five times.
+
+    Means alone would hide flakiness, so the pass count travels with them:
+    `working_reps` out of `repeats` is the measurement that stays comparable
+    when one leg is measured six times and another once. `final_outcome` is the
+    same fact as a word, for colour: all reps passed, none did, or some.
     """
     out = dict(rows[0])
     n = len(rows)
@@ -122,6 +127,7 @@ def mean_rows(rows: list[dict]) -> dict:
     out["final_outcome"] = ("working" if worked == n else
                             "failed" if worked == 0 else "partial")
     out["repeats"] = n
+    out["working_reps"] = worked
     return out
 
 
@@ -226,7 +232,7 @@ def lang_totals(results: list[dict]) -> dict[str, dict]:
         a = agg.setdefault(r["language"], {
             "rows": 0, "gen": 0, "chars": 0, "char_rows": 0, "inp": 0,
             "cost": 0.0, "wall": 0.0, "attempts": 0, "repeats": 0,
-            "working": 0, "success": 0.0, "outcomes": {},
+            "working_reps": 0, "success": 0.0, "outcomes": {},
         })
         a["rows"] += 1
         a["gen"] += r.get("generation_tokens") or 0
@@ -241,8 +247,8 @@ def lang_totals(results: list[dict]) -> dict[str, dict]:
         a["success"] += r.get("success_rate") or 0.0
         oc = r.get("final_outcome") or "failed"
         a["outcomes"][oc] = a["outcomes"].get(oc, 0) + 1
-        if oc == "working":
-            a["working"] += 1
+        a["working_reps"] += r.get("working_reps",
+                                   1 if oc == "working" else 0)
 
     for lang, a in agg.items():
         n, cn = a["rows"], a["char_rows"]
@@ -293,7 +299,10 @@ def run_stats(run: dict) -> dict:
         "mean_wall": wall / rows if rows else None,
         "chars_per_att": chars / att if att and char_rows else None,
         "tok_per_char": gen / chars if chars and char_rows else None,
-        "working": sum(1 for r in results if r.get("final_outcome") == "working"),
+        "working_reps": sum(r.get("working_reps",
+                                  1 if r.get("final_outcome") == "working" else 0)
+                            for r in results),
+        "reps": sum(r.get("repeats") or 1 for r in results),
         "max_gen": max((r.get("generation_tokens") or 0) for r in results) or 1,
     }
 
@@ -343,8 +352,12 @@ def cards(st: dict) -> str:
                f"mean {fmt_int(st['mean_inp'])} per row · provider-side, pre-cache")
         + card("spend", fmt_money(st["cost"]),
                f"mean {fmt_money(st['mean_cost'])} per row")
-        + card("working", f"{st['working']}/{st['rows']}",
-               "task-rows solved within the retry cap")
+        + card("working", f"{st['working_reps']}/{st['reps']}",
+               "measurements solved within the retry cap",
+               "Measurements (reps, not task-rows) whose program printed the "
+               "expected output. The ilo arm is measured once per comparator "
+               "leg, so its denominator is larger — this is why the count, not "
+               "a bare total, is the comparable figure.")
         + card("legs", str(legs),
                f"{st['rows']} rows · {len(st['tasks'])} tasks")
         + "</div>"
@@ -388,7 +401,7 @@ def lang_table(st: dict) -> str:
             f'<td class="num">{fmt_s(a["wall"])}</td>'
             f'<td class="num">{fmt_s(a["mean_wall"])}</td>'
             f'<td class="num">{att}</td>'
-            f'<td class="num">{a["working"]}/{a["rows"]}</td>'
+            + worked_cell(a["working_reps"], a["repeats"]) +
             f'<td>{oc}</td></tr>'
         )
     return (
@@ -410,7 +423,12 @@ def lang_table(st: dict) -> str:
         '<th data-sort="num">wall</th>'
         '<th data-sort="num" title="mean seconds per task-row">s/row</th>'
         '<th data-sort="num" title="mean attempts per task-row">att/row</th>'
-        '<th data-sort="num">working</th><th data-sort="text">outcomes</th>'
+        '<th data-sort="num" title="passed measurements over measurements taken '
+        '(reps): the ilo arm runs once per comparator leg, so its denominator is '
+        'larger than a one-leg comparator\'s on the same tasks">working</th>'
+        '<th data-sort="text" title="task-rows by outcome — one per row of the '
+        'per-task tables, so a row stands for all of its reps and this is '
+        'coarser than the rep-based working cell beside it">outcomes</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
     )
 
@@ -436,8 +454,8 @@ def ratio_table(st: dict) -> str:
             + fmt_ratio(ratio(a, "mean_chars"))
             + fmt_ratio(ratio(a, "mean_cost"))
             + fmt_ratio(ratio(a, "mean_wall"))
-            + f'<td class="num">{a["working"]}/{a["rows"]}</td>'
-            + f'<td class="num">{base["working"]}/{base["rows"]}</td></tr>'
+            + worked_cell(a["working_reps"], a["repeats"])
+            + worked_cell(base["working_reps"], base["repeats"]) + "</tr>"
         )
     return (
         '<div class="scroll"><table class="grid sortable"><thead><tr>'
@@ -446,7 +464,10 @@ def ratio_table(st: dict) -> str:
         '<th data-sort="num" title="mean emitted-code characters per row, leg ÷ ilo">chars</th>'
         '<th data-sort="num" title="mean spend per row, leg ÷ ilo">cost</th>'
         '<th data-sort="num" title="mean wall time per row, leg ÷ ilo">time</th>'
-        '<th data-sort="num">working</th><th data-sort="num">ilo working</th>'
+        '<th data-sort="num" title="passed measurements over measurements taken '
+        '(reps), not rows: the ilo arm runs once per comparator leg">working</th>'
+        '<th data-sort="num" title="the ilo column of the previous one, repeated '
+        'here so a leg can be read without scrolling back">ilo working</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
     )
 
@@ -525,6 +546,8 @@ def task_blocks(st: dict) -> str:
                     if best_gen is not None and gen == best_gen else ' class="num"')
             cap_cell = "—" if cap is None else f"{cap:.1f}"
             tpc_cell = "—" if tpc is None else f"{tpc:.1f}"
+            oc_cell = outcome_cell(r.get("final_outcome"),
+                                   r.get("working_reps"), r.get("repeats"))
             # Truncation is a *cause* of failure, not a failure: the attempt hit
             # the model's output cap, emitted no code, and reads as ordinary.
             # Absent on rows written before the field existed — dash, not zero.
@@ -544,7 +567,7 @@ def task_blocks(st: dict) -> str:
                 f'<td class="num">{r.get("attempts_total") or "—"}</td>'
                 f'<td class="num">{trunc_cell}</td>'
                 f'<td class="num">{fmt_s(r.get("wall_time_s"))}</td>'
-                f'<td>{outcome_cell(r.get("final_outcome"))}</td></tr>'
+                f'<td>{oc_cell}</td></tr>'
             )
 
         # The unmeasured rows above name the missing legs per task, so the
@@ -572,9 +595,35 @@ def task_blocks(st: dict) -> str:
     return "".join(blocks)
 
 
-def outcome_cell(outcome) -> str:
+def outcome_cell(outcome, worked: int | None = None, reps: int | None = None) -> str:
+    """The outcome pill for one task-row: passed measurements over taken.
+
+    `working`/`partial`/`failed` alone are not comparable across legs, because
+    the matrix measures the ilo arm once per comparator leg — one ilo row can
+    stand for six measurements while the row beside it stands for one. The
+    pill therefore prints the measurement count (`6/6`, `1/2`, `0/6`) and keeps
+    the word in the tooltip; the colour still reads at a glance.
+    """
     o = outcome or "failed"
-    return f'<span class="pill {E(o)}">{E(o)}</span>'
+    if not reps:
+        return f'<span class="pill {E(o)}">{E(o)}</span>'
+    return (f'<span class="pill {E(o)}" title="{E(o)}: {worked} of {reps} '
+            f'measurements printed the expected output">'
+            f'{worked}/{reps}</span>')
+
+
+def worked_cell(worked: int, reps: int) -> str:
+    """`6/8 working` as a sortable cell: passed measurements ÷ measurements.
+
+    Same reasoning as the pill — the denominator is reps, never rows, because
+    rows count task-rows and a leg measured once per comparator leg has more
+    measurements than another leg on the same tasks. `data-v` carries the share
+    so the numeric sort ignores the "6/8" text.
+    """
+    share = (worked / reps) if reps else 0.0
+    return (f'<td class="num" data-v="{share:.6f}" '
+            f'title="{worked} of {reps} measurements printed the expected '
+            f'output">{worked}/{reps}</td>')
 
 
 def unmeasured_cell() -> str:
@@ -658,10 +707,14 @@ def run_section(run: dict, idx: int, active: bool) -> str:
   <p class="note">Totals cover every task-row in this tab; <em>per row</em> means per single
   task attempt-set (one language, one task), so it is comparable across tabs with
   different task counts. <em>reps</em> is how many measurements were averaged into a
-  row — the ilo arm is measured once per comparator leg. <em>code chars</em> count emitted code only — reasoning
+  row — the ilo arm is measured once per comparator leg. <em>working</em> counts
+  measurements for the same reason: its denominator is <em>reps</em>, not rows, so a
+  leg measured once and a leg measured six times compare as rates. The
+  <em>outcomes</em> chips beside it count task-rows instead — one chip per row of
+  the per-task tables — so they are coarser, not a second estimate. <em>code chars</em> count emitted code only — reasoning
   tokens are inside <em>gen tok</em> and are the bulk of them.</p>
   {lang_table(st)}
-  {f'<h3>Head-to-head vs ilo</h3><p class="note">Mean per task-row, leg ÷ ilo. Below 1× is smaller/cheaper than ilo; green is better for the leg.</p>{ratio}' if ratio else ''}
+  {f'<h3>Head-to-head vs ilo</h3><p class="note">Mean per task-row, leg ÷ ilo. Below 1× is smaller/cheaper than ilo; green is better for the leg. The last two columns repeat <em>working</em> as passed measurements over measurements taken, leg and ilo side by side.</p>{ratio}' if ratio else ''}
 </section>"""
 
 
@@ -720,8 +773,9 @@ def build_html(runs: list[dict]) -> str:
       <dt>execution time</dt><dd>Wall time of the whole attempt-set — every generation call plus every run of the program. It is not the program's own runtime (that is the wall-clock microbench in <code>bench/run.sh</code>).</dd>
       <dt>input tokens</dt><dd>Prompt tokens resent to the provider (spec + task + repairs), before cache discounts.</dd>
       <dt>reps</dt><dd>Measurements averaged into a task-row. The comparator matrix measures the ilo arm once per comparator leg, so ilo rows show ×N.</dd>
-      <dt>working</dt><dd>Task-rows whose program ran and printed the expected output within the retry cap.</dd>
+      <dt>working</dt><dd>Measurements (reps, not task-rows) whose program ran and printed the expected output within the retry cap. Cells read passed/taken — <code>6/8</code> — and the denominator is reps, because the comparator matrix measures the ilo arm once per comparator leg.</dd>
       <dt>best</dt><dd>In a per-task table, the fewest generation tokens among the languages that solved that task. It says who got there with the least emitted text, not who is fastest overall.</dd>
+      <dt>outcomes</dt><dd>Roll-up chips in the language table counting <em>task-rows</em> by outcome — one per row of the per-task tables. A row stands for all of its reps, so this is coarser than the rep-based <em>working</em> cell beside it: a row of 6 measurements that passed 5 reads as <em>partial</em>, one chip.</dd>
       <dt>not measured</dt><dd>This language has no row on this task in this tab — the sweep has not run it yet, or it is absent from this run's legs. It is a gap in coverage, never a result.</dd>
       <dt>trunc</dt><dd>Attempts that stopped at the model's output-token cap (<code>finish_reason=length</code>) and emitted no code at all. A truncated attempt is billed like any other and reads as an ordinary failure, so a non-zero count here means the row is measuring the cap, not the language. A dash means the run predates this field.</dd>
     </dl>
