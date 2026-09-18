@@ -1676,6 +1676,7 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | `^expr` | return err |
 | `func! args` | call + auto-unwrap Result, propagate Err to caller |
 | `func!! args` | call + auto-unwrap Result, abort on Err with exit 1 |
+| `func args!` / `func(args)!` | postfix spelling of the same unwrap: the bang glues to the end of the argument list. Binds to the **innermost** call the list just completed, so `sha256 (rd p)!` unwraps `rd`, not `sha256` |
 | `wh cond{body}` | while loop |
 | `brk` / `brk expr` | exit enclosing loop (optional value) |
 | `cnt` | skip to next iteration of enclosing loop |
@@ -2393,7 +2394,10 @@ Equivalent to `r=inner x;?r{~v:v;^e:^e}` but in 1 token instead of 12.
 Rules:
 - The called function must return `R` or `O` (else verifier error ILO-T025)
 - The enclosing function must return `R` (or `O` for Optional callees) (else verifier error ILO-T026)
-- `!` goes after the function name, before args: `get! url` not `get url!`
+- `!` goes after the function name (`get! url`) or glued to the end of the
+  argument list (`get url!` / `get(url)!`) - both are the same call. The
+  trailing form binds to the innermost call the list completed, so
+  `sha256 (rd p)!` unwraps `rd`, not `sha256`
 - Zero-arg: `fetch!()`
 
 ### Panic-Unwrap `!!`
@@ -2411,7 +2415,8 @@ On `^e` (Err) the program writes `panic-unwrap: <Err payload>` to stderr and exi
 Rules:
 - The called function must return `R` or `O` (else verifier error ILO-T025)
 - **No constraint on the enclosing function's return type** - this is the difference from `!`
-- `!!` goes after the function name, before args: `rdl!! path` not `rdl path!!`
+- `!!` goes after the function name (`rdl!! path`) or glued to the end of the
+  argument list (`rdl path!!`), same binding rule as `!`
 - Zero-arg: `fetch!!()`
 
 Use `!` when the caller wants to react to the Err (compensate, retry, log). Use `!!` when the failure is a programming or environmental error the caller has no way to recover from - typical in short scripts, glue code, and main entry points.
