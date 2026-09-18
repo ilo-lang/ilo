@@ -225,9 +225,48 @@ fn p102_via_ilo_check_no_engine() {
     );
 }
 
+// --- The misreport a bare statement after an explicit `main` produced -----
+//
+// ILO-558. `main>_;prnt 1` followed by an unindented statement is a real
+// conflict — two entry points, no order — and `parse_program` already has the
+// diagnostic for it (ILO-P104). But `parse_decl` errored on the stray line
+// first, and its P102 wording ("outside any function declaration", fix: "wrap
+// in `main>_;`") is false when the file's first line *is* a declaration: the
+// model follows it, adds a second wrapper, and lands on ILO-T002. Measured as
+// the single largest fresh-failure class in the 2026-09-18 closed-loop A/B
+// (8 of 32 base-leg first errors). The conflict is now reported as P104 from
+// the two top-level guards as well, so the advice matches the situation.
+fn check_main_decl_then_statement_reports_p104(engine: &str) {
+    let (ok, _stdout, stderr) = run_capture(engine, "main>_;prnt 1\nprnt 2", "main");
+    assert!(
+        !ok,
+        "{engine}: a statement after an explicit main must still reject"
+    );
+    assert!(
+        stderr.contains("ILO-P104"),
+        "{engine}: expected ILO-P104 for main-decl + bare statement, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ILO-P102"),
+        "{engine}: the P102 'wrap in main>_`' hint is false here, got: {stderr}"
+    );
+    // A second declaration on its own line is a normal program, not a conflict.
+    let (ok, stdout, stderr) = run_capture(engine, "main>_;prnt 1\nf x:n>n;+x 1", "main");
+    assert!(ok, "{engine}: decls only must run, got: {stderr}");
+    assert_eq!(stdout.trim(), "1", "{engine}: decls-only output");
+    // A parameterised `main` plus a bare statement is the same conflict.
+    let (ok, _stdout, stderr) = run_capture(engine, "main v:n>n;v\nprnt 2", "main");
+    assert!(!ok, "{engine}: param main + statement must reject");
+    assert!(
+        stderr.contains("ILO-P104"),
+        "{engine}: expected ILO-P104 for param main + statement, got: {stderr}"
+    );
+}
+
 fn check_all(engine: &str) {
     check_bare_top_chain(engine);
     check_p102_still_fires_for_glued_binding(engine);
+    check_main_decl_then_statement_reports_p104(engine);
     check_slurp_into_prior_fn(engine);
     check_main_wrapper_runs(engine);
     check_normal_fn_decl_unaffected(engine);
