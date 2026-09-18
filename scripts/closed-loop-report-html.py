@@ -253,7 +253,13 @@ def lang_totals(results: list[dict]) -> dict[str, dict]:
         a["mean_wall"] = a["wall"] / n if n else None
         a["mean_attempts"] = a["attempts"] / n if n else None
         a["mean_success"] = 100.0 * a["success"] / n if n else None
-        a["chars_per_gen"] = (a["chars"] / a["gen"]) if a["gen"] and cn else None
+        # Characters of code per *attempt*: reasoning-free on both sides,
+        # so it compares emitted program size across legs and models.
+        a["chars_per_att"] = (a["chars"] / a["attempts"]) if a["attempts"] and cn else None
+        # Output tokens paid per character of code. Deliberately *not*
+        # called density: reasoning is inside the token count and dwarfs
+        # the code, so this is a price, not a property of the language.
+        a["tok_per_char"] = (a["gen"] / a["chars"]) if a["chars"] and cn else None
     return agg
 
 
@@ -266,6 +272,7 @@ def run_stats(run: dict) -> dict:
     inp = sum(r.get("input_tokens") or 0 for r in results)
     cost = sum(r.get("cost_usd") or 0.0 for r in results)
     wall = sum(r.get("wall_time_s") or 0.0 for r in results)
+    att = sum(r.get("attempts_total") or 0 for r in results)
     rows = len(results)
     return {
         "results": results,
@@ -284,7 +291,8 @@ def run_stats(run: dict) -> dict:
         "mean_inp": inp / rows if rows else None,
         "mean_cost": cost / rows if rows else None,
         "mean_wall": wall / rows if rows else None,
-        "chars_per_gen": chars / gen if gen and char_rows else None,
+        "chars_per_att": chars / att if att and char_rows else None,
+        "tok_per_char": gen / chars if chars and char_rows else None,
         "working": sum(1 for r in results if r.get("final_outcome") == "working"),
         "max_gen": max((r.get("generation_tokens") or 0) for r in results) or 1,
     }
@@ -318,9 +326,19 @@ def cards(st: dict) -> str:
         + card("execution time", fmt_s(st["wall"], "—"),
                f"mean {fmt_s(st['mean_wall'])} per row",
                "Harness wall time across all attempts (generation + execution)")
-        + card("characters per token",
-               "—" if st["chars_per_gen"] is None else f"{st['chars_per_gen']:.2f}",
-               "higher is denser code")
+        + card("code chars per attempt",
+               "—" if st["chars_per_att"] is None else f"{st['chars_per_att']:.1f}",
+               "how much program one try writes",
+               "Emitted-code characters divided by attempts. Both sides exclude "
+               "reasoning, so this is comparable across legs and models — the "
+               "closest thing to a density reading the data supports.")
+        + card("output tokens per code char",
+               "—" if st["tok_per_char"] is None else f"{st['tok_per_char']:.1f}",
+               "reasoning included — a price",
+               "Generation tokens (reasoning + code) per character of emitted "
+               "code. Not a density: with reasoning excluded from the numerator "
+               "and included here, the ratio mostly tracks how much the model "
+               "thought before writing.")
         + card("input tokens", fmt_int(st["inp"]),
                f"mean {fmt_int(st['mean_inp'])} per row · provider-side, pre-cache")
         + card("spend", fmt_money(st["cost"]),
@@ -343,7 +361,7 @@ def lang_table(st: dict) -> str:
         if a is None:
             rows.append(
                 f'<tr class="unmeasured"><td class="lang">{E(lang)}</td>'
-                + '<td class="num">—</td>' * 14
+                + '<td class="num">—</td>' * 15
                 + f'<td>{unmeasured_cell()}</td></tr>'
             )
             continue
@@ -352,7 +370,8 @@ def lang_table(st: dict) -> str:
             f'<span class="chip {o}">{a["outcomes"].get(o, 0)}</span>'
             for o in OUTCOMES if a["outcomes"].get(o)
         )
-        cpg = "—" if a["chars_per_gen"] is None else f"{a['chars_per_gen']:.2f}"
+        cap = "—" if a["chars_per_att"] is None else f"{a['chars_per_att']:.1f}"
+        tpc = "—" if a["tok_per_char"] is None else f"{a['tok_per_char']:.1f}"
         rows.append(
             f'<tr><td class="lang">{E(lang)}</td>'
             f'<td class="num">{a["repeats"]}</td>'
@@ -361,7 +380,8 @@ def lang_table(st: dict) -> str:
             f'<td class="num">{fmt_int(a["mean_gen"])}</td>'
             f'<td class="num">{fmt_int(a["chars"])}</td>'
             f'<td class="num">{fmt_int(a["mean_chars"])}</td>'
-            f'<td class="num">{cpg}</td>'
+            f'<td class="num">{cap}</td>'
+            f'<td class="num">{tpc}</td>'
             f'<td class="num">{fmt_int(a["inp"])}</td>'
             f'<td class="num">{fmt_money(a["cost"])}</td>'
             f'<td class="num">{fmt_money(a["mean_cost"])}</td>'
@@ -380,7 +400,10 @@ def lang_table(st: dict) -> str:
         '<th data-sort="num" title="mean generation tokens per task-row">tok/row</th>'
         '<th data-sort="num">code chars</th>'
         '<th data-sort="num" title="mean emitted-code characters per task-row">chars/row</th>'
-        '<th data-sort="num" title="characters per generation token: higher is denser">chars/tok</th>'
+        '<th data-sort="num" title="emitted-code characters per attempt: how much '
+        'program one try writes, reasoning excluded both sides">chars/att</th>'
+        '<th data-sort="num" title="output tokens per character of emitted code; '
+        'reasoning included, so it is a price and not a density">tok/char</th>'
         '<th data-sort="num">input tok</th>'
         '<th data-sort="num">cost</th>'
         '<th data-sort="num" title="mean spend per task-row">$/row</th>'
@@ -428,6 +451,19 @@ def ratio_table(st: dict) -> str:
     )
 
 
+def expected_tag(value: str) -> str:
+    """`expects 55` — the exact stdout a row must print to count as working.
+
+    Half the task set expects a multi-line report, and a raw newline inside a
+    chip collapses the tag into a wrapped block. Newlines render as ↵ (and long
+    outputs truncate) with the full text in the tooltip.
+    """
+    flat = str(value).replace("\\n", "\n").replace("\n", "↵")
+    shown = flat if len(flat) <= 42 else flat[:41] + "…"
+    return (f'<span class="tag" title="expected stdout: {E(flat)}">'
+            f'expects {E(shown)}</span>')
+
+
 def task_blocks(st: dict) -> str:
     """One table per task: every language, measured or not, side by side.
 
@@ -458,7 +494,7 @@ def task_blocks(st: dict) -> str:
         if meta.get("category"):
             tags.append(f'<span class="tag">{E(meta["category"])}</span>')
         if meta.get("expected_output"):
-            tags.append(f'<span class="tag">expects {E(meta["expected_output"])}</span>')
+            tags.append(expected_tag(meta["expected_output"]))
 
         body = []
         rows_by_lang = {r["language"]: r for r in rows}
@@ -471,19 +507,24 @@ def task_blocks(st: dict) -> str:
             if r is None:
                 body.append(
                     f'<tr class="unmeasured"><td class="lang">{E(lang)}</td>'
-                    + '<td class="num">—</td>' * 8
+                    + '<td class="num">—</td>' * 9
                     + f'<td>{unmeasured_cell()}</td></tr>'
                 )
                 continue
             gen = r.get("generation_tokens")
             chars = r.get("generated_chars")
-            dens = (chars / gen) if isinstance(chars, (int, float)) and gen else None
+            attempts = r.get("attempts_total") or 0
+            cap = ((chars / attempts) if isinstance(chars, (int, float)) and attempts
+                   else None)
+            tpc = ((gen / chars) if gen and isinstance(chars, (int, float)) and chars
+                   else None)
             rep = (f' <span class="rep">×{r["repeats"]}</span>'
                    if (r.get("repeats") or 1) > 1 else "")
             mark = (' class="num best" title="fewest generation tokens among the '
                     'legs that solved this task"'
                     if best_gen is not None and gen == best_gen else ' class="num"')
-            dens_cell = "—" if dens is None else f"{dens:.2f}"
+            cap_cell = "—" if cap is None else f"{cap:.1f}"
+            tpc_cell = "—" if tpc is None else f"{tpc:.1f}"
             # Truncation is a *cause* of failure, not a failure: the attempt hit
             # the model's output cap, emitted no code, and reads as ordinary.
             # Absent on rows written before the field existed — dash, not zero.
@@ -496,7 +537,8 @@ def task_blocks(st: dict) -> str:
                 f'<tr><td class="lang">{E(r["language"])}{rep}</td>'
                 f'<td{mark}>{fmt_int(gen)}</td>'
                 f'<td class="num">{fmt_int(chars)}</td>'
-                f'<td class="num">{dens_cell}</td>'
+                f'<td class="num">{cap_cell}</td>'
+                f'<td class="num">{tpc_cell}</td>'
                 f'<td class="num">{fmt_int(r.get("input_tokens"))}</td>'
                 f'<td class="num">{fmt_money(r.get("cost_usd"))}</td>'
                 f'<td class="num">{r.get("attempts_total") or "—"}</td>'
@@ -517,7 +559,10 @@ def task_blocks(st: dict) -> str:
             + '<div class="scroll"><table class="grid"><thead><tr>'
             '<th>leg</th><th>gen tokens</th>'
             '<th title="characters of emitted code, excluding reasoning">code chars</th>'
-            '<th title="emitted characters per generation token; higher is denser">chars/tok</th>'
+            '<th title="emitted-code characters per attempt: how much program one '
+            'try writes, reasoning excluded both sides">chars/att</th>'
+            '<th title="output tokens per character of emitted code; reasoning '
+            'included, so it is a price and not a density">tok/char</th>'
             '<th>input</th><th>cost</th><th>attempts</th>'
             '<th title="attempts that hit the model output cap and emitted no code">trunc</th>'
             '<th>wall</th>'
@@ -592,9 +637,11 @@ def run_section(run: dict, idx: int, active: bool) -> str:
   <h3>Per task, by language</h3>
   <p class="note">One table per task — every language measured on that task, on the same
   program. <em>gen tokens</em> is everything the model emitted (reasoning included);
-  <em>code chars</em> is the emitted program only, so <em>chars/tok</em> is the density
-  metric. A language the sweep did not run stays listed as “not measured”, never
-  silently dropped.</p>
+  <em>code chars</em> is the emitted program only. <em>chars/att</em> divides that
+  by attempts — reasoning-free on both sides, so it compares program size across
+  legs and models; <em>tok/char</em> is the price of a character of code and is
+  <em>not</em> density, because reasoning is inside the token count. A language the
+  sweep did not run stays listed as “not measured”, never silently dropped.</p>
   {task_blocks(st)}
   <h3>Cost per language</h3>
   <p class="note">Totals cover every task-row in this tab; <em>per row</em> means per single
@@ -636,7 +683,7 @@ def build_html(runs: list[dict]) -> str:
     <h1><span class="word">ilo</span><span class="sep">/</span><span class="what">closed-loop benchmark</span></h1>
   </div>
   <div class="sub">{len(runs)} run{'s' if len(runs) != 1 else ''} · newest {E(gen)}</div>
-  <div class="sub wide">A model is asked to write each task in each language; measured per attempt-set are tokens, emitted characters, dollars and seconds. Program runtime is a separate bench (<code>bench/run.sh</code>).</div>
+  <div class="sub wide">A model writes each task in each language, the program is <strong>run</strong>, and its error is fed back until it works — that repair loop is the “closed loop”. Measured per attempt-set: tokens, emitted characters, dollars and seconds. Program <em>runtime</em> is a different bench (<code>bench/run.sh</code>).</div>
   <div class="spacer"></div>
   <button id="theme" title="Toggle light/dark">light</button>
 </header>
@@ -654,7 +701,11 @@ def build_html(runs: list[dict]) -> str:
     <summary>What the numbers mean</summary>
     <dl>
       <dt>generation tokens</dt><dd>Everything the model emitted, reasoning included. Total sums every task-row; mean/row divides by task-rows.</dd>
-      <dt>code characters</dt><dd>Characters of the emitted program only — reasoning excluded. chars ÷ gen tokens is the density metric; higher is denser.</dd>
+      <dt>code characters</dt><dd>Characters of the emitted program only — reasoning excluded. It cannot be divided by <em>gen tokens</em> to get a density: those tokens are mostly reasoning, so the ratio measures thinking, not code.</dd>
+      <dt>chars/att</dt><dd>Emitted-code characters per attempt: how much program one try writes. Reasoning-free on both sides, so unlike a chars÷tokens ratio it is comparable across legs and models.</dd>
+      <dt>tok/char</dt><dd>Generation tokens (reasoning included) per character of emitted code — a price, not a density. Lower is cheaper per character produced.</dd>
+      <dt>expects</dt><dd>The exact stdout a row must print to count as <em>working</em>. ↵ marks a line break; a row that runs but prints anything else is <em>partial</em>.</dd>
+      <dt>closed loop</dt><dd>The program is written, run, and its error fed back to the model, which rewrites it — repeated until it prints <em>expects</em> or the retry cap is reached. That feedback edge is the loop; an open-loop measure would count tokens to produce code it never ran.</dd>
       <dt>execution time</dt><dd>Wall time of the whole attempt-set — every generation call plus every run of the program. It is not the program's own runtime (that is the wall-clock microbench in <code>bench/run.sh</code>).</dd>
       <dt>input tokens</dt><dd>Prompt tokens resent to the provider (spec + task + repairs), before cache discounts.</dd>
       <dt>reps</dt><dd>Measurements averaged into a task-row. The comparator matrix measures the ilo arm once per comparator leg, so ilo rows show ×N.</dd>

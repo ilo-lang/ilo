@@ -148,7 +148,9 @@ merges the leg files of one sweep back into a single tab.
 
 Per task/lang/model the JSON records `generation_tokens`,
 `generated_chars` / `final_code_chars` / `code_chars_by_turn` (characters of the
-emitted *code*, reasoning excluded — the density metric), `repair_tokens_by_turn`,
+emitted *code*, reasoning excluded — a density metric **only** against other
+character counts: dividing it by `generation_tokens` measures the reasoning in
+that token count, not the density of the code), `repair_tokens_by_turn`,
 `input_tokens` (with provider cache hit/miss), `attempts_to_success`,
 `success_rate`, `wall_time_s`, `final_outcome`, `finish_reasons` and
 `truncated_attempts`.
