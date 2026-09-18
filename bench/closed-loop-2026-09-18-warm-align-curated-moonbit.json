@@ -1,0 +1,1772 @@
+{
+  "generated": "2026-09-18T21:17:00.279724+00:00",
+  "harness": "closed-loop-bench.py",
+  "ticket": "ILO-364",
+  "cache_mode": "warm-align-curated",
+  "leg": "moonbit",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 7638,
+      "input_tokens": 15329,
+      "input_cache_hit_tokens": 14848,
+      "input_cache_miss_tokens": 481,
+      "cost_usd": 0.009399,
+      "effective_input_tokens": 778,
+      "cache_savings_usd": 0.004365,
+      "repair_tokens_by_turn": [
+        5190,
+        1834
+      ],
+      "generated_chars": 154,
+      "final_code_chars": 73,
+      "code_chars_by_turn": [
+        81,
+        0,
+        73
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 35.99,
+      "final_outcome": "working"
+    },
+    {
+      "task": "simple-function",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 435,
+      "input_tokens": 6093,
+      "input_cache_hit_tokens": 5248,
+      "input_cache_miss_tokens": 845,
+      "cost_usd": 0.000807,
+      "effective_input_tokens": 950,
+      "cache_savings_usd": 0.001543,
+      "repair_tokens_by_turn": [
+        240
+      ],
+      "generated_chars": 205,
+      "final_code_chars": 90,
+      "code_chars_by_turn": [
+        115,
+        90
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 3.32,
+      "final_outcome": "working"
+    },
+    {
+      "task": "with-dependencies",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 2710,
+      "input_tokens": 26514,
+      "input_cache_hit_tokens": 25600,
+      "input_cache_miss_tokens": 914,
+      "cost_usd": 0.00368,
+      "effective_input_tokens": 1426,
+      "cache_savings_usd": 0.007526,
+      "repair_tokens_by_turn": [
+        254,
+        1012,
+        334,
+        942
+      ],
+      "generated_chars": 403,
+      "final_code_chars": 104,
+      "code_chars_by_turn": [
+        89,
+        0,
+        104,
+        106,
+        104
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 5,
+      "attempts_total": 5,
+      "success_rate": 1.0,
+      "wall_time_s": 15.24,
+      "final_outcome": "working"
+    },
+    {
+      "task": "with-dependencies",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 123,
+      "input_tokens": 2777,
+      "input_cache_hit_tokens": 2560,
+      "input_cache_miss_tokens": 217,
+      "cost_usd": 0.000228,
+      "effective_input_tokens": 268,
+      "cache_savings_usd": 0.000753,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 133,
+      "final_code_chars": 133,
+      "code_chars_by_turn": [
+        133
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 1.35,
+      "final_outcome": "working"
+    },
+    {
+      "task": "data-transform",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1546,
+      "input_tokens": 10183,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 327,
+      "cost_usd": 0.002012,
+      "effective_input_tokens": 524,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        884
+      ],
+      "generated_chars": 262,
+      "final_code_chars": 123,
+      "code_chars_by_turn": [
+        139,
+        123
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 8.17,
+      "final_outcome": "working"
+    },
+    {
+      "task": "data-transform",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1894,
+      "input_tokens": 2780,
+      "input_cache_hit_tokens": 2560,
+      "input_cache_miss_tokens": 220,
+      "cost_usd": 0.002354,
+      "effective_input_tokens": 271,
+      "cache_savings_usd": 0.000753,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 192,
+      "final_code_chars": 192,
+      "code_chars_by_turn": [
+        192
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 8.35,
+      "final_outcome": "working"
+    },
+    {
+      "task": "tool-interaction",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 793,
+      "input_tokens": 15434,
+      "input_cache_hit_tokens": 14976,
+      "input_cache_miss_tokens": 458,
+      "cost_usd": 0.001179,
+      "effective_input_tokens": 758,
+      "cache_savings_usd": 0.004403,
+      "repair_tokens_by_turn": [
+        139,
+        309
+      ],
+      "generated_chars": 329,
+      "final_code_chars": 109,
+      "code_chars_by_turn": [
+        109,
+        111,
+        109
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 5.42,
+      "final_outcome": "working"
+    },
+    {
+      "task": "tool-interaction",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 955,
+      "input_tokens": 2783,
+      "input_cache_hit_tokens": 2560,
+      "input_cache_miss_tokens": 223,
+      "cost_usd": 0.001228,
+      "effective_input_tokens": 274,
+      "cache_savings_usd": 0.000753,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 153,
+      "final_code_chars": 153,
+      "code_chars_by_turn": [
+        153
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 5.4,
+      "final_outcome": "working"
+    },
+    {
+      "task": "workflow-rollback",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1702,
+      "input_tokens": 10235,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 379,
+      "cost_usd": 0.002215,
+      "effective_input_tokens": 576,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        935
+      ],
+      "generated_chars": 222,
+      "final_code_chars": 115,
+      "code_chars_by_turn": [
+        107,
+        115
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 8.83,
+      "final_outcome": "working"
+    },
+    {
+      "task": "workflow-rollback",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 461,
+      "input_tokens": 6148,
+      "input_cache_hit_tokens": 5248,
+      "input_cache_miss_tokens": 900,
+      "cost_usd": 0.000855,
+      "effective_input_tokens": 1005,
+      "cache_savings_usd": 0.001543,
+      "repair_tokens_by_turn": [
+        78
+      ],
+      "generated_chars": 327,
+      "final_code_chars": 151,
+      "code_chars_by_turn": [
+        176,
+        151
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 3.07,
+      "final_outcome": "working"
+    },
+    {
+      "task": "hard-recursion",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 3796,
+      "input_tokens": 10188,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 332,
+      "cost_usd": 0.004714,
+      "effective_input_tokens": 529,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        1848
+      ],
+      "generated_chars": 292,
+      "final_code_chars": 145,
+      "code_chars_by_turn": [
+        147,
+        145
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 16.75,
+      "final_outcome": "working"
+    },
+    {
+      "task": "hard-recursion",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 287,
+      "input_tokens": 2774,
+      "input_cache_hit_tokens": 2560,
+      "input_cache_miss_tokens": 214,
+      "cost_usd": 0.000424,
+      "effective_input_tokens": 265,
+      "cache_savings_usd": 0.000753,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 140,
+      "final_code_chars": 140,
+      "code_chars_by_turn": [
+        140
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 1.9,
+      "final_outcome": "working"
+    },
+    {
+      "task": "hard-records",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 11664,
+      "input_tokens": 15821,
+      "input_cache_hit_tokens": 15104,
+      "input_cache_miss_tokens": 717,
+      "cost_usd": 0.014303,
+      "effective_input_tokens": 1019,
+      "cache_savings_usd": 0.004441,
+      "repair_tokens_by_turn": [
+        2102,
+        356
+      ],
+      "generated_chars": 814,
+      "final_code_chars": 235,
+      "code_chars_by_turn": [
+        359,
+        220,
+        235
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 47.41,
+      "final_outcome": "working"
+    },
+    {
+      "task": "hard-records",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1069,
+      "input_tokens": 2797,
+      "input_cache_hit_tokens": 2560,
+      "input_cache_miss_tokens": 237,
+      "cost_usd": 0.001369,
+      "effective_input_tokens": 288,
+      "cache_savings_usd": 0.000753,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 301,
+      "final_code_chars": 301,
+      "code_chars_by_turn": [
+        301
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 4.12,
+      "final_outcome": "working"
+    },
+    {
+      "task": "hard-text-regex",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1712,
+      "input_tokens": 15365,
+      "input_cache_hit_tokens": 14719,
+      "input_cache_miss_tokens": 646,
+      "cost_usd": 0.002337,
+      "effective_input_tokens": 940,
+      "cache_savings_usd": 0.004327,
+      "repair_tokens_by_turn": [
+        452,
+        999
+      ],
+      "generated_chars": 233,
+      "final_code_chars": 77,
+      "code_chars_by_turn": [
+        77,
+        79,
+        77
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 9.35,
+      "final_outcome": "working"
+    },
+    {
+      "task": "hard-text-regex",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1437,
+      "input_tokens": 2767,
+      "input_cache_hit_tokens": 2560,
+      "input_cache_miss_tokens": 207,
+      "cost_usd": 0.001802,
+      "effective_input_tokens": 258,
+      "cache_savings_usd": 0.000753,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 261,
+      "final_code_chars": 261,
+      "code_chars_by_turn": [
+        261
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 6.03,
+      "final_outcome": "working"
+    },
+    {
+      "task": "pipeline-report",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 9003,
+      "input_tokens": 10567,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 711,
+      "cost_usd": 0.011076,
+      "effective_input_tokens": 908,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        4879
+      ],
+      "generated_chars": 1018,
+      "final_code_chars": 516,
+      "code_chars_by_turn": [
+        502,
+        516
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 36.92,
+      "final_outcome": "working"
+    },
+    {
+      "task": "pipeline-report",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 8424,
+      "input_tokens": 6647,
+      "input_cache_hit_tokens": 2816,
+      "input_cache_miss_tokens": 3831,
+      "cost_usd": 0.011275,
+      "effective_input_tokens": 3887,
+      "cache_savings_usd": 0.000828,
+      "repair_tokens_by_turn": [
+        3694
+      ],
+      "generated_chars": 2686,
+      "final_code_chars": 1379,
+      "code_chars_by_turn": [
+        1307,
+        1379
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 31.32,
+      "final_outcome": "working"
+    },
+    {
+      "task": "text-analysis",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 11399,
+      "input_tokens": 10523,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 667,
+      "cost_usd": 0.013938,
+      "effective_input_tokens": 864,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        3462
+      ],
+      "generated_chars": 928,
+      "final_code_chars": 466,
+      "code_chars_by_turn": [
+        462,
+        466
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 47.73,
+      "final_outcome": "working"
+    },
+    {
+      "task": "text-analysis",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 2958,
+      "input_tokens": 6376,
+      "input_cache_hit_tokens": 2816,
+      "input_cache_miss_tokens": 3560,
+      "cost_usd": 0.004634,
+      "effective_input_tokens": 3616,
+      "cache_savings_usd": 0.000828,
+      "repair_tokens_by_turn": [
+        213
+      ],
+      "generated_chars": 1345,
+      "final_code_chars": 665,
+      "code_chars_by_turn": [
+        680,
+        665
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 12.93,
+      "final_outcome": "working"
+    },
+    {
+      "task": "gcd-lcm",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 4624,
+      "input_tokens": 10211,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 355,
+      "cost_usd": 0.005714,
+      "effective_input_tokens": 552,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        3399
+      ],
+      "generated_chars": 424,
+      "final_code_chars": 212,
+      "code_chars_by_turn": [
+        212,
+        212
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 21.92,
+      "final_outcome": "working"
+    },
+    {
+      "task": "gcd-lcm",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 767,
+      "input_tokens": 5804,
+      "input_cache_hit_tokens": 2688,
+      "input_cache_miss_tokens": 3116,
+      "cost_usd": 0.001871,
+      "effective_input_tokens": 3170,
+      "cache_savings_usd": 0.00079,
+      "repair_tokens_by_turn": [
+        360
+      ],
+      "generated_chars": 539,
+      "final_code_chars": 287,
+      "code_chars_by_turn": [
+        252,
+        287
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 4.32,
+      "final_outcome": "working"
+    },
+    {
+      "task": "prime-count",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 16281,
+      "input_tokens": 27084,
+      "input_cache_hit_tokens": 25856,
+      "input_cache_miss_tokens": 1228,
+      "cost_usd": 0.020061,
+      "effective_input_tokens": 1745,
+      "cache_savings_usd": 0.007602,
+      "repair_tokens_by_turn": [
+        7140,
+        2092,
+        362,
+        469
+      ],
+      "generated_chars": 1109,
+      "final_code_chars": 227,
+      "code_chars_by_turn": [
+        232,
+        220,
+        218,
+        212,
+        227
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 70.09,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "prime-count",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 450,
+      "input_tokens": 2781,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2781,
+      "cost_usd": 0.001374,
+      "effective_input_tokens": 2781,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 394,
+      "final_code_chars": 394,
+      "code_chars_by_turn": [
+        394
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 2.15,
+      "final_outcome": "working"
+    },
+    {
+      "task": "fizzbuzz-range",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 4414,
+      "input_tokens": 21702,
+      "input_cache_hit_tokens": 20608,
+      "input_cache_miss_tokens": 1094,
+      "cost_usd": 0.005749,
+      "effective_input_tokens": 1506,
+      "cache_savings_usd": 0.006059,
+      "repair_tokens_by_turn": [
+        1503,
+        362,
+        898
+      ],
+      "generated_chars": 1060,
+      "final_code_chars": 266,
+      "code_chars_by_turn": [
+        260,
+        266,
+        268,
+        266
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 4,
+      "attempts_total": 4,
+      "success_rate": 1.0,
+      "wall_time_s": 20.76,
+      "final_outcome": "working"
+    },
+    {
+      "task": "fizzbuzz-range",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 980,
+      "input_tokens": 2835,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2835,
+      "cost_usd": 0.002027,
+      "effective_input_tokens": 2835,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 309,
+      "final_code_chars": 309,
+      "code_chars_by_turn": [
+        309
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 4.2,
+      "final_outcome": "working"
+    },
+    {
+      "task": "flatten-sum",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 3882,
+      "input_tokens": 16065,
+      "input_cache_hit_tokens": 15104,
+      "input_cache_miss_tokens": 961,
+      "cost_usd": 0.005037,
+      "effective_input_tokens": 1263,
+      "cache_savings_usd": 0.004441,
+      "repair_tokens_by_turn": [
+        1324,
+        1976
+      ],
+      "generated_chars": 551,
+      "final_code_chars": 185,
+      "code_chars_by_turn": [
+        179,
+        187,
+        185
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 19.41,
+      "final_outcome": "working"
+    },
+    {
+      "task": "flatten-sum",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1659,
+      "input_tokens": 2802,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2802,
+      "cost_usd": 0.002831,
+      "effective_input_tokens": 2802,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 355,
+      "final_code_chars": 355,
+      "code_chars_by_turn": [
+        355
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 7.05,
+      "final_outcome": "working"
+    },
+    {
+      "task": "dedupe-order",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 9659,
+      "input_tokens": 27825,
+      "input_cache_hit_tokens": 26368,
+      "input_cache_miss_tokens": 1457,
+      "cost_usd": 0.012186,
+      "effective_input_tokens": 1984,
+      "cache_savings_usd": 0.007752,
+      "repair_tokens_by_turn": [
+        514,
+        401,
+        4025,
+        4435
+      ],
+      "generated_chars": 554,
+      "final_code_chars": 88,
+      "code_chars_by_turn": [
+        118,
+        132,
+        120,
+        96,
+        88
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 46.3,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "dedupe-order",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 771,
+      "input_tokens": 2787,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2787,
+      "cost_usd": 0.001761,
+      "effective_input_tokens": 2787,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 273,
+      "final_code_chars": 273,
+      "code_chars_by_turn": [
+        273
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 3.95,
+      "final_outcome": "working"
+    },
+    {
+      "task": "run-length-encode",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 12528,
+      "input_tokens": 15747,
+      "input_cache_hit_tokens": 14976,
+      "input_cache_miss_tokens": 771,
+      "cost_usd": 0.015355,
+      "effective_input_tokens": 1071,
+      "cache_savings_usd": 0.004403,
+      "repair_tokens_by_turn": [
+        3316,
+        161
+      ],
+      "generated_chars": 915,
+      "final_code_chars": 298,
+      "code_chars_by_turn": [
+        307,
+        310,
+        298
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 56.67,
+      "final_outcome": "working"
+    },
+    {
+      "task": "run-length-encode",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 3563,
+      "input_tokens": 5699,
+      "input_cache_hit_tokens": 2688,
+      "input_cache_miss_tokens": 3011,
+      "cost_usd": 0.005195,
+      "effective_input_tokens": 3065,
+      "cache_savings_usd": 0.00079,
+      "repair_tokens_by_turn": [
+        496
+      ],
+      "generated_chars": 551,
+      "final_code_chars": 283,
+      "code_chars_by_turn": [
+        268,
+        283
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 15.8,
+      "final_outcome": "working"
+    },
+    {
+      "task": "top-words",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 27747,
+      "input_tokens": 28845,
+      "input_cache_hit_tokens": 26880,
+      "input_cache_miss_tokens": 1965,
+      "cost_usd": 0.034047,
+      "effective_input_tokens": 2503,
+      "cache_savings_usd": 0.007903,
+      "repair_tokens_by_turn": [
+        2939,
+        3057,
+        2765,
+        15305
+      ],
+      "generated_chars": 1947,
+      "final_code_chars": 453,
+      "code_chars_by_turn": [
+        349,
+        397,
+        410,
+        338,
+        453
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 122.1,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "top-words",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 5731,
+      "input_tokens": 10827,
+      "input_cache_hit_tokens": 6272,
+      "input_cache_miss_tokens": 4555,
+      "cost_usd": 0.008281,
+      "effective_input_tokens": 4680,
+      "cache_savings_usd": 0.001844,
+      "repair_tokens_by_turn": [
+        733,
+        340
+      ],
+      "generated_chars": 2641,
+      "final_code_chars": 876,
+      "code_chars_by_turn": [
+        877,
+        888,
+        876
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 24.35,
+      "final_outcome": "working"
+    },
+    {
+      "task": "cron-expand",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 12950,
+      "input_tokens": 29354,
+      "input_cache_hit_tokens": 27264,
+      "input_cache_miss_tokens": 2090,
+      "cost_usd": 0.016331,
+      "effective_input_tokens": 2635,
+      "cache_savings_usd": 0.008016,
+      "repair_tokens_by_turn": [
+        842,
+        2052,
+        329,
+        6311
+      ],
+      "generated_chars": 1376,
+      "final_code_chars": 224,
+      "code_chars_by_turn": [
+        262,
+        288,
+        300,
+        302,
+        224
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 74.43,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "cron-expand",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 5139,
+      "input_tokens": 2786,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2786,
+      "cost_usd": 0.007003,
+      "effective_input_tokens": 2786,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 766,
+      "final_code_chars": 766,
+      "code_chars_by_turn": [
+        766
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 22.12,
+      "final_outcome": "working"
+    },
+    {
+      "task": "record-summary",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 8967,
+      "input_tokens": 22929,
+      "input_cache_hit_tokens": 21248,
+      "input_cache_miss_tokens": 1681,
+      "cost_usd": 0.011392,
+      "effective_input_tokens": 2106,
+      "cache_savings_usd": 0.006247,
+      "repair_tokens_by_turn": [
+        4330,
+        900,
+        427
+      ],
+      "generated_chars": 1637,
+      "final_code_chars": 423,
+      "code_chars_by_turn": [
+        366,
+        423,
+        425,
+        423
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 4,
+      "attempts_total": 4,
+      "success_rate": 1.0,
+      "wall_time_s": 40.58,
+      "final_outcome": "working"
+    },
+    {
+      "task": "record-summary",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1745,
+      "input_tokens": 2862,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2862,
+      "cost_usd": 0.002953,
+      "effective_input_tokens": 2862,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 804,
+      "final_code_chars": 804,
+      "code_chars_by_turn": [
+        804
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 7.73,
+      "final_outcome": "working"
+    },
+    {
+      "task": "csv-aggregate",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 9864,
+      "input_tokens": 28820,
+      "input_cache_hit_tokens": 26880,
+      "input_cache_miss_tokens": 1940,
+      "cost_usd": 0.01258,
+      "effective_input_tokens": 2478,
+      "cache_savings_usd": 0.007903,
+      "repair_tokens_by_turn": [
+        1807,
+        1644,
+        3923,
+        843
+      ],
+      "generated_chars": 1746,
+      "final_code_chars": 370,
+      "code_chars_by_turn": [
+        336,
+        331,
+        359,
+        350,
+        370
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 43.59,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "csv-aggregate",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 19266,
+      "input_tokens": 21803,
+      "input_cache_hit_tokens": 15488,
+      "input_cache_miss_tokens": 6315,
+      "cost_usd": 0.025107,
+      "effective_input_tokens": 6625,
+      "cache_savings_usd": 0.004553,
+      "repair_tokens_by_turn": [
+        987,
+        481,
+        595,
+        478
+      ],
+      "generated_chars": 5786,
+      "final_code_chars": 1153,
+      "code_chars_by_turn": [
+        1142,
+        1169,
+        1154,
+        1168,
+        1153
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": null,
+      "attempts_total": 5,
+      "success_rate": 0.0,
+      "wall_time_s": 75.97,
+      "final_outcome": "partial"
+    },
+    {
+      "task": "log-level-count",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 8317,
+      "input_tokens": 10624,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 768,
+      "cost_usd": 0.01027,
+      "effective_input_tokens": 965,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        7219
+      ],
+      "generated_chars": 828,
+      "final_code_chars": 433,
+      "code_chars_by_turn": [
+        395,
+        433
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 35.65,
+      "final_outcome": "working"
+    },
+    {
+      "task": "log-level-count",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 631,
+      "input_tokens": 2826,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2826,
+      "cost_usd": 0.001605,
+      "effective_input_tokens": 2826,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 452,
+      "final_code_chars": 452,
+      "code_chars_by_turn": [
+        452
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 2.91,
+      "final_outcome": "working"
+    },
+    {
+      "task": "weekday-of-date",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 2967,
+      "input_tokens": 10274,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 418,
+      "cost_usd": 0.003745,
+      "effective_input_tokens": 615,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        1652
+      ],
+      "generated_chars": 624,
+      "final_code_chars": 312,
+      "code_chars_by_turn": [
+        312,
+        312
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 13.46,
+      "final_outcome": "working"
+    },
+    {
+      "task": "weekday-of-date",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 1504,
+      "input_tokens": 2773,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2773,
+      "cost_usd": 0.002637,
+      "effective_input_tokens": 2773,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 403,
+      "final_code_chars": 403,
+      "code_chars_by_turn": [
+        403
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 5.91,
+      "final_outcome": "working"
+    },
+    {
+      "task": "least-squares-slope",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 9121,
+      "input_tokens": 16678,
+      "input_cache_hit_tokens": 15360,
+      "input_cache_miss_tokens": 1318,
+      "cost_usd": 0.011433,
+      "effective_input_tokens": 1625,
+      "cache_savings_usd": 0.004516,
+      "repair_tokens_by_turn": [
+        926,
+        5771
+      ],
+      "generated_chars": 1244,
+      "final_code_chars": 424,
+      "code_chars_by_turn": [
+        408,
+        412,
+        424
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 3,
+      "attempts_total": 3,
+      "success_rate": 1.0,
+      "wall_time_s": 39.61,
+      "final_outcome": "working"
+    },
+    {
+      "task": "least-squares-slope",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 3523,
+      "input_tokens": 2804,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2804,
+      "cost_usd": 0.005069,
+      "effective_input_tokens": 2804,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 761,
+      "final_code_chars": 761,
+      "code_chars_by_turn": [
+        761
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 13.88,
+      "final_outcome": "working"
+    },
+    {
+      "task": "kmeans-assign",
+      "language": "ilo",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 16861,
+      "input_tokens": 10795,
+      "input_cache_hit_tokens": 9856,
+      "input_cache_miss_tokens": 939,
+      "cost_usd": 0.020574,
+      "effective_input_tokens": 1136,
+      "cache_savings_usd": 0.002898,
+      "repair_tokens_by_turn": [
+        12957
+      ],
+      "generated_chars": 866,
+      "final_code_chars": 455,
+      "code_chars_by_turn": [
+        411,
+        455
+      ],
+      "finish_reasons": [
+        "stop",
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 73.07,
+      "final_outcome": "working"
+    },
+    {
+      "task": "kmeans-assign",
+      "language": "moonbit",
+      "model": "dsflash",
+      "model_id": "deepseek-flash",
+      "provider": "openai",
+      "cache_mode": "warm",
+      "align": true,
+      "context": "curated",
+      "generation_tokens": 2749,
+      "input_tokens": 2870,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 2870,
+      "cost_usd": 0.00416,
+      "effective_input_tokens": 2870,
+      "cache_savings_usd": 0.0,
+      "repair_tokens_by_turn": [],
+      "generated_chars": 961,
+      "final_code_chars": 961,
+      "code_chars_by_turn": [
+        961
+      ],
+      "finish_reasons": [
+        "stop"
+      ],
+      "truncated_attempts": 0,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 10.84,
+      "final_outcome": "working"
+    }
+  ]
+}
