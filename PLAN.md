@@ -322,6 +322,21 @@ for the language slice.
   session logs (this machine: $7,976.69/30d; a 113-subagent session spent
   55% outside the parent conversation). The bench meters from the same
   principle: provider-reported usage, nothing estimated.
+- **Agent Format** (`agentformat.org`, "Open Standard v1.0"): declarative
+  `.agf.yaml` agent definitions — a POMDP-shaped document (`metadata`,
+  `interface`, `memory`, `constraints`, `action_space`, `execution_policy`)
+  that any compliant runtime executes, positioned as the *definition* layer
+  above MCP (tools) and A2A (comms). Copyright **Snap Inc.** (Apache-2.0);
+  the GitHub org is three `-sc` Snap engineers (`jtangsc`, `zchang-sc`,
+  `lfu-sc`), 22★, 0 issues/PRs, **no activity since 2026-03-11**, and the
+  promised LangChain/ADK/PydanticAI adapters are still "coming soon" — an
+  announced standard with no shipped runtime (sampled 2026-09-18).
+  Relevance to ilo: **none direct** — ilo never references it, and the two
+  are different layers (AGF declares *what an agent is*; ilo is the language
+  an agent authors code in). They compose on MCP: an `.agf.yaml` could
+  declare ilo's MCP server (`scripts/ilo-mcp-server.py`) under
+  `action_space.mcp_servers`. Watched, not adopted — re-check adapter and
+  toolchain shipping before treating it as an integration target.
 
 ### A.5 "Stanford NLP Shepard" — negative result
 
