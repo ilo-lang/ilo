@@ -209,23 +209,38 @@ model at the edge of its capacity.
 
 ## Comparator status
 
-**Reference toolchain matrix (2026-09-18): all 8 benchmark tasks
-hand-authored and byte-exact validated in 6 languages — 48/48.**
-ilo 8/8 (fixed 3 latent double-print bugs in previously committed
+**Reference toolchain matrix (2026-09-18): all 24 benchmark tasks
+hand-authored and byte-exact validated in 6 languages — 144/144.**
+ilo 24/24 (fixed 3 latent double-print bugs in previously committed
 references: main tail auto-prints, so `prnt` + tail = duplicate output) ·
-bash 8/8 · Zero 8/8 · AILANG 8/8 (go1.27 via mise) · MoonBit 8/8 (moon
-0.1.20260915) · NanoLang 8/8 (2 `-Werror` source fixes; mandatory shadow
-tests). References: `bench/closed-loop/references-<lang>/`; rerunnable
-LLM legs: `bench/comparators/comparator-matrix.sh`.
+bash 24/24 · Zero 24/24 · AILANG 24/24 (go1.27 via mise) · MoonBit 24/24
+(moon 0.1.20260915) · NanoLang 24/24 (2 `-Werror` source fixes; mandatory
+shadow tests). References: `bench/closed-loop/references-<lang>/`;
+rerunnable LLM legs: `bench/comparators/comparator-matrix.sh`.
+
+The set was widened from 8 to 24 on 2026-09-18 because 8 glue tasks could
+not separate the legs: every language solved them, so the only signal was
+cost per solved task. Two comparator quirks are worked around in-file and
+worth knowing: MoonBit core's `String::compare` orders by **length first,
+then content** (not lexicographic), and Zero's typed graph MIR rejects
+some `Maybe<Span<u8>>` / fixed-array-local shapes, so those references
+avoid them.
 
 **Bash LLM leg (2026-09-18, DeepSeek V4.1-Flash, warm, n=8):** bash
 **7/8 first-attempt working** (~$0.0006/task, 2–5 s/task; the
 with-dependencies failure was a harness artifact, retried run worked) vs
 ilo 6/8 working at $0.0034–0.0080/task with 3–5 retries. **The
-pretraining-native floor is real: bash is ~8× cheaper than ilo on glue
-tasks.** ilo's claim cannot be $/task on this class; it is verified
-density (gates, tools) and the small-model arm. Published as a loss per
-the plan's risk table.
+pretraining-native floor is real: bash is several times cheaper than ilo
+on glue tasks.** ilo's claim cannot be $/task on this class; it is
+verified density (gates, tools) and the small-model arm. Published as a
+loss per the plan's risk table.
+
+*Caveat on that row (2026-09-18).* It was measured on the old 8-task set
+under a prompt that named ilo in every task description (see G1 in
+`docs/cadence/2026-09.md`). The bias ran against bash, so the conclusion
+holds, but the number is superseded: the harness now refuses to run a
+sweep whose descriptions name a language, and the leg is being re-run on
+the 24-task set. Treat this row as historical until that run lands.
 
 - **Bash**: leg wired 2026-09-18 — reference solutions authored for all
   24 tasks (`bench/closed-loop/references-bash/`), each validated against
