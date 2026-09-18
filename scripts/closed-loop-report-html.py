@@ -86,6 +86,12 @@ def fmt_s(v, dash: str = "—") -> str:
     return dash if v is None else f"{v:,.1f}s"
 
 
+def fmt_att(v, dash: str = "—") -> str:
+    """Attempts, always as a mean — a pooled row averages its reps, so a raw
+    float would print as 3.3333333333333335."""
+    return dash if v is None else f"{v:.2f}"
+
+
 def fmt_ratio(v) -> str:
     """Ratio cell: bar colouring is the point — under 1× is cheaper than ilo."""
     if v is None:
@@ -382,7 +388,7 @@ def lang_table(st: dict) -> str:
         l for l in st["agg"] if l not in LEG_ORDER]
     for lang in universe:
         a = st["agg"][lang]
-        att = "—" if a["mean_attempts"] is None else f"{a['mean_attempts']:.2f}"
+        att = fmt_att(a["mean_attempts"])
         oc = "".join(
             f'<span class="chip {o}">{a["outcomes"].get(o, 0)}</span>'
             for o in OUTCOMES if a["outcomes"].get(o)
@@ -593,9 +599,8 @@ def task_blocks(st: dict) -> str:
                 f'<td class="num">{fmt_int(chars)}</td>'
                 f'<td class="num">{cap_cell}</td>'
                 f'<td class="num">{tpc_cell}</td>'
-                f'<td class="num">{fmt_int(r.get("input_tokens"))}</td>'
                 f'<td class="num">{fmt_money(r.get("cost_usd"))}</td>'
-                f'<td class="num">{r.get("attempts_total") or "—"}</td>'
+                f'<td class="num">{fmt_att(r.get("attempts_total"))}</td>'
                 f'<td class="num">{trunc_cell}</td>'
                 f'<td class="num">{fmt_s(r.get("wall_time_s"))}</td>'
                 f'<td>{oc_cell}</td></tr>'
