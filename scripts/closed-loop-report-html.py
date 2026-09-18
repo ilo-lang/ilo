@@ -324,8 +324,9 @@ def cards(st: dict) -> str:
         '<div class="cards">'
         + card("generation tokens", fmt_int(st["gen"]),
                f"mean {fmt_int(st['mean_gen'])} per row · includes reasoning",
-               "Every token the model emitted, reasoning included; the total "
-               "sums every task-row in this tab")
+               "Every token the model emitted, reasoning included, summed over "
+               "every attempt of every task-row in this tab — retries, repairs "
+               "and discarded drafts included")
         + card("code characters",
                fmt_int(st["chars"]) if chars_known else "—",
                (f"mean {fmt_int(st['mean_chars'])} per row · emitted code only"
@@ -349,7 +350,15 @@ def cards(st: dict) -> str:
                "and included here, the ratio mostly tracks how much the model "
                "thought before writing.")
         + card("input tokens", fmt_int(st["inp"]),
-               f"mean {fmt_int(st['mean_inp'])} per row · provider-side, pre-cache")
+               f"mean {fmt_int(st['mean_inp'])} per row · provider-side, pre-cache",
+               "Prompt tokens sent across every attempt of every task-row "
+               "(spec + task + repairs), before cache discounts")
+        + card("total tokens", fmt_int(st["inp"] + st["gen"]),
+               f"mean {fmt_int((st['mean_inp'] or 0) + (st['mean_gen'] or 0))} "
+               "per row · input + generation",
+               "Input plus generation tokens: the whole provider-side volume "
+               "the run moved. Cache hits bill cheaper, so this is a size and "
+               "not a price — spend is the price.")
         + card("spend", fmt_money(st["cost"]),
                f"mean {fmt_money(st['mean_cost'])} per row")
         + card("working", f"{st['working_reps']}/{st['reps']}",
@@ -366,18 +375,13 @@ def cards(st: dict) -> str:
 
 def lang_table(st: dict) -> str:
     rows = []
-    # Same contract as the per-task tables: the whole field is listed, and a
-    # language with no measurement in this tab says so instead of going absent.
-    universe = list(LEG_ORDER) + [l for l in st["langs"] if l not in LEG_ORDER]
+    # Only legs measured in this tab get a row. A leg the sweep never ran is
+    # named once in the coverage note above the table; repeating it here as a
+    # row of dashes reads like a set of measured zeros.
+    universe = [l for l in LEG_ORDER if l in st["agg"]] + [
+        l for l in st["agg"] if l not in LEG_ORDER]
     for lang in universe:
-        a = st["agg"].get(lang)
-        if a is None:
-            rows.append(
-                f'<tr class="unmeasured"><td class="lang">{E(lang)}</td>'
-                + '<td class="num">—</td>' * 15
-                + f'<td>{unmeasured_cell()}</td></tr>'
-            )
-            continue
+        a = st["agg"][lang]
         att = "—" if a["mean_attempts"] is None else f"{a['mean_attempts']:.2f}"
         oc = "".join(
             f'<span class="chip {o}">{a["outcomes"].get(o, 0)}</span>'
@@ -385,17 +389,27 @@ def lang_table(st: dict) -> str:
         )
         cap = "—" if a["chars_per_att"] is None else f"{a['chars_per_att']:.1f}"
         tpc = "—" if a["tok_per_char"] is None else f"{a['tok_per_char']:.1f}"
+        # A run that never captured characters has no code size at all, and a
+        # printed 0 reads as a measured zero. Dash is "not captured".
+        chars = fmt_int(a["chars"]) if a["char_rows"] else "—"
+        chars_row = (fmt_int(a["mean_chars"])
+                     if a["char_rows"] and a["mean_chars"] is not None else "—")
+        total = a["gen"] + a["inp"]
+        total_row = a["mean_gen"] + a["mean_inp"]
         rows.append(
             f'<tr><td class="lang">{E(lang)}</td>'
             f'<td class="num">{a["repeats"]}</td>'
             f'<td class="num">{a["rows"]}</td>'
             f'<td class="num">{fmt_int(a["gen"])}</td>'
             f'<td class="num">{fmt_int(a["mean_gen"])}</td>'
-            f'<td class="num">{fmt_int(a["chars"])}</td>'
-            f'<td class="num">{fmt_int(a["mean_chars"])}</td>'
+            f'<td class="num">{fmt_int(a["inp"])}</td>'
+            f'<td class="num">{fmt_int(a["mean_inp"])}</td>'
+            f'<td class="num">{fmt_int(total)}</td>'
+            f'<td class="num">{fmt_int(total_row)}</td>'
+            f'<td class="num">{chars}</td>'
+            f'<td class="num">{chars_row}</td>'
             f'<td class="num">{cap}</td>'
             f'<td class="num">{tpc}</td>'
-            f'<td class="num">{fmt_int(a["inp"])}</td>'
             f'<td class="num">{fmt_money(a["cost"])}</td>'
             f'<td class="num">{fmt_money(a["mean_cost"])}</td>'
             f'<td class="num">{fmt_s(a["wall"])}</td>'
@@ -409,18 +423,29 @@ def lang_table(st: dict) -> str:
         '<th data-sort="text">leg</th>'
         '<th data-sort="num" title="measurements averaged into each task-row">reps</th>'
         '<th data-sort="num" title="distinct task-rows behind the totals">tasks</th>'
-        '<th data-sort="num">gen tok</th>'
-        '<th data-sort="num" title="mean generation tokens per task-row">tok/row</th>'
-        '<th data-sort="num">code chars</th>'
+        '<th data-sort="num" title="generation tokens across every attempt of '
+        'every task-row in this tab — retries and repair turns included">gen tok</th>'
+        '<th data-sort="num" title="mean generation tokens per task-row, '
+        'across every attempt">gen/row</th>'
+        '<th data-sort="num" title="prompt tokens across every attempt — retries '
+        'and repairs included, before cache discounts">input tok</th>'
+        '<th data-sort="num" title="mean prompt tokens per task-row, across '
+        'every attempt">input/row</th>'
+        '<th data-sort="num" title="generation + input tokens across every '
+        'attempt: the whole provider-side volume this leg moved">total tok</th>'
+        '<th data-sort="num" title="mean total tokens per task-row">total/row</th>'
+        '<th data-sort="num" title="characters of emitted code across every '
+        'attempt — superseded attempts included; a dash means this run predates '
+        'character capture">code chars</th>'
         '<th data-sort="num" title="mean emitted-code characters per task-row">chars/row</th>'
         '<th data-sort="num" title="emitted-code characters per attempt: how much '
         'program one try writes, reasoning excluded both sides">chars/att</th>'
         '<th data-sort="num" title="output tokens per character of emitted code; '
         'reasoning included, so it is a price and not a density">tok/char</th>'
-        '<th data-sort="num">input tok</th>'
         '<th data-sort="num">cost</th>'
         '<th data-sort="num" title="mean spend per task-row">$/row</th>'
-        '<th data-sort="num">wall</th>'
+        '<th data-sort="num" title="wall time of every attempt-set in this tab — '
+        'generation plus program execution, retries included">wall</th>'
         '<th data-sort="num" title="mean seconds per task-row">s/row</th>'
         '<th data-sort="num" title="mean attempts per task-row">att/row</th>'
         '<th data-sort="num" title="passed measurements over measurements taken '
@@ -486,7 +511,7 @@ def expected_tag(value: str) -> str:
 
 
 def task_blocks(st: dict) -> str:
-    """One table per task: every language, measured or not, side by side.
+    """One table per task: every leg the tab measured, side by side.
 
     The flat alternative (one row per task×language) hides the thing the bench
     exists to show — how the languages compare *on the same program*. Grouping by
@@ -519,20 +544,24 @@ def task_blocks(st: dict) -> str:
 
         body = []
         rows_by_lang = {r["language"]: r for r in rows}
-        # Every language the field knows is a row, always. A leg the sweep has
-        # not reached yet reads "not measured" instead of vanishing, so no tab
-        # can look like "ilo vs bash" while five other legs are still pending.
-        universe = list(LEG_ORDER) + [l for l in rows_by_lang if l not in LEG_ORDER]
+        # Every leg this tab measured is a row, always: a leg that ran on other
+        # tasks but not this one reads "not measured" rather than vanishing. A
+        # leg the tab never ran is not listed at all — the coverage note above
+        # the tables names it, and a row of dashes here reads as zeros.
+        universe = [l for l in LEG_ORDER if l in st["langs"]] + [
+            l for l in st["langs"] if l not in LEG_ORDER]
         for lang in universe:
             r = rows_by_lang.get(lang)
             if r is None:
                 body.append(
                     f'<tr class="unmeasured"><td class="lang">{E(lang)}</td>'
-                    + '<td class="num">—</td>' * 9
+                    + '<td class="num">—</td>' * 10
                     + f'<td>{unmeasured_cell()}</td></tr>'
                 )
                 continue
             gen = r.get("generation_tokens")
+            inp = r.get("input_tokens")
+            total = (gen + inp if gen is not None and inp is not None else None)
             chars = r.get("generated_chars")
             attempts = r.get("attempts_total") or 0
             cap = ((chars / attempts) if isinstance(chars, (int, float)) and attempts
@@ -559,6 +588,8 @@ def task_blocks(st: dict) -> str:
             body.append(
                 f'<tr><td class="lang">{E(r["language"])}{rep}</td>'
                 f'<td{mark}>{fmt_int(gen)}</td>'
+                f'<td class="num">{fmt_int(inp)}</td>'
+                f'<td class="num">{fmt_int(total)}</td>'
                 f'<td class="num">{fmt_int(chars)}</td>'
                 f'<td class="num">{cap_cell}</td>'
                 f'<td class="num">{tpc_cell}</td>'
@@ -580,13 +611,19 @@ def task_blocks(st: dict) -> str:
             + (f'<div class="note">{E(meta["description"])}</div>'
                if meta.get("description") else "")
             + '<div class="scroll"><table class="grid"><thead><tr>'
-            '<th>leg</th><th>gen tokens</th>'
-            '<th title="characters of emitted code, excluding reasoning">code chars</th>'
+            '<th>leg</th><th title="generation tokens across every attempt of '
+            'this task — every repair turn included">gen tokens</th>'
+            '<th title="prompt tokens across every attempt, before cache '
+            'discounts">input</th>'
+            '<th title="generation + input tokens: the whole provider-side '
+            'volume this task cost, retries and fixes included">total</th>'
+            '<th title="characters of emitted code across every attempt, '
+            'excluding reasoning; superseded attempts included">code chars</th>'
             '<th title="emitted-code characters per attempt: how much program one '
             'try writes, reasoning excluded both sides">chars/att</th>'
             '<th title="output tokens per character of emitted code; reasoning '
             'included, so it is a price and not a density">tok/char</th>'
-            '<th>input</th><th>cost</th><th>attempts</th>'
+            '<th>cost</th><th>attempts</th>'
             '<th title="attempts that hit the model output cap and emitted no code">trunc</th>'
             '<th>wall</th>'
             '<th>outcome</th></tr></thead><tbody>'
@@ -695,24 +732,30 @@ def run_section(run: dict, idx: int, active: bool) -> str:
   {banner}
   {partial}
   <h3>Per task, by language</h3>
-  <p class="note">One table per task — every language measured on that task, on the same
-  program. <em>gen tokens</em> is everything the model emitted (reasoning included);
+  <p class="note">One table per task — every leg measured on that task, on the same
+  program. Every number is the whole attempt-set: <em>gen tokens</em>, <em>input</em>,
+  <em>total</em>, <em>code chars</em>, <em>cost</em> and <em>wall</em> all fold in
+  each retry and repair turn, including attempts that failed or were thrown away.
+  <em>gen tokens</em> is everything the model emitted (reasoning included);
   <em>code chars</em> is the emitted program only. <em>chars/att</em> divides that
   by attempts — reasoning-free on both sides, so it compares program size across
   legs and models; <em>tok/char</em> is the price of a character of code and is
-  <em>not</em> density, because reasoning is inside the token count. A language the
-  sweep did not run stays listed as “not measured”, never silently dropped.</p>
+  <em>not</em> density, because reasoning is inside the token count. A leg this tab
+  ran that has no row on a given task reads “not measured” there; a leg the tab
+  never ran is named once in the coverage note above and is not listed at all.</p>
   {task_blocks(st)}
   <h3>Cost per language</h3>
-  <p class="note">Totals cover every task-row in this tab; <em>per row</em> means per single
-  task attempt-set (one language, one task), so it is comparable across tabs with
-  different task counts. <em>reps</em> is how many measurements were averaged into a
-  row — the ilo arm is measured once per comparator leg. <em>working</em> counts
-  measurements for the same reason: its denominator is <em>reps</em>, not rows, so a
-  leg measured once and a leg measured six times compare as rates. The
-  <em>outcomes</em> chips beside it count task-rows instead — one chip per row of
-  the per-task tables — so they are coarser, not a second estimate. <em>code chars</em> count emitted code only — reasoning
-  tokens are inside <em>gen tok</em> and are the bulk of them.</p>
+  <p class="note">Totals cover every task-row in this tab, every attempt inside it;
+  <em>per row</em> means per single task attempt-set (one language, one task), so it is
+  comparable across tabs with different task counts. <em>reps</em> is how many
+  measurements were averaged into a row — the ilo arm is measured once per comparator
+  leg. <em>working</em> counts measurements for the same reason: its denominator is
+  <em>reps</em>, not rows, so a leg measured once and a leg measured six times compare
+  as rates. The <em>outcomes</em> chips beside it count task-rows instead — one chip
+  per row of the per-task tables — so they are coarser, not a second estimate.
+  <em>total tok</em> is generation plus input, the provider-side volume; <em>code chars</em>
+  counts emitted code only, and reasoning tokens are inside the token columns and are
+  the bulk of them.</p>
   {lang_table(st)}
   {f'<h3>Head-to-head vs ilo</h3><p class="note">Mean per task-row, leg ÷ ilo. Below 1× is smaller/cheaper than ilo; green is better for the leg. The last two columns repeat <em>working</em> as passed measurements over measurements taken, leg and ilo side by side.</p>{ratio}' if ratio else ''}
 </section>"""
@@ -747,7 +790,7 @@ def build_html(runs: list[dict]) -> str:
     <h1><span class="word">ilo</span><span class="sep">/</span><span class="what">closed-loop benchmark</span></h1>
   </div>
   <div class="sub">{len(runs)} run{'s' if len(runs) != 1 else ''} · newest {E(gen)}</div>
-  <div class="sub wide">A model writes each task in each language, the program is <strong>run</strong>, and its error is fed back until it works — that repair loop is the “closed loop”. Measured per attempt-set: tokens, emitted characters, dollars and seconds. Program <em>runtime</em> is a different bench (<code>bench/run.sh</code>).</div>
+  <div class="sub wide">A model writes each task in each language, the program is <strong>run</strong>, and its error is fed back until it works — that repair loop is the “closed loop”. Measured per attempt-set, retries and repairs included: tokens, emitted characters, dollars and seconds. Program <em>runtime</em> is a different bench (<code>bench/run.sh</code>).</div>
   <div class="spacer"></div>
   <button id="theme" title="Toggle light/dark">light</button>
 </header>
@@ -764,14 +807,15 @@ def build_html(runs: list[dict]) -> str:
   <details class="legend">
     <summary>What the numbers mean</summary>
     <dl>
-      <dt>generation tokens</dt><dd>Everything the model emitted, reasoning included. Total sums every task-row; mean/row divides by task-rows.</dd>
-      <dt>code characters</dt><dd>Characters of the emitted program only — reasoning excluded. It cannot be divided by <em>gen tokens</em> to get a density: those tokens are mostly reasoning, so the ratio measures thinking, not code.</dd>
+      <dt>generation tokens</dt><dd>Everything the model emitted, reasoning included — across <em>every</em> attempt of the row, so retries, repairs and discarded drafts are in the count. Total sums every task-row; gen/row divides by task-rows.</dd>
+      <dt>code characters</dt><dd>Characters of the emitted program only — reasoning excluded — summed over every attempt, superseded drafts included. It cannot be divided by <em>gen tokens</em> to get a density: those tokens are mostly reasoning, so the ratio measures thinking, not code.</dd>
       <dt>chars/att</dt><dd>Emitted-code characters per attempt: how much program one try writes. Reasoning-free on both sides, so unlike a chars÷tokens ratio it is comparable across legs and models.</dd>
       <dt>tok/char</dt><dd>Generation tokens (reasoning included) per character of emitted code — a price, not a density. Lower is cheaper per character produced.</dd>
       <dt>expects</dt><dd>The exact stdout a row must print to count as <em>working</em>. ↵ marks a line break; a row that runs but prints anything else is <em>partial</em>.</dd>
       <dt>closed loop</dt><dd>The program is written, run, and its error fed back to the model, which rewrites it — repeated until it prints <em>expects</em> or the retry cap is reached. That feedback edge is the loop; an open-loop measure would count tokens to produce code it never ran.</dd>
       <dt>execution time</dt><dd>Wall time of the whole attempt-set — every generation call plus every run of the program. It is not the program's own runtime (that is the wall-clock microbench in <code>bench/run.sh</code>).</dd>
-      <dt>input tokens</dt><dd>Prompt tokens resent to the provider (spec + task + repairs), before cache discounts.</dd>
+      <dt>input tokens</dt><dd>Prompt tokens sent to the provider across every attempt of the row (spec + task + repairs), before cache discounts.</dd>
+      <dt>total tokens</dt><dd>Generation plus input, summed over every attempt: the whole provider-side volume a leg moved in this tab. It is a <em>size</em>, not a price — cache hits bill cheaper but count the same, so spend is the cost figure. Per row divides by task-rows, which makes it comparable across tabs with different task counts.</dd>
       <dt>reps</dt><dd>Measurements averaged into a task-row. The comparator matrix measures the ilo arm once per comparator leg, so ilo rows show ×N.</dd>
       <dt>working</dt><dd>Measurements (reps, not task-rows) whose program ran and printed the expected output within the retry cap. Cells read passed/taken — <code>6/8</code> — and the denominator is reps, because the comparator matrix measures the ilo arm once per comparator leg.</dd>
       <dt>best</dt><dd>In a per-task table, the fewest generation tokens among the languages that solved that task. It says who got there with the least emitted text, not who is fastest overall.</dd>
