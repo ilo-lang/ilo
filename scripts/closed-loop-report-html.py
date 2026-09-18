@@ -335,8 +335,18 @@ def cards(st: dict) -> str:
 
 def lang_table(st: dict) -> str:
     rows = []
-    for lang in st["langs"]:
-        a = st["agg"][lang]
+    # Same contract as the per-task tables: the whole field is listed, and a
+    # language with no measurement in this tab says so instead of going absent.
+    universe = list(LEG_ORDER) + [l for l in st["langs"] if l not in LEG_ORDER]
+    for lang in universe:
+        a = st["agg"].get(lang)
+        if a is None:
+            rows.append(
+                f'<tr class="unmeasured"><td class="lang">{E(lang)}</td>'
+                + '<td class="num">—</td>' * 14
+                + f'<td>{unmeasured_cell()}</td></tr>'
+            )
+            continue
         att = "—" if a["mean_attempts"] is None else f"{a['mean_attempts']:.2f}"
         oc = "".join(
             f'<span class="chip {o}">{a["outcomes"].get(o, 0)}</span>'
@@ -419,12 +429,12 @@ def ratio_table(st: dict) -> str:
 
 
 def task_blocks(st: dict) -> str:
-    """One table per task: every language measured on that task, side by side.
+    """One table per task: every language, measured or not, side by side.
 
     The flat alternative (one row per task×language) hides the thing the bench
     exists to show — how the languages compare *on the same program*. Grouping by
-    task puts them adjacent, and a cell the sweep never measured stays an em dash
-    rather than disappearing.
+    task puts them adjacent, and a leg the sweep has not reached keeps its row
+    with a "not measured" mark, so a partial sweep cannot read as a full one.
     """
     by_task: dict[str, list[dict]] = {}
     for r in st["results"]:
@@ -451,7 +461,20 @@ def task_blocks(st: dict) -> str:
             tags.append(f'<span class="tag">expects {E(meta["expected_output"])}</span>')
 
         body = []
-        for r in rows:
+        rows_by_lang = {r["language"]: r for r in rows}
+        # Every language the field knows is a row, always. A leg the sweep has
+        # not reached yet reads "not measured" instead of vanishing, so no tab
+        # can look like "ilo vs bash" while five other legs are still pending.
+        universe = list(LEG_ORDER) + [l for l in rows_by_lang if l not in LEG_ORDER]
+        for lang in universe:
+            r = rows_by_lang.get(lang)
+            if r is None:
+                body.append(
+                    f'<tr class="unmeasured"><td class="lang">{E(lang)}</td>'
+                    + '<td class="num">—</td>' * 8
+                    + f'<td>{unmeasured_cell()}</td></tr>'
+                )
+                continue
             gen = r.get("generation_tokens")
             chars = r.get("generated_chars")
             dens = (chars / gen) if isinstance(chars, (int, float)) and gen else None
@@ -482,12 +505,8 @@ def task_blocks(st: dict) -> str:
                 f'<td>{outcome_cell(r.get("final_outcome"))}</td></tr>'
             )
 
-        # A sweep that has not run a language yet names it, so a gap reads as a
-        # gap and not as parity.
-        measured = {r["language"] for r in rows}
-        missing = [l for l in LEG_ORDER if l not in measured]
-        note = (f'<div class="note">not measured on this task in this sweep: '
-                f'{", ".join(E(m) for m in missing)}</div>' if missing else "")
+        # The unmeasured rows above name the missing legs per task, so the
+        # gap needs no separate note.
 
         blocks.append(
             f'<div class="taskblock">'
@@ -503,7 +522,7 @@ def task_blocks(st: dict) -> str:
             '<th title="attempts that hit the model output cap and emitted no code">trunc</th>'
             '<th>wall</th>'
             '<th>outcome</th></tr></thead><tbody>'
-            + "".join(body) + "</tbody></table></div>" + note + "</div>"
+            + "".join(body) + "</tbody></table></div></div>"
         )
     return "".join(blocks)
 
@@ -511,6 +530,10 @@ def task_blocks(st: dict) -> str:
 def outcome_cell(outcome) -> str:
     o = outcome or "failed"
     return f'<span class="pill {E(o)}">{E(o)}</span>'
+
+
+def unmeasured_cell() -> str:
+    return '<span class="pill unmeasured">not measured</span>'
 
 
 def run_section(run: dict, idx: int, active: bool) -> str:
@@ -637,6 +660,7 @@ def build_html(runs: list[dict]) -> str:
       <dt>reps</dt><dd>Measurements averaged into a task-row. The comparator matrix measures the ilo arm once per comparator leg, so ilo rows show ×N.</dd>
       <dt>working</dt><dd>Task-rows whose program ran and printed the expected output within the retry cap.</dd>
       <dt>best</dt><dd>In a per-task table, the fewest generation tokens among the languages that solved that task. It says who got there with the least emitted text, not who is fastest overall.</dd>
+      <dt>not measured</dt><dd>This language has no row on this task in this tab — the sweep has not run it yet, or it is absent from this run's legs. It is a gap in coverage, never a result.</dd>
       <dt>trunc</dt><dd>Attempts that stopped at the model's output-token cap (<code>finish_reason=length</code>) and emitted no code at all. A truncated attempt is billed like any other and reads as an ordinary failure, so a non-zero count here means the row is measuring the cap, not the language. A dash means the run predates this field.</dd>
     </dl>
   </details>
@@ -726,6 +750,8 @@ border:1px solid var(--bad);border-left-width:4px;border-radius:8px;background:v
 .tag{font-size:11px;color:var(--dim);background:var(--panel2);
 border:1px solid var(--line);border-radius:6px;padding:1px 7px}
 .taskblock .note{margin:0 0 8px;max-width:100ch}
+.pill.unmeasured{color:var(--dim);border-color:var(--line);background:transparent}
+tr.unmeasured td{opacity:.5}
 td.best{color:var(--ok);font-weight:700}
 .badmark{color:var(--bad);font-weight:700}
 .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
