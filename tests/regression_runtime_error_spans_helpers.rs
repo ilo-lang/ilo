@@ -176,9 +176,14 @@ fn op_mget_non_map_span_matches_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn op_panic_unwrap_err_span_matches_vm() {
-    // `(^"oops")!!` produces a runtime panic-unwrap with a Span pointing at
-    // the offending call. Pre-fix, default+cranelift gave `"labels":[]`.
-    assert_span_parity_with_entry("f>n;(^\"oops\")!!", "f");
+    // `bad!! 1` produces a runtime panic-unwrap with a Span pointing at the
+    // offending call. Pre-fix, default+cranelift gave `"labels":[]`.
+    //
+    // The original source here was `f>n;(^"oops")!!`. `!!` only applies to
+    // calls (ILO-T034), so that shape never parsed — the test passed on a
+    // *parse* diagnostic, which carries labels on every engine, and
+    // OP_PANIC_UNWRAP's span threading went uncovered.
+    assert_span_parity_with_entry("bad x:n>R n t;^\"oops\"\nf>n;d=bad!! 1;d", "f");
 }
 
 // ── 9. OP_CALL_DYN (callback error inside an HOF callback) ────────────────
@@ -186,12 +191,16 @@ fn op_panic_unwrap_err_span_matches_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn op_call_dyn_callback_error_carries_span() {
-    // `map` over a user fn whose callback panics — the inner OP_PANIC_UNWRAP
+    // `map` over a callback that panic-unwraps — the inner OP_PANIC_UNWRAP
     // raises through OP_CALL_DYN. Pre-fix the wrapper dropped both inner and
     // outer spans, so `"labels":[]` even though the inner unwrap KNEW where
     // it was. We assert: (a) labels non-empty, (b) the span is within the
     // source file extent (no garbage from a stale stack slot).
-    let src = "bad x:n>n;(^\"oops\")!!\ng>L n;map [1,2] bad";
+    //
+    // The callback must actually run: the original `map [1,2] bad` also had
+    // its args backwards, so the test tripped ILO-T013 at verify time (a
+    // labelled diagnostic) without ever reaching OP_CALL_DYN.
+    let src = "bad x:n>R n t;^\"oops\"\ng>L n;map {x> bad!! x} [1,2]";
     let cl_err = run_err("--jit", src, "g");
     assert!(
         !cl_err.contains("\"labels\":[]"),

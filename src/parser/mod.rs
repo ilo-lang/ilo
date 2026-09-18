@@ -2208,6 +2208,94 @@ statement boundary; bind the chain to a local first. For example, split \
         }
     }
 
+    /// The `UnwrapMode` of a *postfix* `!` / `!!` at the cursor — one glued to
+    /// the end of the expression that was just consumed — or `None` when the
+    /// cursor is not on such a bang.
+    ///
+    /// `!` is overloaded: `f !x` passes the logical negation of `x` as an
+    /// argument, while `f x!` unwraps the result of the call to `f`.
+    /// `maybe_postfix_unwrap` already resolves that for a callee *ident* by
+    /// adjacency. A completed argument list needs the same discrimination for
+    /// the token *after* the list, because `can_start_operand` would otherwise
+    /// report a bare `!` as the start of a new operand and the argument loop
+    /// would swallow it:
+    ///
+    /// ```text
+    /// f x:n>R n t;~x
+    /// d=f 5!            -- was parsed as f(5, Not(prnt), d)
+    /// prnt d            -- ...and this statement became an argument
+    /// ```
+    ///
+    /// Two conditions, both needed:
+    /// - **Glued.** No whitespace before the bang, so `f a !b` keeps its
+    ///   `Not` reading (the same convention `maybe_postfix_unwrap` uses).
+    /// - **An operand can end here.** The preceding token must be able to be
+    ///   the last token of an expression, so `x=!y` (after `=`) and `,!x`
+    ///   (after `,`) stay prefix `Not`.
+    fn postfix_unwrap_ahead(&self) -> Option<UnwrapMode> {
+        let mode = match self.peek() {
+            Some(Token::Bang) => UnwrapMode::Propagate,
+            Some(Token::BangBang) => UnwrapMode::Panic,
+            _ => return None,
+        };
+        if self.pos == 0 {
+            return None;
+        }
+        let prev = self.prev_span();
+        let bang = self.peek_span();
+        if prev.end == 0 || bang.start != prev.end {
+            return None;
+        }
+        matches!(
+            self.tokens[self.pos - 1].0,
+            Token::Ident(_)
+                | Token::Number(_)
+                | Token::Text(_)
+                | Token::True
+                | Token::False
+                | Token::Nil
+                | Token::RParen
+                | Token::RBracket
+                | Token::RBrace
+        )
+        .then_some(mode)
+    }
+
+    /// Consume a postfix `!` / `!!` glued to `expr` and apply it to `expr` when
+    /// `expr` is a call. Returns `expr` unchanged otherwise, leaving the bang
+    /// for the statement-level parse path.
+    ///
+    /// The bang binds to the *innermost* call whose argument list immediately
+    /// precedes it: a nested call consumes it at its own completion, before the
+    /// enclosing call is finished. So `fp=sha256 (rd "config.json")!` unwraps
+    /// `rd` (the call the `)` closes), not `sha256`.
+    ///
+    /// `!` applies to calls only (ILO-T034), so a non-call — `(^"oops")!!`, a
+    /// literal, a bare local — is left for the existing diagnostics instead of
+    /// being silently reinterpreted here.
+    fn attach_postfix_unwrap(&mut self, expr: Expr) -> Expr {
+        let Some(mode) = self.postfix_unwrap_ahead() else {
+            return expr;
+        };
+        match expr {
+            // A second bang on an already-unwrapped call (`f! x!`) is not ours
+            // to take; leave it to be reported rather than double-unwrapping.
+            Expr::Call {
+                function,
+                args,
+                unwrap,
+            } if !unwrap.is_any() => {
+                self.advance();
+                Expr::Call {
+                    function,
+                    args,
+                    unwrap: mode,
+                }
+            }
+            other => other,
+        }
+    }
+
     /// Returns `true` if the current token is `(` and it is immediately adjacent
     /// (no whitespace) to the previously consumed token.
     ///
@@ -4947,11 +5035,13 @@ or bind intermediates: `s1=+a b;s2=+s1 c;+s2 d`."
         match pat {
             Pattern::Err(b) | Pattern::Ok(b) => vec![b.clone()],
             Pattern::TypeIs { binding, .. } => vec![binding.clone()],
-            Pattern::Variant { binding: Some(b), .. } => vec![b.clone()],
+            Pattern::Variant {
+                binding: Some(b), ..
+            } => vec![b.clone()],
             Pattern::Or(alts) => alts.iter().flat_map(Self::pattern_bindings).collect(),
-            Pattern::Literal(_)
-            | Pattern::Wildcard
-            | Pattern::Variant { binding: None, .. } => Vec::new(),
+            Pattern::Literal(_) | Pattern::Wildcard | Pattern::Variant { binding: None, .. } => {
+                Vec::new()
+            }
         }
     }
 
@@ -5282,11 +5372,11 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         .map(|k| (function.as_str(), k, arg_idx));
                     args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
                 }
-                return Ok(Expr::Call {
+                return Ok(self.attach_postfix_unwrap(Expr::Call {
                     function,
                     args,
                     unwrap,
-                });
+                }));
             }
         }
 
@@ -6152,6 +6242,16 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
     }
 
     fn can_start_operand(&self) -> bool {
+        // A `!` glued to the operand that was just consumed is a *postfix*
+        // unwrap of that operand, not the prefix logical-not that starts a new
+        // one. Stopping here is what keeps a trailing bang from being swallowed
+        // as the first token of the next argument: `d=f 5!` used to parse as
+        // `f(5, Not(prnt), d)` and eat the following statement, and `prnt f 5!`
+        // as `prnt(f, 5, Not(...))`. The bang is then attached to the completed
+        // call by `attach_postfix_unwrap`.
+        if self.postfix_unwrap_ahead().is_some() {
+            return false;
+        }
         // If the upcoming token is an Ident that begins a new declaration, stop here.
         if self.is_fn_decl_start(self.pos) {
             return false;
@@ -6433,11 +6533,11 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.advance();
                 // Zero-arg builtins used as operands (arguments to other calls)
                 if name == "mmap" {
-                    return Ok(Expr::Call {
+                    return Ok(self.attach_postfix_unwrap(Expr::Call {
                         function: name,
                         args: vec![],
                         unwrap: UnwrapMode::None,
-                    });
+                    }));
                 }
                 // Zero-arg call in operand position: `name()` and `name!()`.
                 // Mirrors the statement-head handling in `parse_call_or_atom`
@@ -6479,11 +6579,11 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 {
                     self.advance(); // (
                     self.advance(); // )
-                    return Ok(Expr::Call {
+                    return Ok(self.attach_postfix_unwrap(Expr::Call {
                         function: name,
                         args: vec![],
                         unwrap: UnwrapMode::None,
-                    });
+                    }));
                 }
                 // Paren-form call in operand position (nested calls):
                 // `g(f(x), h(y))` — the inner `f(x)` and `h(y)` hit this path.
@@ -6551,6 +6651,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
     /// it (`at xs (expr)` vs `xs.i`). For parenthesised heads we don't
     /// have a name to recommend; the hint falls back to a generic shape.
     fn parse_field_chain(&mut self, mut expr: Expr, ident_hint: Option<&str>) -> Result<Expr> {
+        // Every completed call routes through here, so this is where a
+        // glue-adjacent `!` / `!!` after an argument list is taken as the
+        // postfix unwrap of the call: `d=f 5!`, `d=f(5)!`, `d=(f 5)!`.
+        expr = self.attach_postfix_unwrap(expr);
         while matches!(self.peek(), Some(Token::Dot) | Some(Token::DotQuestion)) {
             let safe = self.peek() == Some(&Token::DotQuestion);
             self.advance();
