@@ -1,0 +1,23 @@
+{
+  "generated": "fixture",
+  "harness": "hand-built",
+  "note": "thinking_unknown_attempts > 0 while code_tokens is set. Must fail even though an honest column is present. Not a measurement.",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture-model",
+      "generation_tokens": 100,
+      "thinking_tokens": 40,
+      "thinking_unknown_attempts": 2,
+      "code_tokens": 60,
+      "generated_chars": 20,
+      "input_tokens": 10,
+      "attempts_total": 2,
+      "success_rate": 1,
+      "wall_time_s": 0.2,
+      "final_outcome": "working"
+    }
+  ]
+}
