@@ -51,6 +51,11 @@ jobs:
         ANTHROPIC_API_KEY: ""
         DEEPSEEK_API_KEY: ""
       run: python3 scripts/test_closed_loop_metrics.py
+    - name: Closed-loop repair shape hint (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_repair_hint.py
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference

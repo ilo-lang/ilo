@@ -136,6 +136,28 @@ Context arms (ilo skill modules). --dry-run needs no API key.
   This flag cuts which documentation is loaded (manifesto principle 3,
   self-contained context). It does not by itself report a density result.
 
+Repair shape hint (exp-03). Default off, so a baseline arm is today's
+repair text. --repair-shape-hint appends a fixed header gloss inside
+make_repair_prompt when the repair stderr contains ILO-P003, or the
+paren-header pair (expected `>`, got `(`). The gloss names
+`name params>ret;body`, contrasts `main()>…` with `main>_;…`, and gives
+one correct one-liner (`tri n:n>n;+n 1` then `main>_;prnt (tri 10)`).
+Call sites may still use `(…)`. The initial prompt is left as-is.
+This is a retry cut (manifesto principle 6: structured compiler→agent
+surface). It is not a density claim. --dry-run prints the flag and
+does not need an API key.
+
+  # baseline (flag off)
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+    --context curated --retry-cap 2 --output-dir bench/exp03-f0-baseline/
+
+  # augmented repair prompt
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+    --context curated --retry-cap 2 --repair-shape-hint \
+    --output-dir bench/exp03-f1-shape-hint/
+
+  python3 scripts/closed-loop-bench.py --dry-run --repair-shape-hint
+
 Environment
   DEEPSEEK_API_KEY    live DeepSeek runs. Preferred when set and neither
                       --provider nor an Anthropic model is requested.
@@ -627,14 +649,53 @@ def make_initial_prompt(task: dict[str, Any], context: str, lang: str) -> str:
     )
 
 
+# Fixed exp-03 gloss. Keep this text stable across an A/B: the comparison
+# is baseline repair (stderr + docs) versus this block on ILO-P003.
+REPAIR_SHAPE_HINT = (
+    "SHAPE: function headers are `name params>ret;body` — never `name()`.\n"
+    "Zero-arg entry: `main>_;…` not `main()>_;…`. "
+    "Example: `tri n:n>n;+n 1` then `main>_;prnt (tri 10)`.\n"
+    "Call sites may use `(…)`; headers must not."
+)
+
+
+def repair_shape_hint_applies(error: str) -> bool:
+    """True when a repair turn should carry the header-shape gloss.
+
+    ILO-P003 is the mined paren-header trap. The same pair without the
+    code token (expected greater-than, got left-paren) still counts, so a
+    truncated diagnostic is kept.
+    """
+    if "ILO-P003" in error:
+        return True
+    expected_gt = (
+        "expected `>`" in error
+        or 'expected ">"' in error
+        or "expected '>'" in error
+        or "expected Greater" in error
+    )
+    got_paren = (
+        "got `(`" in error
+        or 'got "("' in error
+        or "got '('" in error
+        or "got LParen" in error
+    )
+    return expected_gt and got_paren
+
+
 def make_repair_prompt(
     task: dict[str, Any],
     context: str,
     error: str,
     lang: str,
     previous_code: str = "",
+    repair_shape_hint: bool = False,
 ) -> str:
-    """Repair turn. Includes the program that failed (repair memory)."""
+    """Repair turn. Includes the program that failed (repair memory).
+
+    repair_shape_hint appends REPAIR_SHAPE_HINT on an ilo turn whose error
+    is ILO-P003 or the paren-header pair. Default off (baseline).
+    """
     code = previous_code
     clipped = ""
     if len(code) > REPAIR_CODE_CHARS:
@@ -643,11 +704,19 @@ def make_repair_prompt(
     program = ""
     if code:
         program = f"Previous program:\n{code}{clipped}\n\n"
+    hint = ""
+    if (
+        repair_shape_hint
+        and lang == "ilo"
+        and repair_shape_hint_applies(error)
+    ):
+        hint = f"\n{REPAIR_SHAPE_HINT}\n"
     return (
         f"The previous {lang} program for this task failed.\n"
         f"Task: {task['description']}\n"
         f"{program}"
-        f"Error / actual output:\n{error}\n\n"
+        f"Error / actual output:\n{error}\n"
+        f"{hint}\n"
         f"Rewrite the program to fix the error. Output ONLY the {lang} code.\n"
         f"---LANGUAGE DOCUMENTATION---\n{context}\n---END---\n"
     )
@@ -1501,6 +1570,7 @@ def run_task(
     provider: str = "anthropic",
     thinking: str | None = None,
     base_url: str | None = None,
+    repair_shape_hint: bool = False,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
@@ -1596,7 +1666,10 @@ def run_task(
             break
 
         error_detail = (stderr or stdout or "(no output)").strip()[:1000]
-        user = make_repair_prompt(task, context, error_detail, lang, code)
+        user = make_repair_prompt(
+            task, context, error_detail, lang, code,
+            repair_shape_hint=repair_shape_hint,
+        )
 
     wall_time = time.monotonic() - wall_start
     cell = assemble_cell(
@@ -1619,6 +1692,7 @@ def run_task(
     cell["api"] = api_url_for(provider, base_url)
     if thinking is not None:
         cell["thinking_request"] = thinking
+    cell["repair_shape_hint"] = bool(repair_shape_hint)
     return cell
 
 
@@ -1788,6 +1862,9 @@ def write_markdown(
                     lines.append(
                         f"- Thinking request: {r['thinking_request']}  "
                     )
+                if "repair_shape_hint" in r:
+                    state = "on" if r["repair_shape_hint"] else "off"
+                    lines.append(f"- Repair shape hint: {state}  ")
                 trace = r.get("attempt_trace") or []
                 if trace:
                     lines.append("- Attempts:  ")
@@ -1970,6 +2047,20 @@ def main() -> int:
                         help="Print task specs and context arm, then exit. "
                              "No LLM calls and no API key.")
     parser.add_argument(
+        "--repair-shape-hint",
+        action="store_true",
+        help=(
+            "On an ilo repair turn whose stderr contains ILO-P003, or the "
+            "paren-header pair (expected `>`, got `(`), append a fixed "
+            "function-header gloss inside the repair prompt: "
+            "`name params>ret;body`, `main>_;…` against `main()>…`, and "
+            "one correct one-liner (`tri n:n>n;+n 1` then "
+            "`main>_;prnt (tri 10)`). Default off (baseline repair text). "
+            "The initial prompt is unchanged. Manifesto P6: structured "
+            "compiler-to-agent surface, aimed at cutting retries."
+        ),
+    )
+    parser.add_argument(
         "--emit-fixture",
         metavar="PATH",
         help=(
@@ -2093,6 +2184,15 @@ def main() -> int:
                     "a fair bakeoff against ilo skills. Pass --lang2-docs PATH."
                 )
         print(f"context: {context_mode}")
+        print(
+            "repair_shape_hint: "
+            + ("on" if args.repair_shape_hint else "off")
+        )
+        if args.repair_shape_hint:
+            print(
+                "note: ilo repair turns with ILO-P003 (or expected `>` / "
+                "got `(`) append a fixed header-shape gloss."
+            )
         print(f"niche: {NICHE_STANCE}")
         for line in plan_lines(provider, specs, base_url):
             print(line)
@@ -2152,7 +2252,8 @@ def main() -> int:
         f"{len(languages)} languages ({' '.join(languages)}) × "
         f"{len(specs)} models = "
         f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode} "
-        f"docs_source={docs_source} fair_docs={fair_docs} provider={provider})"
+        f"docs_source={docs_source} fair_docs={fair_docs} provider={provider} "
+        f"repair_shape_hint={'on' if args.repair_shape_hint else 'off'})"
     )
 
     results: list[dict[str, Any]] = []
@@ -2186,6 +2287,7 @@ def main() -> int:
                     provider=provider,
                     thinking=spec.thinking,
                     base_url=base_url,
+                    repair_shape_hint=args.repair_shape_hint,
                 )
                 results.append(r)
                 print(
@@ -2207,6 +2309,7 @@ def main() -> int:
         "language_named_in": named,
         "provider": provider,
         "api": api_url_for(provider, base_url),
+        "repair_shape_hint": bool(args.repair_shape_hint),
         "models": [
             {
                 "model": spec.key,
