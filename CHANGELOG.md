@@ -4,6 +4,10 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Changed
+
+- **Closed-loop harness context arms.** `scripts/closed-loop-bench.py` takes `--context {core,curated,full,task-modules}` (`--modules-from-task` is the task-modules alias). Default is `curated` (`ilo-language`, `ilo-builtins-core`, `ilo-builtins-sig`). `full` adds `ilo-builtins-io`, `ilo-builtins-text`, and `ilo-builtins-math` and is the explicit balloon. `task-modules` loads only `task["modules"]` from `bench/closed-loop/tasks.json` and exits with an error when that list is missing. Every result cell records `context` and `context_modules`. Runs from before this flag always loaded language+core+text+math+io and wrote no arm label; that set is not a named mode (`full` also loads the signature sheet). `--dry-run` prints the arm, the module list, and the loaded character count, and does not need `ANTHROPIC_API_KEY`. This is the lever for measuring context loading (manifesto principle 3). It does not report a density result. `ilo-builtins-sig` lives at `bench/closed-loop/context/ilo-builtins-sig.md` and is not an `ilo skill list` entry.
+
 ### Added
 
 - **Closed-loop metric schema.** `bench/metric-schema.json` and `scripts/validate-closed-loop-results.py` reject a result cell that has only undivided `generation_tokens`. An honest cell carries non-null `thinking_tokens` or `generated_chars` (both preferred). The harness itself is unchanged and still pre-repair; the Aug-03 shape is quarantined under `bench/historical/`, and CI runs the gate with no API key. See `bench/MANIFESTO-METRIC.md`.
