@@ -559,5 +559,314 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
 
 
+class _Resp:
+    def __init__(self, payload: dict) -> None:
+        self._raw = json.dumps(payload).encode()
+
+    def read(self) -> bytes:
+        return self._raw
+
+    def __enter__(self) -> "_Resp":
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+class DeepSeekTests(unittest.TestCase):
+    def test_chat_alias_posts_flash_and_keeps_reasoning_out_of_the_programme(self) -> None:
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=0):  # noqa: ANN001
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            captured["auth"] = req.get_header("Authorization")
+            captured["body"] = json.loads(req.data.decode())
+            captured["timeout"] = timeout
+            return _Resp({
+                "model": "deepseek-flash",
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "```ilo\nprnt 1\n```",
+                        "reasoning_content": "this is not the programme",
+                    },
+                }],
+                "usage": {
+                    "prompt_tokens": 30,
+                    "completion_tokens": 12,
+                    "prompt_cache_hit_tokens": 10,
+                    "prompt_cache_miss_tokens": 20,
+                },
+            })
+
+        provider, specs = H.resolve_model_plan(
+            "deepseek", "deepseek-chat", deepseek_key_set=False,
+        )
+        self.assertEqual(provider, "deepseek")
+        spec = specs[0]
+        parsed = H.call_deepseek(
+            "system", "user", spec.model_id, "secret-key",
+            thinking=spec.thinking,
+            base_url="https://api.deepseek.com",
+            urlopen=fake_urlopen,
+        )
+        self.assertEqual(captured["url"], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["auth"], "Bearer secret-key")
+        self.assertEqual(captured["body"]["model"], "deepseek-flash")
+        self.assertEqual(captured["body"]["thinking"], {"type": "disabled"})
+        self.assertEqual(captured["body"]["stream"], False)
+        self.assertEqual(captured["body"]["messages"][0]["role"], "system")
+        self.assertEqual(captured["body"]["messages"][1]["role"], "user")
+        self.assertEqual(parsed["code"], "prnt 1")
+        self.assertNotIn("not the programme", parsed["code"])
+        self.assertEqual(parsed["generation_tokens"], 12)
+        self.assertIsNone(parsed["thinking_tokens"])
+        self.assertEqual(parsed["input_tokens"], 20)
+        self.assertEqual(parsed["cache_hit_tokens"], 10)
+        self.assertEqual(parsed["served_model"], "deepseek-flash")
+        self.assertEqual(parsed["finish_reason"], "stop")
+        self.assertEqual(len(parsed["code"]), 6)
+
+    def test_reasoning_tokens_are_the_split_and_zero_counts(self) -> None:
+        parsed = H.parse_openai_chat_turn({
+            "model": "deepseek-flash",
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {
+                    "content": "CODE",
+                    "reasoning_content": "x" * 500,
+                },
+            }],
+            "usage": {
+                "completion_tokens": 40,
+                "prompt_tokens": 8,
+                "completion_tokens_details": {"reasoning_tokens": 31},
+            },
+        })
+        self.assertEqual(parsed["code"], "CODE")
+        self.assertEqual(parsed["generation_tokens"], 40)
+        self.assertEqual(parsed["thinking_tokens"], 31)
+        self.assertEqual(parsed["input_tokens"], 8)
+        self.assertEqual(
+            H.extract_openai_reasoning_tokens({
+                "completion_tokens_details": {"reasoning_tokens": 0},
+                "thinking_tokens": 9,
+            }),
+            0,
+        )
+
+    def test_missing_or_null_split_stays_unknown(self) -> None:
+        parsed = H.parse_openai_chat_turn({
+            "choices": [{"message": {"content": "abc", "reasoning_content": "think"}}],
+            "usage": {"completion_tokens": 3, "prompt_tokens": 1},
+        })
+        self.assertIsNone(parsed["thinking_tokens"])
+        self.assertEqual(parsed["code"], "abc")
+        self.assertEqual(parsed["generation_tokens"], 3)
+        self.assertIsNone(H.extract_openai_reasoning_tokens({
+            "completion_tokens_details": {"reasoning_tokens": None},
+            "output_tokens_details": {"thinking_tokens": 5},
+        }))
+        self.assertIsNone(H.extract_openai_reasoning_tokens({
+            "completion_tokens_details": {"reasoning_tokens": "31"},
+        }))
+        self.assertIsNone(H.extract_openai_reasoning_tokens({
+            "completion_tokens_details": {"reasoning_tokens": True},
+        }))
+
+    def test_cached_tokens_are_not_added_twice(self) -> None:
+        uncached, hit = H._openai_input_split({
+            "prompt_tokens": 30,
+            "prompt_tokens_details": {"cached_tokens": 10},
+        })
+        self.assertEqual((uncached, hit), (20, 10))
+        uncached, hit = H._openai_input_split({"prompt_tokens": 30})
+        self.assertEqual((uncached, hit), (30, 0))
+
+    def test_base_url_joins_chat_completions(self) -> None:
+        self.assertEqual(
+            H.deepseek_chat_completions_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/chat/completions",
+        )
+        self.assertEqual(
+            H.deepseek_chat_completions_url("https://api.deepseek.com/v1/"),
+            "https://api.deepseek.com/v1/chat/completions",
+        )
+        self.assertEqual(
+            H.deepseek_chat_completions_url("https://api.deepseek.com/chat/completions"),
+            "https://api.deepseek.com/chat/completions",
+        )
+        previous = os.environ.get("DEEPSEEK_BASE_URL")
+        alias = os.environ.get("DEEPSEEK_API_BASE")
+        os.environ["DEEPSEEK_BASE_URL"] = "https://example.test/v1/"
+        os.environ.pop("DEEPSEEK_API_BASE", None)
+        try:
+            self.assertEqual(
+                H.api_url_for("deepseek"),
+                "https://example.test/v1/chat/completions",
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("DEEPSEEK_BASE_URL", None)
+            else:
+                os.environ["DEEPSEEK_BASE_URL"] = previous
+            if alias is None:
+                os.environ.pop("DEEPSEEK_API_BASE", None)
+            else:
+                os.environ["DEEPSEEK_API_BASE"] = alias
+
+    def test_default_live_plan_prefers_deepseek_when_the_key_is_set(self) -> None:
+        provider, specs = H.resolve_model_plan(None, None, deepseek_key_set=True)
+        self.assertEqual(provider, "deepseek")
+        self.assertEqual([spec.key for spec in specs], ["deepseek-chat"])
+        self.assertEqual(specs[0].model_id, "deepseek-flash")
+        self.assertEqual(specs[0].thinking, "disabled")
+
+        provider, specs = H.resolve_model_plan(None, None, deepseek_key_set=False)
+        self.assertEqual(provider, "anthropic")
+        self.assertEqual([spec.key for spec in specs], ["haiku", "sonnet"])
+        self.assertEqual(specs[0].model_id, "claude-haiku-4-5")
+
+        provider, specs = H.resolve_model_plan(None, "haiku", deepseek_key_set=True)
+        self.assertEqual(provider, "anthropic")
+        self.assertEqual(specs[0].model_id, "claude-haiku-4-5")
+
+        provider, specs = H.resolve_model_plan("deepseek", "both", deepseek_key_set=False)
+        self.assertEqual(
+            [(spec.key, spec.model_id, spec.thinking) for spec in specs],
+            [
+                ("deepseek-chat", "deepseek-flash", "disabled"),
+                ("deepseek-reasoner", "deepseek-flash", "enabled"),
+            ],
+        )
+        provider, specs = H.resolve_model_plan(
+            "deepseek", "deepseek-v4-pro", deepseek_key_set=False,
+        )
+        self.assertEqual(specs[0].model_id, "deepseek-v4-pro")
+        self.assertIsNone(specs[0].thinking)
+
+        with self.assertRaises(ValueError):
+            H.resolve_model_plan("anthropic", "deepseek-chat", deepseek_key_set=True)
+        with self.assertRaises(ValueError):
+            H.resolve_model_plan("deepseek", "haiku", deepseek_key_set=True)
+
+    def test_http_error_names_the_chat_url_and_not_the_key(self) -> None:
+        import io
+        import urllib.error
+
+        def boom(req, timeout=0):  # noqa: ANN001
+            raise urllib.error.HTTPError(
+                req.full_url, 401, "unauthorized", hdrs=None,
+                fp=io.BytesIO(b'{"error":"invalid"}'),
+            )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            H.call_deepseek(
+                "s", "u", "deepseek-flash", "super-secret-key",
+                urlopen=boom, base_url="https://api.deepseek.com",
+            )
+        message = str(ctx.exception)
+        self.assertIn("401", message)
+        self.assertIn("https://api.deepseek.com/chat/completions", message)
+        self.assertNotIn("super-secret-key", message)
+
+    def test_run_task_calls_deepseek_and_keeps_chars_when_thinking_is_null(self) -> None:
+        calls: list[tuple] = []
+
+        def fake_deepseek(system, user, model_id, api_key, thinking=None, base_url=None, urlopen=None):
+            calls.append((model_id, thinking, base_url, api_key))
+            return H.parse_openai_chat_turn({
+                "model": "deepseek-flash",
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"content": "FIXED", "reasoning_content": "hidden"},
+                }],
+                "usage": {
+                    "completion_tokens": 15,
+                    "prompt_cache_hit_tokens": 0,
+                    "prompt_cache_miss_tokens": 4,
+                },
+            })
+
+        def fail_anthropic(*_a, **_k):
+            raise AssertionError("anthropic call_llm must not run")
+
+        previous_deepseek = H.call_deepseek
+        previous_llm = H.call_llm
+        previous_ilo = H.run_ilo
+        H.call_deepseek = fake_deepseek
+        H.call_llm = fail_anthropic
+        H.run_ilo = lambda code, ilo_bin: ("ok", "", 0)
+        try:
+            cell = H.run_task(
+                {"id": "simple-function", "description": "add", "expected_output": "ok"},
+                "ilo", "deepseek-chat", "deepseek-flash", "test-key", 2,
+                "ilo", None, ".zero",
+                provider="deepseek",
+                thinking="disabled",
+                base_url="https://api.deepseek.com",
+            )
+        finally:
+            H.call_deepseek = previous_deepseek
+            H.call_llm = previous_llm
+            H.run_ilo = previous_ilo
+        self.assertEqual(calls, [(
+            "deepseek-flash", "disabled", "https://api.deepseek.com", "test-key",
+        )])
+        self.assertEqual(cell["provider"], "deepseek")
+        self.assertEqual(cell["api"], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(cell["model"], "deepseek-chat")
+        self.assertEqual(cell["model_id"], "deepseek-flash")
+        self.assertEqual(cell["thinking_request"], "disabled")
+        self.assertIsNone(cell["thinking_tokens"])
+        self.assertEqual(cell["thinking_unknown_attempts"], 1)
+        self.assertIsNone(cell["code_tokens"])
+        self.assertEqual(cell["generation_tokens"], 15)
+        self.assertEqual(cell["generated_chars"], len("FIXED"))
+        self.assertEqual(cell["attempt_trace"][0]["code"], "FIXED")
+        self.assertNotIn("hidden", cell["attempt_trace"][0]["code"])
+        self.assertEqual(pr0_cell_errors(cell), [])
+
+    def test_dry_run_deepseek_needs_no_key_and_live_refuses_without_one(self) -> None:
+        env = os.environ.copy()
+        for name in (
+            "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY",
+            "DEEPSEEK_BASE_URL", "DEEPSEEK_API_BASE",
+        ):
+            env.pop(name, None)
+        dry = subprocess.run(
+            [
+                sys.executable, str(SCRIPT), "--dry-run",
+                "--provider", "deepseek", "--model", "deepseek-chat",
+                "--task", "simple-function",
+            ],
+            cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        self.assertIn("provider: deepseek", dry.stdout)
+        self.assertIn("https://api.deepseek.com/chat/completions", dry.stdout)
+        self.assertIn("deepseek-chat=deepseek-flash thinking=disabled", dry.stdout)
+        self.assertIn("simple-function", dry.stdout)
+        self.assertNotIn("DEEPSEEK_API_KEY not set", dry.stderr)
+        self.assertNotIn("ANTHROPIC_API_KEY not set", dry.stderr)
+
+        live = subprocess.run(
+            [
+                sys.executable, str(SCRIPT),
+                "--provider", "deepseek", "--model", "deepseek-reasoner",
+                "--task", "simple-function",
+            ],
+            cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(live.returncode, 2, live.stderr)
+        self.assertIn("DEEPSEEK_API_KEY not set", live.stderr)
+        self.assertNotIn("Results written", live.stdout)
+        self.assertNotIn("Closed-loop bench:", live.stdout)
+        self.assertNotIn("chat/completions", live.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

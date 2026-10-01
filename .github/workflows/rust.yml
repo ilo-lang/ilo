@@ -47,6 +47,9 @@ jobs:
       # refactor can't silently drop the supply-chain integrity check.
       run: bash scripts/install/test-install-sh.sh
     - name: Closed-loop honest columns (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
       run: python3 scripts/test_closed_loop_metrics.py
 
   skill-validate:

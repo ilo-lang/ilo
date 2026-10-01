@@ -46,6 +46,39 @@ or a bash win on wall time, is not an ilo manifesto loss.
 `--dry-run` and `--emit-fixture` need no API key. The synthetic fixture
 is `bench/fixtures/closed-loop-harness-shape.json`.
 
+## Providers
+
+A live run uses DeepSeek when `DEEPSEEK_API_KEY` is set, unless
+`--provider anthropic` or an Anthropic model (`haiku`, `sonnet`, `both`)
+is requested. DeepSeek is OpenAI-compatible Chat Completions. The origin
+is `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`;
+`DEEPSEEK_API_BASE` is the same setting). The harness posts
+`{base}/chat/completions`. It does not call
+`https://api.deepseek.com/anthropic`.
+
+```bash
+python3 scripts/closed-loop-bench.py --dry-run --provider deepseek --model deepseek-chat
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat --task simple-function
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-reasoner --task simple-function
+```
+
+With the key set and no `--provider` or `--model`, the live path is
+`deepseek-chat` (one model). `--model both --provider deepseek` runs
+`deepseek-chat` and `deepseek-reasoner`.
+
+`deepseek-chat` and `deepseek-reasoner` are CLI names. The request sends
+`deepseek-flash` with `thinking.type` `disabled` or `enabled`. DeepSeek
+discontinued those two model ids on 2026-07-24. `--model deepseek-flash`
+and `--model deepseek-v4-pro` are sent as those ids. Each cell records
+`provider`, `model` (the CLI key), and `model_id` (the id on the wire).
+
+`generation_tokens` is `usage.completion_tokens`. `thinking_tokens` is
+`usage.completion_tokens_details.reasoning_tokens` when that value is a
+non-negative integer, including 0. A missing or non-integer split is
+null. `reasoning_content` is not program text and is not a token count.
+`generated_chars` is the length of `message.content` after fence
+stripping. Do not quote `generation_tokens` as density.
+
 New result files belong at `bench/closed-loop-*.json` and must pass the
 validator. The CI job `Closed-loop metric gate` runs
 [`scripts/check-closed-loop-metrics.sh`](../scripts/check-closed-loop-metrics.sh)

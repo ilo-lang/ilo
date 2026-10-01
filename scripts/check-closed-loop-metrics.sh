@@ -3,6 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 unset ANTHROPIC_API_KEY || true
+unset DEEPSEEK_API_KEY || true
+unset DEEPSEEK_BASE_URL || true
+unset DEEPSEEK_API_BASE || true
 
 val=(python3 scripts/validate-closed-loop-results.py)
 
