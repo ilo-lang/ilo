@@ -115,6 +115,7 @@ rewritten once after fence stripping and before `ilo`:
 | R4 | leading `f` / `fn` on a header line (`>`, `(`, or `:`) |
 | R3 | `name():…>` → `name>` |
 | R1 | `name()>` → `name>` at line start |
+| R6 | `name() { … }` → `name>_;` and drop the matching `}` |
 | R2 | a whole line `name()` / `name();` → `name>_;` |
 | R5 | a whole line `main` → `main>_` |
 

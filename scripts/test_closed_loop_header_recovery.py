@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Header-recovery checks for closed-loop-bench. No API key and no ilo binary.
 
-exp-04 rules R4, R3, R1, R2, R5 run once on extracted ilo text, before the
-ilo invoke, only when --header-recovery is on. Call-site (…) is not rewritten.
+exp-04 rules R4, R3, R1, R6, R2, R5 run once on extracted ilo text, before
+the ilo invoke, only when --header-recovery is on. Call-site (…) is not
+rewritten. R6 turns a C brace entry `name() { … }` into `name>_;`.
 """
 
 from __future__ import annotations
@@ -133,6 +134,76 @@ class RuleTests(unittest.TestCase):
         once, rules = recover("f main()>_;prnt (quad 7)")
         self.assertEqual(rules, ["R4", "R1"])
         self.assertEqual(recover(once), (once, []))
+
+
+class BraceRuleTests(unittest.TestCase):
+    def test_r6_header_line_becomes_main_entry(self) -> None:
+        self.assertEqual(recover("main() {"), ("main>_;", ["R6"]))
+        self.assertEqual(recover("main(){"), ("main>_;", ["R6"]))
+        self.assertEqual(recover("  main() {"), ("  main>_;", ["R6"]))
+        self.assertEqual(recover("main() {}"), ("main>_;", ["R6"]))
+        self.assertEqual(recover("main() { }"), ("main>_;", ["R6"]))
+        self.assertEqual(recover("main() {};"), ("main>_;", ["R6"]))
+
+    def test_r6_same_line_body_keeps_the_call(self) -> None:
+        src = "main() { prnt (tri 10) }"
+        self.assertEqual(recover(src), ("main>_; prnt (tri 10)", ["R6"]))
+
+    def test_r6_multiline_block_strips_only_the_matching_closer(self) -> None:
+        src = "main() {\n  prnt (tri 10)\n}\n"
+        got, rules = recover(src)
+        self.assertEqual(rules, ["R6"])
+        self.assertEqual(got, "main>_;\n  prnt (tri 10)\n")
+        self.assertEqual(recover(got), (got, []))
+
+    def test_r6_allman_brace_on_the_next_line(self) -> None:
+        src = "main()\n{\n  prnt (quad 7)\n}\n"
+        self.assertEqual(
+            recover(src),
+            ("main>_;\n  prnt (quad 7)\n", ["R6"]),
+        )
+
+    def test_r6_keeps_inner_braces_and_quoted_closers(self) -> None:
+        src = "main() {\n  =n 0 {\n    prnt 1\n  }\n}\n"
+        self.assertEqual(
+            recover(src),
+            ("main>_;\n  =n 0 {\n    prnt 1\n  }\n", ["R6"]),
+        )
+        quoted = 'main() {\n  prnt "}"\n}\n'
+        self.assertEqual(
+            recover(quoted),
+            ('main>_;\n  prnt "}"\n', ["R6"]),
+        )
+
+    def test_r6_two_entries_and_fn_prefix(self) -> None:
+        src = "fn quad() {\n  *x 4\n}\nmain() {\n  prnt (quad 7)\n}\n"
+        got, rules = recover(src)
+        self.assertEqual(rules, ["R4", "R6"])
+        self.assertEqual(
+            got,
+            "quad>_;\n  *x 4\nmain>_;\n  prnt (quad 7)\n",
+        )
+
+    def test_r6_does_not_touch_calls_or_unrelated_braces(self) -> None:
+        samples = [
+            "prnt (tri 10)",
+            "(double (double x))",
+            "main>_;prnt (foo())",
+            "foo(x) {",
+            "main( ) {",
+            "}",
+            "main>_;\n=n 0 {\nprnt 1\n}\n",
+            "main()\n  prnt (tri 10)\n",
+        ]
+        expected = {
+            "main()\n  prnt (tri 10)\n": ("main>_;\n  prnt (tri 10)\n", ["R2"]),
+        }
+        for src in samples:
+            self.assertEqual(recover(src), expected.get(src, (src, [])), src)
+
+    def test_r6_is_not_a_p003_shape(self) -> None:
+        self.assertFalse(H.p003_header_shape("main() {"))
+        self.assertFalse(H.p003_header_shape("main() {\n  prnt 1\n}\n"))
 
 
 class CallSiteTests(unittest.TestCase):
@@ -349,6 +420,25 @@ class RunTaskWiringTest(unittest.TestCase):
         self.assertEqual(cell["attempt_trace"][0]["code"], src)
         self.assertNotIn("code_pre_recovery", cell["attempt_trace"][0])
 
+    def test_flag_on_rewrites_a_brace_entry_before_ilo(self) -> None:
+        raw = "main() {\n  prnt (tri 10)\n}\n"
+        cell, prompts, seen = self._run(
+            True,
+            raw,
+            ilo_ok=lambda code: code.startswith("main>_;") and "(tri 10)" in code,
+        )
+        self.assertEqual(seen, ["main>_;\n  prnt (tri 10)\n"])
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(cell["final_outcome"], "working")
+        self.assertEqual(cell["header_recovery_rules"], ["R6"])
+        turn = cell["attempt_trace"][0]
+        self.assertEqual(turn["code"], "main>_;\n  prnt (tri 10)\n")
+        self.assertEqual(turn["code_pre_recovery"], raw)
+        self.assertEqual(turn["header_recovery_rules"], ["R6"])
+        self.assertFalse(turn["p003_pre_recovery"])
+        self.assertEqual(turn["code_chars"], len(raw))
+        self.assertEqual(cell["generated_chars"], len(raw))
+
 
 class DryRunFlagTest(unittest.TestCase):
     def test_dry_run_defaults_off(self) -> None:
@@ -366,7 +456,8 @@ class DryRunFlagTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("header_recovery: on", proc.stdout)
         self.assertIn("repair_shape_hint: on", proc.stdout)
-        self.assertIn("R4, R3, R1, R2, R5", proc.stdout)
+        self.assertIn("R4, R3, R1, R6, R2, R5", proc.stdout)
+        self.assertIn("name() {", proc.stdout)
 
     def test_help_documents_flag(self) -> None:
         env = os.environ.copy()
