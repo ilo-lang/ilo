@@ -1,0 +1,60 @@
+{
+  "note": "exp-07 artefact-persona closed-loop set. Language-neutral prompts. Inputs in-programme literals. Rails frozen: hint + header-recovery + fold-meta-stdout.",
+  "tasks": [
+    {
+      "id": "csv-sales-summary",
+      "task_class": "artefact",
+      "description": "Parse this literal CSV (headerless rows name,region,sales): \"alice,east,80\\nbob,west,30\\ncarol,east,120\\ndave,west,90\\neve,north,60\". Keep rows where sales is at least 50. Group by region and sum sales per region. Print one line: sales>=50 by region: <region>=<sum> ... with regions ordered alphabetically (east, north, west).",
+      "expected_output": "sales>=50 by region: east=200 north=60 west=90",
+      "difficulty": "medium",
+      "category": "csv-pipeline",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-text",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "record-normalize",
+      "task_class": "artefact",
+      "description": "Start from five messy map-like records (id, name, age) as in-programme literals: (1,\" Alice \",\"30\"), (2,\"Bob\",\"25.7\"), (3, missing name, \"40\"), (1,\"Alice\",\"30\") duplicate id, (4,\"  Dana  \", empty age). Normalise each row: trim name (default \"unknown\" if missing), coerce age to a floored integer (default 0). Deduplicate by id keeping the first. Print one line: rows=<count> total_age=<sum> avg_age=<rounded mean>.",
+      "expected_output": "rows=4 total_age=95 avg_age=24",
+      "difficulty": "medium",
+      "category": "records",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-text",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "schedule-window",
+      "task_class": "artefact",
+      "description": "Two fixed time windows in minutes from midnight: A is 09:00–12:00 (540–720) and B is 11:00–14:00 (660–840). Compute the overlap length in minutes (0 if they do not overlap). Print exactly: overlap_min=<n>.",
+      "expected_output": "overlap_min=60",
+      "difficulty": "easy",
+      "category": "schedule",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-math"
+      ]
+    },
+    {
+      "id": "typed-rollup",
+      "task_class": "artefact",
+      "description": "Given this literal list of health probes as (status_code, latency_ms): (200,120), (200,650), (503,30), (200,210), (0,0), (404,80), (200,480). Classify each: down if code is 0 or >=500 or <200; else degraded if code >=400 or latency >500; else healthy. Print one line: healthy=<n> degraded=<n> down=<n>.",
+      "expected_output": "healthy=3 degraded=2 down=2",
+      "difficulty": "medium",
+      "category": "typed-summary",
+      "modules": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-math",
+        "ilo-builtins-text"
+      ]
+    }
+  ]
+}
