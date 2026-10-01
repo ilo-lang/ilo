@@ -42,6 +42,8 @@ jobs:
       # Stubs curl and exercises happy / tamper / missing-asset paths so a
       # refactor can't silently drop the supply-chain integrity check.
       run: bash scripts/install/test-install-sh.sh
+    - name: Closed-loop honest columns (no API key)
+      run: python3 scripts/test_closed_loop_metrics.py
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference
