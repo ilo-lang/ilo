@@ -61,6 +61,11 @@ jobs:
         ANTHROPIC_API_KEY: ""
         DEEPSEEK_API_KEY: ""
       run: python3 scripts/test_closed_loop_header_recovery.py
+    - name: Closed-loop meta stdout fold (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_meta_fold.py
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference
