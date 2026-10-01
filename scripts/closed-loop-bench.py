@@ -36,6 +36,9 @@ Per task, per language, per model this script logs:
                              With --header-recovery, ilo turns also record
                              the pre-rewrite programme, the rule ids, and
                              whether the raw emit was a P003 header.
+                             With --fold-meta-stdout, ilo turns also record
+                             meta_recovery_rules when an orphan line under
+                             `-- out:` was folded into that comment.
   - served_models            response model ids, first-seen order
   - attempts_to_success      attempts until working (null if never)
   - success_rate             1.0 / 0.0 per run
@@ -187,6 +190,32 @@ claim. --dry-run prints the flag and does not need an API key.
     --output-dir bench/exp04-f2-hint-recovery/
 
   python3 scripts/closed-loop-bench.py --dry-run --header-recovery
+
+Meta stdout fold (exp-05 family B). Default off. --fold-meta-stdout is a
+sibling of header recovery, not another header rule. Two mechanical
+steps, ilo only, before the outcome is recorded:
+
+  1. Orphan numeric lines glued directly under a `-- out:` comment are
+     joined into that comment (`-- out: 5` then a bare `0`, with real
+     source after them, becomes `-- out: 5\\n0`). ilo otherwise reports
+     ILO-P001 (expected declaration, got number) and the attempt is
+     failed before the body is scored. A blank line ends the
+     continuation. A number that is the whole programme is left alone.
+     A trailing `0` inside a function body is not under `-- out:` and
+     is not removed: that line is a real expression, and dropping it
+     would mark a different programme as green.
+  2. When judging stdout, lines that are themselves harness meta
+     (`-- out:`, `-- run:`, `-- err:`) are ignored. The remaining
+     lines are compared to the task expected output. Extra value lines
+     such as `55` then `0` stay a partial.
+
+Emitted character counts stay on the pre-fold text. A green first
+invoke after the fold does not spend another LLM turn. This is a retry
+cut (manifesto principle 6): a correct programme is not failed because
+meta noise sat in the source or on stdout. It is not a density claim.
+--dry-run prints the flag and does not need an API key.
+
+  python3 scripts/closed-loop-bench.py --dry-run --fold-meta-stdout
 
 Environment
   DEEPSEEK_API_KEY    live DeepSeek runs. Preferred when set and neither
@@ -1036,6 +1065,99 @@ def header_recovery_preimage_sha256(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
+# Exp-05 family B. Not a header rule. F2b workflow-rollback wrote the
+# second line of expected stdout (`5` then `0`) as a bare number under
+# `-- out:`, and ilo died with ILO-P001 before the body ran.
+_OUT_COMMENT_RE = re.compile(r"^(\s*)--\s*out:\s*(.*)$")
+_ORPHAN_NUMBER_RE = re.compile(r"^[+-]?(?:\d+\.\d+|\d+)$")
+_META_STDOUT_RE = re.compile(r"^\s*--\s*(?:out|run|err)\s*:")
+_META_RULE_ORDER = ("M1",)
+
+
+def _is_orphan_number(body: str) -> bool:
+    return _ORPHAN_NUMBER_RE.fullmatch(body.strip()) is not None
+
+
+def apply_meta_stdout_fold(code: str) -> tuple[str, list[str]]:
+    """Join orphan numeric lines under `-- out:` into that comment.
+
+    The F2b workflow-rollback preimage is::
+
+        -- run: main
+        -- out: 5
+        0
+
+        safe-div …
+
+    The bare `0` is source, so the parser reports ILO-P001. The task
+    expected stdout is ``5\\n0``. Rewrite the comment to one line,
+    ``-- out: 5\\n0``, and drop the orphan, when a later programme line
+    (not blank, not a ``--`` comment) shows the number is not the
+    programme. A blank line ends the continuation. A file whose only
+    statement is a number is left alone. A trailing ``0`` inside a
+    function is not directly under ``-- out:`` and stays: that value
+    is the programme, not meta.
+    """
+    if code == "":
+        return "", []
+    lines = [_split_line_ending(line) for line in code.splitlines(keepends=True)]
+    count = len(lines)
+    out: list[str] = []
+    fired = False
+    i = 0
+    while i < count:
+        body, ending = lines[i]
+        match = _OUT_COMMENT_RE.match(body)
+        if match is None:
+            out.append(body + ending)
+            i += 1
+            continue
+        j = i + 1
+        numbers: list[str] = []
+        while j < count and _is_orphan_number(lines[j][0]):
+            numbers.append(lines[j][0].strip())
+            j += 1
+        later = False
+        if numbers:
+            for k in range(j, count):
+                stripped = lines[k][0].strip()
+                if stripped != "" and not stripped.startswith("--"):
+                    later = True
+                    break
+        if not numbers or not later:
+            out.append(body + ending)
+            i += 1
+            continue
+        indent, payload = match.group(1), match.group(2).rstrip()
+        pieces = [payload] if payload != "" else []
+        pieces.extend(numbers)
+        out.append(f"{indent}-- out: " + "\\n".join(pieces) + ending)
+        fired = True
+        i = j
+    if not fired:
+        return code, []
+    return "".join(out), ["M1"]
+
+
+def strip_meta_stdout(stdout: str) -> str:
+    """Drop harness meta lines from captured stdout.
+
+    ``-- out:``, ``-- run:``, and ``-- err:`` are comments the prompt
+    asks the model to put in the source. If one of those lines is what
+    the process printed, it is not the programme value. Other lines,
+    including a trailing ``0`` after a correct value, stay.
+    """
+    if stdout == "":
+        return ""
+    kept: list[str] = []
+    for line in stdout.splitlines(keepends=True):
+        body, _ending = _split_line_ending(line)
+        if _META_STDOUT_RE.match(body):
+            continue
+        kept.append(line)
+    return "".join(kept)
+
+
 def message_text(body: dict[str, Any]) -> str:
     """Programme text only. Thinking blocks are not emitted code."""
     content = body.get("content")
@@ -1130,6 +1252,10 @@ class AttemptObs:
     header_recovery_preimage_sha256: str | None = None
     p003_pre_recovery: bool = False
     header_recovery_audit: bool = False
+    # Set on ilo turns when --fold-meta-stdout is on. `code` is what ran.
+    meta_recovery_applied: bool = False
+    meta_recovery_rules: list[str] = field(default_factory=list)
+    meta_recovery_audit: bool = False
 
 
 def _clip(text: str, limit: int = TRACE_IO_CHARS) -> str:
@@ -1246,6 +1372,9 @@ def assemble_cell(
             entry["header_recovery_rules"] = list(a.header_recovery_rules)
             entry["header_recovery_preimage_sha256"] = a.header_recovery_preimage_sha256
             entry["p003_pre_recovery"] = a.p003_pre_recovery
+        if a.meta_recovery_audit:
+            entry["meta_recovery_applied"] = a.meta_recovery_applied
+            entry["meta_recovery_rules"] = list(a.meta_recovery_rules)
         trace.append(entry)
 
     if final_outcome == "working":
@@ -1848,12 +1977,22 @@ def run_lang2(code: str, lang2_bin: str, ext: str) -> tuple[str, str, int]:
         os.unlink(tmp)
 
 
-def classify_outcome(expected: str, stdout: str, stderr: str, rc: int) -> str:
+def classify_outcome(
+    expected: str,
+    stdout: str,
+    stderr: str,
+    rc: int,
+    *,
+    fold_meta_stdout: bool = False,
+) -> str:
     if rc != 0:
         return "failed"
-    # Normalise: strip whitespace, unescape \n in expected
+    # Normalise: strip whitespace, unescape \n in expected.
+    # Meta comment lines are not programme values. A trailing expression
+    # (`55` then `0`) is a value and stays in the comparison.
     expected_norm = expected.replace("\\n", "\n").strip()
-    actual_norm = stdout.strip()
+    actual = strip_meta_stdout(stdout) if fold_meta_stdout else stdout
+    actual_norm = actual.strip()
     if actual_norm == expected_norm:
         return "working"
     return "partial"
@@ -1884,10 +2023,13 @@ def run_task(
     base_url: str | None = None,
     repair_shape_hint: bool = False,
     header_recovery: bool = False,
+    fold_meta_stdout: bool = False,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
     recover_headers = bool(header_recovery) and is_ilo
+    fold_meta = bool(fold_meta_stdout) and is_ilo
+    count_emitted = recover_headers or fold_meta
 
     # Build context. The arm label is recorded on every cell, including the
     # second language, so a matrix stays attributable to the arm that ran.
@@ -1946,7 +2088,8 @@ def run_task(
                 api_error=str(exc),
                 header_recovery_audit=recover_headers,
                 code_pre_recovery="" if recover_headers else None,
-                emitted_code="" if recover_headers else None,
+                emitted_code="" if count_emitted else None,
+                meta_recovery_audit=fold_meta,
             ))
             time.sleep(2)
             continue
@@ -1961,8 +2104,14 @@ def run_task(
             code, recovery_rules = apply_header_recovery(emitted)
             if recovery_rules:
                 preimage = header_recovery_preimage_sha256(emitted)
+        meta_rules: list[str] = []
+        if fold_meta:
+            code, meta_rules = apply_meta_stdout_fold(code)
         stdout, stderr, rc = run_fn(code)
-        outcome = classify_outcome(task["expected_output"], stdout, stderr, rc)
+        outcome = classify_outcome(
+            task["expected_output"], stdout, stderr, rc,
+            fold_meta_stdout=fold_meta,
+        )
         think = parsed["thinking_tokens"]
         observations.append(AttemptObs(
             code=code,
@@ -1978,13 +2127,16 @@ def run_task(
             outcome=outcome,
             finish_reason=parsed["finish_reason"],
             billed=True,
-            emitted_code=emitted if recover_headers else None,
+            emitted_code=emitted if count_emitted else None,
             code_pre_recovery=emitted if recover_headers else None,
             header_recovery_applied=bool(recovery_rules),
             header_recovery_rules=recovery_rules,
             header_recovery_preimage_sha256=preimage,
             p003_pre_recovery=p003_before,
             header_recovery_audit=recover_headers,
+            meta_recovery_applied=bool(meta_rules),
+            meta_recovery_rules=meta_rules,
+            meta_recovery_audit=fold_meta,
         ))
 
         log = (
@@ -1995,6 +2147,8 @@ def run_task(
         )
         if recovery_rules:
             log += " header_recovery=" + ",".join(recovery_rules)
+        if meta_rules:
+            log += " meta_recovery=" + ",".join(meta_rules)
         print(log, file=sys.stderr)
 
         if outcome == "working":
@@ -2039,6 +2193,18 @@ def run_task(
     )
     cell["header_recovery_rules"] = [
         rule_id for rule_id in _HEADER_RULE_ORDER if rule_id in fired
+    ]
+    cell["fold_meta_stdout"] = bool(fold_meta_stdout)
+    meta_fired: list[str] = []
+    for obs in observations:
+        for rule_id in obs.meta_recovery_rules:
+            if rule_id not in meta_fired:
+                meta_fired.append(rule_id)
+    cell["meta_recovery_applied"] = any(
+        obs.meta_recovery_applied for obs in observations
+    )
+    cell["meta_recovery_rules"] = [
+        rule_id for rule_id in _META_RULE_ORDER if rule_id in meta_fired
     ]
     return cell
 
@@ -2218,6 +2384,12 @@ def write_markdown(
                     if r.get("header_recovery_applied"):
                         rules = ", ".join(r.get("header_recovery_rules") or [])
                         lines.append(f"- Header recovery rules: {rules}  ")
+                if "fold_meta_stdout" in r:
+                    state = "on" if r["fold_meta_stdout"] else "off"
+                    lines.append(f"- Meta stdout fold: {state}  ")
+                    if r.get("meta_recovery_applied"):
+                        rules = ", ".join(r.get("meta_recovery_rules") or [])
+                        lines.append(f"- Meta recovery rules: {rules}  ")
                 trace = r.get("attempt_trace") or []
                 if trace:
                     lines.append("- Attempts:  ")
@@ -2233,6 +2405,9 @@ def write_markdown(
                             recovered = f" header_recovery={rules}"
                             if turn.get("p003_pre_recovery"):
                                 recovered += " p003_pre_recovery=true"
+                        if turn.get("meta_recovery_applied"):
+                            rules = ",".join(turn.get("meta_recovery_rules") or [])
+                            recovered += f" meta_recovery={rules}"
                         lines.append(
                             f"  - attempt {turn.get('attempt')}: "
                             f"outcome={turn.get('outcome')} "
@@ -2256,6 +2431,10 @@ def write_markdown(
         "- `--header-recovery` (default off) rewrites ilo headers before invoke.",
         "  Attempt traces then keep `code_pre_recovery`, the rule ids, and",
         "  `p003_pre_recovery`. Character counts stay on the pre-rewrite text.",
+        "- `--fold-meta-stdout` (default off) folds a bare number glued under",
+        "  `-- out:` into that comment (M1) and ignores `-- out:` / `-- run:` /",
+        "  `-- err:` lines when judging stdout. A trailing body `0` stays.",
+        "  Character counts stay on the pre-fold text.",
         "- One-shot economics (first attempt only) can be derived from `repair_tokens_by_turn` in the JSON.",
         f"- {NICHE_STANCE}.",
         "- Each cell's language arm is `lang_arm` (same value as `language`).",
@@ -2443,6 +2622,24 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--fold-meta-stdout",
+        action="store_true",
+        help=(
+            "Before each ilo invoke, fold orphan numeric lines glued under "
+            "a `-- out:` comment into that comment (M1), and ignore harness "
+            "meta lines (`-- out:`, `-- run:`, `-- err:`) when judging "
+            "stdout. Default off. The F2b workflow-rollback shape `-- out: 5` "
+            "then a bare `0` before the programme becomes `-- out: 5\\n0`, so "
+            "ilo does not report ILO-P001 on that number. A blank line ends "
+            "the continuation. A number that is the whole programme is left "
+            "alone. A trailing `0` inside a function body is not removed. "
+            "Not a header rule. Emitted character counts stay on the "
+            "pre-fold text. A green first invoke after the fold does not "
+            "spend another LLM turn. Manifesto P6: a correct programme is "
+            "not failed because of meta noise."
+        ),
+    )
+    parser.add_argument(
         "--emit-fixture",
         metavar="PATH",
         help=(
@@ -2585,6 +2782,16 @@ def main() -> int:
                 "(R4, R3, R1, R6, R2, R5). R6 rewrites name() { … } to "
                 "name>_;. Call-site (…) is left as written."
             )
+        print(
+            "fold_meta_stdout: "
+            + ("on" if args.fold_meta_stdout else "off")
+        )
+        if args.fold_meta_stdout:
+            print(
+                "note: orphan numbers glued under -- out: are folded into "
+                "that comment (M1). Stdout lines that are -- out: / -- run: "
+                "/ -- err: are ignored when judging. A trailing body 0 stays."
+            )
         print(f"niche: {NICHE_STANCE}")
         for line in plan_lines(provider, specs, base_url):
             print(line)
@@ -2646,7 +2853,8 @@ def main() -> int:
         f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode} "
         f"docs_source={docs_source} fair_docs={fair_docs} provider={provider} "
         f"repair_shape_hint={'on' if args.repair_shape_hint else 'off'} "
-        f"header_recovery={'on' if args.header_recovery else 'off'})"
+        f"header_recovery={'on' if args.header_recovery else 'off'} "
+        f"fold_meta_stdout={'on' if args.fold_meta_stdout else 'off'})"
     )
 
     results: list[dict[str, Any]] = []
@@ -2682,6 +2890,7 @@ def main() -> int:
                     base_url=base_url,
                     repair_shape_hint=args.repair_shape_hint,
                     header_recovery=args.header_recovery,
+                    fold_meta_stdout=args.fold_meta_stdout,
                 )
                 results.append(r)
                 print(
@@ -2705,6 +2914,7 @@ def main() -> int:
         "api": api_url_for(provider, base_url),
         "repair_shape_hint": bool(args.repair_shape_hint),
         "header_recovery": bool(args.header_recovery),
+        "fold_meta_stdout": bool(args.fold_meta_stdout),
         "models": [
             {
                 "model": spec.key,

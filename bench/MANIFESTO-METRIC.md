@@ -138,6 +138,38 @@ python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
   --context curated --retry-cap 2 --repair-shape-hint --header-recovery --dry-run
 ```
 
+## Meta stdout fold (exp-05)
+
+`--fold-meta-stdout` is off by default. With the flag, ilo text is folded
+once after header recovery (if that flag is also on) and before `ilo`.
+It is not a header rule.
+
+| Step | Effect |
+|------|--------|
+| M1 | a bare number glued under `-- out:` joins that comment when later programme source follows (`-- out: 5` / `0` / `safe-div …` → `-- out: 5\n0`) |
+| Judge | stdout lines that are `-- out:`, `-- run:`, or `-- err:` are ignored |
+
+A blank line ends the M1 continuation. A number that is the whole
+programme is left alone. A trailing `0` inside a function body is a
+real expression and stays, so `55` then `0` against expected `55` is
+still partial. The programme ilo ran is `attempt_trace[].code`. When
+the flag is on, the trace also records `meta_recovery_rules`.
+`code_chars` and `generated_chars` stay the pre-fold lengths. A green
+first invoke after the fold does not spend another LLM turn. The flag
+is a retry cut (manifesto principle 6): do not fail a correct programme
+because meta noise sat in the source or on stdout. It does not turn
+`generation_tokens` into a density claim. `--dry-run` prints
+`fold_meta_stdout: on` or `off` and needs no API key. Each result cell
+and the JSON header record `fold_meta_stdout`.
+
+```bash
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+  --context curated --retry-cap 2 --repair-shape-hint --header-recovery --dry-run
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+  --context curated --retry-cap 2 --repair-shape-hint --header-recovery \
+  --fold-meta-stdout --dry-run
+```
+
 New result files belong at `bench/closed-loop-*.json` and must pass the
 validator. The CI job `Closed-loop metric gate` runs
 [`scripts/check-closed-loop-metrics.sh`](../scripts/check-closed-loop-metrics.sh)
