@@ -1,0 +1,20 @@
+{
+  "measurement": false,
+  "note": "thinking_tokens is present but null, and generated_chars is absent. Must fail: null is not an honest column.",
+  "generated": "schema-fixture",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 10,
+      "thinking_tokens": null,
+      "input_tokens": 10,
+      "attempts_total": 1,
+      "success_rate": 0.0,
+      "wall_time_s": 1.0,
+      "final_outcome": "failed"
+    }
+  ]
+}

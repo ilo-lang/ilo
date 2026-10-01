@@ -1,0 +1,80 @@
+{
+  "measurement": false,
+  "quarantine": "undivided-shape-fixture",
+  "note": "Not the 2026-08-03 run. That dump was never committed. These five cells copy the undivided shape the pre-repair harness writes: required base fields and generation_tokens, with neither thinking_tokens nor generated_chars. Every number is zero. Do not cite this file.",
+  "generated": "schema-fixture",
+  "harness": "closed-loop-bench.py",
+  "ticket": "ILO-364",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0.0,
+      "wall_time_s": 0.0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "with-dependencies",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0.0,
+      "wall_time_s": 0.0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "data-transform",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0.0,
+      "wall_time_s": 0.0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "tool-interaction",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0.0,
+      "wall_time_s": 0.0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "workflow-rollback",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0.0,
+      "wall_time_s": 0.0,
+      "final_outcome": "failed"
+    }
+  ]
+}
