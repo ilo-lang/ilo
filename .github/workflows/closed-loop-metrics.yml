@@ -1,0 +1,18 @@
+name: Closed-loop metric gate
+
+# Schema check only. Does not run the harness and does not call a model.
+on:
+  pull_request:
+  push:
+    branches: [main, next]
+
+jobs:
+  validate:
+    name: Schema gate (no API key)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Validate closed-loop result schema
+        run: bash scripts/check-closed-loop-metrics.sh
+        env:
+          ANTHROPIC_API_KEY: ""
