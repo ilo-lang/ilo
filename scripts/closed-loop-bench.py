@@ -32,7 +32,10 @@ Per task, per language, per model this script logs:
   - input_cache_miss_tokens  uncached input + cache creation
   - repair_tokens_by_turn    provider output tokens of billed attempts
                              after the first
-  - attempt_trace            per-turn code, stderr, thinking, served model
+  - attempt_trace            per-turn code, stderr, thinking, served model.
+                             With --header-recovery, ilo turns also record
+                             the pre-rewrite programme, the rule ids, and
+                             whether the raw emit was a P003 header.
   - served_models            response model ids, first-seen order
   - attempts_to_success      attempts until working (null if never)
   - success_rate             1.0 / 0.0 per run
@@ -158,6 +161,33 @@ does not need an API key.
 
   python3 scripts/closed-loop-bench.py --dry-run --repair-shape-hint
 
+Header recovery (exp-04). Default off, so the hint-on arm stays the
+control. --header-recovery rewrites extracted ilo text once, before the
+ilo invoke: strip a leading `f`/`fn` on a header line (R4), turn a fake
+C signature `name():…>` into `name>` (R3), drop empty `()` immediately
+before `>` (R1), rewrite a C brace entry `name() { … }` to `name>_;`
+and drop the matching closer (R6), turn a bare `name()` line into
+`name>_;` (R2), and turn a bare `main` line into `main>_` (R5).
+Call-site `(…)` is not rewritten.
+A rewrite that makes the first ilo invoke green does not spend another
+LLM turn. The attempt trace keeps the pre-rewrite programme, the rule
+ids, a sha256 of that preimage when a rule fired, and whether the raw
+emit was a P003 header. Emitted character counts stay on the pre-rewrite
+text. This is a retry cut (manifesto principle 6). It is not a density
+claim. --dry-run prints the flag and does not need an API key.
+
+  # control — hint on, recovery off
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+    --context curated --retry-cap 2 --repair-shape-hint \
+    --output-dir bench/exp04-f1-hint/
+
+  # treatment — hint on, recovery on
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+    --context curated --retry-cap 2 --repair-shape-hint --header-recovery \
+    --output-dir bench/exp04-f2-hint-recovery/
+
+  python3 scripts/closed-loop-bench.py --dry-run --header-recovery
+
 Environment
   DEEPSEEK_API_KEY    live DeepSeek runs. Preferred when set and neither
                       --provider nor an Anthropic model is requested.
@@ -204,6 +234,7 @@ An ops row, or a bash win on wall time, is not an ilo manifesto loss.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -212,7 +243,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -750,6 +781,261 @@ def strip_fences(text: str) -> str:
     return text
 
 
+# Frozen exp-04 header rules. Applied once, in this order, to each line
+# of extracted programme text. Call-site `(…)` is not a header: empty
+# `()` is rewritten only at line start (after an optional `f`/`fn`), and
+# a bare `main` line is the only missing-`>` form.
+#
+# R3's mined spelling is `main():_>_` (no space before `:`), so the gap
+# between `()` and `:` is optional. R1's `\s*` is the exp-04 pattern.
+_HEADER_IDENT = r"[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*"
+_HEADER_RULE_ORDER = ("R4", "R3", "R1", "R6", "R2", "R5")
+_R4_RE = re.compile(rf"^(\s*)(?:fn|f)\s+({_HEADER_IDENT}\b.*)$")
+_R3_RE = re.compile(rf"^(\s*)({_HEADER_IDENT})\(\)\s*:[^>\n]*>")
+_R1_RE = re.compile(rf"^(\s*)({_HEADER_IDENT})\(\)\s*>")
+_R2_RE = re.compile(rf"^(\s*)({_HEADER_IDENT})\(\)\s*;?\s*$")
+_R5_RE = re.compile(r"^(\s*)main\s*$")
+# R6: C brace entry. Empty () only, at line start. The `{` may sit on
+# the header line (`main() {`) or alone on the next line. Non-empty
+# `name(x) {` is left alone. R6 runs before R2 so a following `{` is
+# not orphaned after `name()` becomes `name>_;`.
+_R6_HEADER_RE = re.compile(rf"^(\s*)({_HEADER_IDENT})\(\)\s*\{{(.*)$")
+_R6_ALLMAN_RE = re.compile(rf"^(\s*)({_HEADER_IDENT})\(\)\s*$")
+_R6_OPEN_RE = re.compile(r"^(\s*)\{(.*)$")
+_R6_ONLY_SEMI_RE = re.compile(r"[\s;]*")
+
+
+def _split_line_ending(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    if line.endswith("\r"):
+        return line[:-1], "\r"
+    return line, ""
+
+
+def _map_line_bodies(code: str, fn: Any) -> str:
+    if code == "":
+        return ""
+    parts: list[str] = []
+    for line in code.splitlines(keepends=True):
+        body, ending = _split_line_ending(line)
+        parts.append(fn(body) + ending)
+    return "".join(parts)
+
+
+def _looks_like_header(rest: str) -> bool:
+    """R4 fires only when the remainder is header-shaped (`>`, `(`, or `:`)."""
+    return ">" in rest or "(" in rest or ":" in rest
+
+
+def _apply_r4_line(body: str) -> str:
+    match = _R4_RE.match(body)
+    if match is None:
+        return body
+    rest = match.group(2)
+    if not _looks_like_header(rest):
+        return body
+    return match.group(1) + rest
+
+
+def _apply_r3_line(body: str) -> str:
+    return _R3_RE.sub(r"\1\2>", body, count=1)
+
+
+def _apply_r1_line(body: str) -> str:
+    return _R1_RE.sub(r"\1\2>", body, count=1)
+
+
+def _apply_r2_line(body: str) -> str:
+    return _R2_RE.sub(r"\1\2>_;", body, count=1)
+
+
+def _apply_r5_line(body: str) -> str:
+    return _R5_RE.sub(r"\1main>_", body, count=1)
+
+
+def _r6_consume(text: str, depth: int) -> tuple[str, int]:
+    """Drop the `}` that closes a brace header. Other braces stay.
+
+    Depth is the open-brace count still owed by that header. Braces
+    inside double quotes are ignored. A closer whose only leftovers are
+    whitespace or semicolons contributes nothing.
+    """
+    if depth <= 0:
+        return text, depth
+    out: list[str] = []
+    in_string = False
+    escape = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "{":
+            depth += 1
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                left = "".join(out)
+                right = text[i + 1 :]
+                if _R6_ONLY_SEMI_RE.fullmatch(right):
+                    right = ""
+                    left = left.rstrip(" \t")
+                return left + right, 0
+            out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), depth
+
+
+def _r6_blank(text: str) -> bool:
+    return text.strip() == ""
+
+
+def _apply_r6(code: str) -> str:
+    """Rewrite `name() { … }` to `name>_;` and drop the matching `}`.
+
+    Same-line bodies stay on the header line. A `{` alone on the line
+    after `name()` is the same entry. Inner `{ … }` and call-site `(…)`
+    are not rewritten. A `}` that does not close one of these headers
+    is left in place.
+    """
+    if code == "":
+        return ""
+    lines = [_split_line_ending(line) for line in code.splitlines(keepends=True)]
+    out: list[str] = []
+    i = 0
+    count = len(lines)
+
+    def take_rest(rest: str) -> tuple[str, int]:
+        body, depth = _r6_consume(rest, 1)
+        if _r6_blank(body):
+            return "", depth
+        return body, depth
+
+    while i < count:
+        body, ending = lines[i]
+        header = _R6_HEADER_RE.match(body)
+        allman = None
+        opened = None
+        if header is None and i + 1 < count:
+            allman = _R6_ALLMAN_RE.match(body)
+            if allman is not None:
+                opened = _R6_OPEN_RE.match(lines[i + 1][0])
+                if opened is None:
+                    allman = None
+        if header is not None:
+            indent, name, rest = header.group(1), header.group(2), header.group(3)
+            body_text, depth = take_rest(rest)
+            if body_text == "":
+                out.append(f"{indent}{name}>_;{ending}")
+            else:
+                out.append(f"{indent}{name}>_;{body_text}{ending}")
+            i += 1
+        elif allman is not None and opened is not None:
+            indent, name = allman.group(1), allman.group(2)
+            body_text, depth = take_rest(opened.group(2))
+            out.append(f"{indent}{name}>_;{ending}")
+            brace_ending = lines[i + 1][1]
+            i += 2
+            if body_text != "":
+                out.append(body_text + brace_ending)
+        else:
+            out.append(body + ending)
+            i += 1
+            continue
+        while depth > 0 and i < count:
+            body, ending = lines[i]
+            new_body, depth = _r6_consume(body, depth)
+            i += 1
+            if depth == 0 and _r6_blank(new_body):
+                continue
+            out.append(new_body + ending)
+    return "".join(out)
+
+
+_HEADER_RULES: tuple[tuple[str, Any], ...] = (
+    ("R4", lambda code: _map_line_bodies(code, _apply_r4_line)),
+    ("R3", lambda code: _map_line_bodies(code, _apply_r3_line)),
+    ("R1", lambda code: _map_line_bodies(code, _apply_r1_line)),
+    ("R6", _apply_r6),
+    ("R2", lambda code: _map_line_bodies(code, _apply_r2_line)),
+    ("R5", lambda code: _map_line_bodies(code, _apply_r5_line)),
+)
+
+
+def apply_header_recovery(code: str) -> tuple[str, list[str]]:
+    """Rewrite C-like headers toward ilo `name…>ret`. Once, line-oriented.
+
+    Order is R4, R3, R1, R6, R2, R5. The returned rule ids are the ones
+    that changed the text, in that order, each id once. Call-site `(…)`
+    groups are left as written. Empty `()` is rewritten only when glued
+    to a name at line start, or the whole line is `name()` / `name();`.
+    R6 rewrites a C brace entry `name() { … }` (or `name()` with `{` on
+    the next line) to `name>_;` and drops the brace that closes that
+    entry. Inner braces and a `}` with no such header stay.
+    """
+    fired: list[str] = []
+    text = code
+    for rule_id, apply_rule in _HEADER_RULES:
+        rewritten = apply_rule(text)
+        if rewritten != text:
+            fired.append(rule_id)
+            text = rewritten
+    return text, fired
+
+
+def _line_is_p003_header(body: str) -> bool:
+    return bool(
+        _R3_RE.search(body)
+        or _R1_RE.search(body)
+        or _R2_RE.search(body)
+        or _R5_RE.search(body)
+    )
+
+
+def p003_header_shape(code: str) -> bool:
+    """True when the raw emit has an exp-04 P003 header (rules R1–R3 or R5).
+
+    A leading `f`/`fn` does not hide the shape (`f main()>_;` still
+    counts). An R4-only line such as `f double x:n>n` does not.
+    """
+    if code == "":
+        return False
+    for line in code.splitlines():
+        if _line_is_p003_header(line):
+            return True
+        stripped = _apply_r4_line(line)
+        if stripped != line and _line_is_p003_header(stripped):
+            return True
+    return False
+
+
+def header_recovery_preimage_sha256(code: str) -> str:
+    """sha256 of the extracted programme, before header recovery."""
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
 def message_text(body: dict[str, Any]) -> str:
     """Programme text only. Thinking blocks are not emitted code."""
     content = body.get("content")
@@ -835,6 +1121,15 @@ class AttemptObs:
     finish_reason: str | None = None
     billed: bool = True
     api_error: str | None = None
+    # Set on ilo turns when --header-recovery is on. `code` is what ran.
+    # `emitted_code` is the model text, still the character-count source.
+    emitted_code: str | None = None
+    code_pre_recovery: str | None = None
+    header_recovery_applied: bool = False
+    header_recovery_rules: list[str] = field(default_factory=list)
+    header_recovery_preimage_sha256: str | None = None
+    p003_pre_recovery: bool = False
+    header_recovery_audit: bool = False
 
 
 def _clip(text: str, limit: int = TRACE_IO_CHARS) -> str:
@@ -899,7 +1194,14 @@ def assemble_cell(
     else:
         code_tokens = None
 
-    code_chars_by_turn = [len(a.code) for a in billed]
+    def _emitted(obs: AttemptObs) -> str:
+        # Header recovery bills the pre-rewrite programme. The text ilo
+        # ran is `obs.code` and may be shorter.
+        if obs.emitted_code is not None:
+            return obs.emitted_code
+        return obs.code
+
+    code_chars_by_turn = [len(_emitted(a)) for a in billed]
     generated_chars = sum(code_chars_by_turn)
     final_code_chars = code_chars_by_turn[-1] if code_chars_by_turn else 0
     repair_tokens_by_turn = [a.generation_tokens for a in billed[1:]]
@@ -917,11 +1219,12 @@ def assemble_cell(
 
     trace: list[dict[str, Any]] = []
     for i, a in enumerate(attempts, start=1):
-        trace.append({
+        emitted = _emitted(a)
+        entry: dict[str, Any] = {
             "attempt": i,
             "billed": a.billed,
             "code": a.code,
-            "code_chars": len(a.code) if a.billed else 0,
+            "code_chars": len(emitted) if a.billed else 0,
             "stderr": _clip(a.stderr),
             "stdout": _clip(a.stdout),
             "rc": a.rc,
@@ -934,7 +1237,16 @@ def assemble_cell(
             "served_model": a.served_model,
             "finish_reason": a.finish_reason,
             "api_error": a.api_error,
-        })
+        }
+        if a.header_recovery_audit:
+            raw = a.code_pre_recovery if a.code_pre_recovery is not None else emitted
+            entry["code_raw"] = raw
+            entry["code_pre_recovery"] = raw
+            entry["header_recovery_applied"] = a.header_recovery_applied
+            entry["header_recovery_rules"] = list(a.header_recovery_rules)
+            entry["header_recovery_preimage_sha256"] = a.header_recovery_preimage_sha256
+            entry["p003_pre_recovery"] = a.p003_pre_recovery
+        trace.append(entry)
 
     if final_outcome == "working":
         attempts_to_success: int | None = len(attempts)
@@ -1571,9 +1883,11 @@ def run_task(
     thinking: str | None = None,
     base_url: str | None = None,
     repair_shape_hint: bool = False,
+    header_recovery: bool = False,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
+    recover_headers = bool(header_recovery) and is_ilo
 
     # Build context. The arm label is recorded on every cell, including the
     # second language, so a matrix stays attributable to the arm that ran.
@@ -1630,11 +1944,23 @@ def run_task(
                 outcome="failed",
                 billed=False,
                 api_error=str(exc),
+                header_recovery_audit=recover_headers,
+                code_pre_recovery="" if recover_headers else None,
+                emitted_code="" if recover_headers else None,
             ))
             time.sleep(2)
             continue
 
-        code = parsed["code"]
+        emitted = parsed["code"]
+        code = emitted
+        recovery_rules: list[str] = []
+        preimage: str | None = None
+        p003_before = False
+        if recover_headers:
+            p003_before = p003_header_shape(emitted)
+            code, recovery_rules = apply_header_recovery(emitted)
+            if recovery_rules:
+                preimage = header_recovery_preimage_sha256(emitted)
         stdout, stderr, rc = run_fn(code)
         outcome = classify_outcome(task["expected_output"], stdout, stderr, rc)
         think = parsed["thinking_tokens"]
@@ -1652,15 +1978,24 @@ def run_task(
             outcome=outcome,
             finish_reason=parsed["finish_reason"],
             billed=True,
+            emitted_code=emitted if recover_headers else None,
+            code_pre_recovery=emitted if recover_headers else None,
+            header_recovery_applied=bool(recovery_rules),
+            header_recovery_rules=recovery_rules,
+            header_recovery_preimage_sha256=preimage,
+            p003_pre_recovery=p003_before,
+            header_recovery_audit=recover_headers,
         ))
 
-        print(
+        log = (
             f"      attempt={attempt} outcome={outcome} "
             f"thinking={format_thinking(think, 0 if think is not None else 1)} "
-            f"code_chars={len(code)} "
-            f"provider_output_tokens={parsed['generation_tokens']} rc={rc}",
-            file=sys.stderr,
+            f"code_chars={len(emitted)} "
+            f"provider_output_tokens={parsed['generation_tokens']} rc={rc}"
         )
+        if recovery_rules:
+            log += " header_recovery=" + ",".join(recovery_rules)
+        print(log, file=sys.stderr)
 
         if outcome == "working":
             break
@@ -1693,6 +2028,18 @@ def run_task(
     if thinking is not None:
         cell["thinking_request"] = thinking
     cell["repair_shape_hint"] = bool(repair_shape_hint)
+    cell["header_recovery"] = bool(header_recovery)
+    fired: list[str] = []
+    for obs in observations:
+        for rule_id in obs.header_recovery_rules:
+            if rule_id not in fired:
+                fired.append(rule_id)
+    cell["header_recovery_applied"] = any(
+        obs.header_recovery_applied for obs in observations
+    )
+    cell["header_recovery_rules"] = [
+        rule_id for rule_id in _HEADER_RULE_ORDER if rule_id in fired
+    ]
     return cell
 
 
@@ -1865,6 +2212,12 @@ def write_markdown(
                 if "repair_shape_hint" in r:
                     state = "on" if r["repair_shape_hint"] else "off"
                     lines.append(f"- Repair shape hint: {state}  ")
+                if "header_recovery" in r:
+                    state = "on" if r["header_recovery"] else "off"
+                    lines.append(f"- Header recovery: {state}  ")
+                    if r.get("header_recovery_applied"):
+                        rules = ", ".join(r.get("header_recovery_rules") or [])
+                        lines.append(f"- Header recovery rules: {rules}  ")
                 trace = r.get("attempt_trace") or []
                 if trace:
                     lines.append("- Attempts:  ")
@@ -1874,13 +2227,19 @@ def write_markdown(
                         err = ""
                         if turn.get("api_error"):
                             err = f" api_error={turn['api_error']}"
+                        recovered = ""
+                        if turn.get("header_recovery_applied"):
+                            rules = ",".join(turn.get("header_recovery_rules") or [])
+                            recovered = f" header_recovery={rules}"
+                            if turn.get("p003_pre_recovery"):
+                                recovered += " p003_pre_recovery=true"
                         lines.append(
                             f"  - attempt {turn.get('attempt')}: "
                             f"outcome={turn.get('outcome')} "
                             f"thinking={th_s} "
                             f"chars={turn.get('code_chars')} "
                             f"served={turn.get('served_model') or '-'} "
-                            f"billed={turn.get('billed')}{err}  "
+                            f"billed={turn.get('billed')}{err}{recovered}  "
                         )
         lines.append("")
 
@@ -1893,7 +2252,10 @@ def write_markdown(
         f"- Context arm for this file: `{context_mode}`. "
         "Each cell also records `context` and `context_modules`.",
         "- Skill documentation is loaded once per process (steady-state caching).",
-        "- Repair turns include the previous program.",
+        "- Repair turns include the previous program (the text ilo ran).",
+        "- `--header-recovery` (default off) rewrites ilo headers before invoke.",
+        "  Attempt traces then keep `code_pre_recovery`, the rule ids, and",
+        "  `p003_pre_recovery`. Character counts stay on the pre-rewrite text.",
         "- One-shot economics (first attempt only) can be derived from `repair_tokens_by_turn` in the JSON.",
         f"- {NICHE_STANCE}.",
         "- Each cell's language arm is `lang_arm` (same value as `language`).",
@@ -2061,6 +2423,26 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--header-recovery",
+        action="store_true",
+        help=(
+            "Before each ilo invoke, rewrite extracted programme text once "
+            "with the exp-04 header rules: strip a leading f/fn on a header "
+            "line (R4), rewrite name():…> to name> (R3), drop empty () "
+            "immediately before > (R1), rewrite a C brace entry name() { … } "
+            "to name>_; and drop the matching closer (R6), rewrite a bare "
+            "name() line to name>_; (R2), and rewrite a bare main line to "
+            "main>_ (R5). Call-site (…) is not rewritten. Default off. The "
+            "attempt trace "
+            "records the pre-rewrite programme, the rule ids, a sha256 of "
+            "that preimage when a rule fired, and whether the raw emit was "
+            "a P003 header. Emitted character counts stay on the pre-rewrite "
+            "text. A green first invoke after the rewrite does not spend "
+            "another LLM turn. Manifesto P6: structured compiler-to-agent "
+            "surface, aimed at cutting retries."
+        ),
+    )
+    parser.add_argument(
         "--emit-fixture",
         metavar="PATH",
         help=(
@@ -2193,6 +2575,16 @@ def main() -> int:
                 "note: ilo repair turns with ILO-P003 (or expected `>` / "
                 "got `(`) append a fixed header-shape gloss."
             )
+        print(
+            "header_recovery: "
+            + ("on" if args.header_recovery else "off")
+        )
+        if args.header_recovery:
+            print(
+                "note: ilo programmes are rewritten once before invoke "
+                "(R4, R3, R1, R6, R2, R5). R6 rewrites name() { … } to "
+                "name>_;. Call-site (…) is left as written."
+            )
         print(f"niche: {NICHE_STANCE}")
         for line in plan_lines(provider, specs, base_url):
             print(line)
@@ -2253,7 +2645,8 @@ def main() -> int:
         f"{len(specs)} models = "
         f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode} "
         f"docs_source={docs_source} fair_docs={fair_docs} provider={provider} "
-        f"repair_shape_hint={'on' if args.repair_shape_hint else 'off'})"
+        f"repair_shape_hint={'on' if args.repair_shape_hint else 'off'} "
+        f"header_recovery={'on' if args.header_recovery else 'off'})"
     )
 
     results: list[dict[str, Any]] = []
@@ -2288,6 +2681,7 @@ def main() -> int:
                     thinking=spec.thinking,
                     base_url=base_url,
                     repair_shape_hint=args.repair_shape_hint,
+                    header_recovery=args.header_recovery,
                 )
                 results.append(r)
                 print(
@@ -2310,6 +2704,7 @@ def main() -> int:
         "provider": provider,
         "api": api_url_for(provider, base_url),
         "repair_shape_hint": bool(args.repair_shape_hint),
+        "header_recovery": bool(args.header_recovery),
         "models": [
             {
                 "model": spec.key,

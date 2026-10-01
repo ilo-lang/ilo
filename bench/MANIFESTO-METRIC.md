@@ -105,6 +105,39 @@ python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
   --context curated --retry-cap 2 --repair-shape-hint --dry-run
 ```
 
+## Header recovery (exp-04)
+
+`--header-recovery` is off by default. With the flag, extracted ilo text is
+rewritten once after fence stripping and before `ilo`:
+
+| Rule | Rewrite |
+|------|---------|
+| R4 | leading `f` / `fn` on a header line (`>`, `(`, or `:`) |
+| R3 | `name():…>` → `name>` |
+| R1 | `name()>` → `name>` at line start |
+| R6 | `name() { … }` → `name>_;` and drop the matching `}` |
+| R2 | a whole line `name()` / `name();` → `name>_;` |
+| R5 | a whole line `main` → `main>_` |
+
+Call-site `(…)` is left as written. The programme ilo ran is
+`attempt_trace[].code`. The trace also keeps `code_raw`,
+`code_pre_recovery`, `header_recovery_rules`, a sha256 of the preimage
+when a rule fired, and `p003_pre_recovery` (raw emit matched an R1, R2,
+R3, or R5 header, including after a leading `f`/`fn`). `code_chars` and
+`generated_chars` stay the pre-rewrite lengths. A green first invoke
+after the rewrite does not spend another LLM turn. The flag is a retry
+cut (manifesto principle 6). It does not turn `generation_tokens` into a
+density claim. `--dry-run` prints `header_recovery: on` or `off` and
+needs no API key. Each result cell and the JSON header record
+`header_recovery`.
+
+```bash
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+  --context curated --retry-cap 2 --repair-shape-hint --dry-run
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+  --context curated --retry-cap 2 --repair-shape-hint --header-recovery --dry-run
+```
+
 New result files belong at `bench/closed-loop-*.json` and must pass the
 validator. The CI job `Closed-loop metric gate` runs
 [`scripts/check-closed-loop-metrics.sh`](../scripts/check-closed-loop-metrics.sh)
