@@ -3,9 +3,12 @@
 Closed-loop benchmark: ilo vs alternative language CLI (Phase 5, ILO-364).
 
 Drives a full LLM → compile → repair → retry loop for each task on each
-language (ilo and optionally a second CLI such as Zero), across both Haiku
-and Sonnet model families.  Measures intent→green: spec, generation,
-context, error feedback, and retries.
+language (ilo and optionally a second CLI such as Zero). Measures
+intent→green: spec, generation, context, error feedback, and retries.
+
+A live run prefers DeepSeek (OpenAI-compatible Chat Completions) when
+DEEPSEEK_API_KEY is set. Anthropic Haiku and Sonnet remain available with
+--provider anthropic.
 
 Per task, per language, per model this script logs:
   - thinking_tokens          provider thinking tokens, or null if no billed
@@ -80,8 +83,31 @@ Usage
   # single task
   python3 scripts/closed-loop-bench.py --task simple-function
 
-  # single model
-  python3 scripts/closed-loop-bench.py --model haiku
+  # single Anthropic model
+  python3 scripts/closed-loop-bench.py --provider anthropic --model haiku
+
+DeepSeek (preferred live provider when DEEPSEEK_API_KEY is set)
+  # no key, no network: prints the Chat Completions URL and the wire model
+  python3 scripts/closed-loop-bench.py --dry-run --provider deepseek --model deepseek-chat
+
+  # one task. The key stays in the environment; do not commit it.
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat --task simple-function
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-reasoner --task simple-function
+
+  # current ids, sent as themselves (thinking field omitted)
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-flash --task simple-function
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-v4-pro --task simple-function
+
+  # with DEEPSEEK_API_KEY set and no --provider / --model, the live path is
+  # deepseek-chat (one model). --model both --provider deepseek runs
+  # deepseek-chat and deepseek-reasoner.
+  python3 scripts/closed-loop-bench.py --task simple-function
+
+  deepseek-chat and deepseek-reasoner are CLI names. The request body sends
+  model deepseek-flash with thinking.type disabled (chat) or enabled
+  (reasoner). DeepSeek discontinued those two model ids on 2026-07-24
+  (changelog 2026-04-24). The cell records model (the CLI key) and model_id
+  (the id on the wire). Another deepseek-* id is sent unchanged.
 
 Context arms (ilo skill modules). --dry-run needs no API key.
   Default is curated. full is the explicit balloon control.
@@ -111,8 +137,38 @@ Context arms (ilo skill modules). --dry-run needs no API key.
   self-contained context). It does not by itself report a density result.
 
 Environment
-  ANTHROPIC_API_KEY   required for a live run. Not required for --dry-run
-                      or --emit-fixture.
+  DEEPSEEK_API_KEY    live DeepSeek runs. Preferred when set and neither
+                      --provider nor an Anthropic model is requested.
+                      Not required for --dry-run or --emit-fixture.
+  DEEPSEEK_BASE_URL   Chat Completions origin. Default
+                      https://api.deepseek.com. The harness posts
+                      {base}/chat/completions. DEEPSEEK_API_BASE is the
+                      same setting. A base that already ends in
+                      /chat/completions is used as the full URL.
+                      The Anthropic-compatible origin
+                      (https://api.deepseek.com/anthropic) is a different
+                      API; this harness does not call it.
+  ANTHROPIC_API_KEY   live Anthropic runs (--provider anthropic, or
+                      --model haiku / sonnet / both when DeepSeek was not
+                      selected). Not required for --dry-run or
+                      --emit-fixture.
+
+DeepSeek usage (best effort, not guessed)
+  generation_tokens   usage.completion_tokens (else usage.output_tokens)
+  thinking_tokens     usage.completion_tokens_details.reasoning_tokens
+                      when that value is a non-negative integer, including
+                      0. Missing, null, or non-integer stays null. A 0 is
+                      a measured zero. reasoning_content is not a token
+                      count and is not programme text.
+  generated_chars     length of choices[0].message.content after fence
+                      stripping, summed across billed attempts.
+  max_tokens          8192 on DeepSeek. Thinking and the program share
+                      that cap; finish_reason "length" means it was hit.
+                      Anthropic stays at 1024.
+  input               prompt_cache_miss_tokens is the uncached count and
+                      prompt_cache_hit_tokens is the cache hit when both
+                      are integers. prompt_tokens is their sum and is not
+                      added again.
 
 Retry cap
   Default N=5.  Override with --retry-cap N.
@@ -178,6 +234,32 @@ MODELS = {
     "haiku": "claude-haiku-4-5",
     "sonnet": "claude-sonnet-4-5",
 }
+ANTHROPIC_MODEL_KEYS = ("haiku", "sonnet")
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MAX_TOKENS = 1024
+
+# OpenAI-compatible Chat Completions. Not the Anthropic Messages shim.
+DEFAULT_DEEPSEEK_BASE = "https://api.deepseek.com"
+DEEPSEEK_MAX_TOKENS = 8192
+DEEPSEEK_TIMEOUT_S = 180
+# One model when DeepSeek is selected and --model is omitted. "both" on
+# this provider is an explicit pair (chat + reasoner), not the default.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+
+# CLI key -> (wire model id, thinking request).
+# thinking is "enabled", "disabled", or None (omit the field).
+# deepseek-chat / deepseek-reasoner were discontinued as API model ids on
+# 2026-07-24. Until then they meant non-thinking and thinking modes of
+# flash. The live flash id is deepseek-flash (V4.1). The CLI names stay;
+# the body uses the live id and an explicit thinking mode.
+DEEPSEEK_MODEL_PLAN: dict[str, tuple[str, str | None]] = {
+    "deepseek-chat": ("deepseek-flash", "disabled"),
+    "deepseek-reasoner": ("deepseek-flash", "enabled"),
+    "deepseek-flash": ("deepseek-flash", None),
+    "deepseek-v4-flash": ("deepseek-v4-flash", None),
+    "deepseek-v4-pro": ("deepseek-v4-pro", None),
+}
+PROVIDERS = ("anthropic", "deepseek")
 
 # Outcome ranks for partial ordering
 OUTCOME_RANK = {"working": 2, "partial": 1, "failed": 0}
@@ -910,6 +992,206 @@ def write_fixture(path: str) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# Provider selection
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """One model a live run will call.
+
+    key is the CLI name recorded as the cell's model. model_id is the id
+    sent on the wire. thinking is the DeepSeek thinking.type value, or
+    None when the request omits the field.
+    """
+
+    key: str
+    model_id: str
+    thinking: str | None = None
+
+
+def deepseek_key_present() -> bool:
+    return bool(os.environ.get("DEEPSEEK_API_KEY", "").strip())
+
+
+def deepseek_base_url(override: str | None = None) -> str:
+    """Chat Completions origin, no trailing slash, no secret."""
+    raw = override if override is not None and str(override).strip() else ""
+    if not raw:
+        raw = os.environ.get("DEEPSEEK_BASE_URL", "")
+    if not str(raw).strip():
+        raw = os.environ.get("DEEPSEEK_API_BASE", "")
+    if not str(raw).strip():
+        raw = DEFAULT_DEEPSEEK_BASE
+    return str(raw).strip().rstrip("/")
+
+
+def deepseek_chat_completions_url(base: str) -> str:
+    """{base}/chat/completions, unless base already ends with that path."""
+    trimmed = base.rstrip("/")
+    if trimmed.endswith("/chat/completions"):
+        return trimmed
+    return trimmed + "/chat/completions"
+
+
+def api_url_for(provider: str, base_url: str | None = None) -> str:
+    if provider == "deepseek":
+        return deepseek_chat_completions_url(deepseek_base_url(base_url))
+    if provider == "anthropic":
+        return ANTHROPIC_MESSAGES_URL
+    raise ValueError(f"unknown provider {provider!r}")
+
+
+def resolve_model_plan(
+    provider_flag: str | None,
+    model_flag: str | None,
+    *,
+    deepseek_key_set: bool,
+) -> tuple[str, list[ModelSpec]]:
+    """Choose the provider and the models a live run will call.
+
+    An explicit DeepSeek model id selects DeepSeek. haiku, sonnet, and
+    both select Anthropic when --provider is omitted (both is the
+    Anthropic pair). With neither flag, a set DEEPSEEK_API_KEY selects
+    DeepSeek and the single model deepseek-chat. Otherwise the Anthropic
+    pair is unchanged.
+    """
+    provider = provider_flag
+    model = model_flag
+
+    if model is not None and provider is None:
+        if model in DEEPSEEK_MODEL_PLAN or model.startswith("deepseek-"):
+            provider = "deepseek"
+        elif model in ANTHROPIC_MODEL_KEYS or model == "both":
+            provider = "anthropic"
+        else:
+            raise ValueError(
+                f"unknown model {model!r}. "
+                "Anthropic: haiku, sonnet, both. "
+                "DeepSeek: deepseek-chat, deepseek-reasoner, deepseek-flash, "
+                "deepseek-v4-pro, or another deepseek-* id."
+            )
+
+    if provider is None:
+        provider = "deepseek" if deepseek_key_set else "anthropic"
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown provider {provider!r}")
+
+    if provider == "anthropic":
+        if model is None or model == "both":
+            keys = list(ANTHROPIC_MODEL_KEYS)
+        elif model in MODELS:
+            keys = [model]
+        else:
+            raise ValueError(
+                f"model {model!r} is not an Anthropic model "
+                "(haiku, sonnet, both). Pass --provider deepseek for a "
+                "DeepSeek model."
+            )
+        return provider, [ModelSpec(key, MODELS[key], None) for key in keys]
+
+    if model is None:
+        keys = [DEFAULT_DEEPSEEK_MODEL]
+    elif model == "both":
+        keys = ["deepseek-chat", "deepseek-reasoner"]
+    elif model in ANTHROPIC_MODEL_KEYS:
+        raise ValueError(
+            f"model {model!r} is an Anthropic model. "
+            "Pass --provider anthropic, or a DeepSeek model id."
+        )
+    else:
+        keys = [model]
+
+    specs: list[ModelSpec] = []
+    for key in keys:
+        planned = DEEPSEEK_MODEL_PLAN.get(key)
+        if planned is not None:
+            wire, thinking = planned
+            specs.append(ModelSpec(key, wire, thinking))
+            continue
+        if key.startswith("deepseek-"):
+            specs.append(ModelSpec(key, key, None))
+            continue
+        raise ValueError(
+            f"unknown DeepSeek model {key!r}. "
+            "Use deepseek-chat, deepseek-reasoner, deepseek-flash, "
+            "deepseek-v4-pro, or another deepseek-* id."
+        )
+    return provider, specs
+
+
+def format_model_plan(specs: list[ModelSpec]) -> str:
+    parts: list[str] = []
+    for spec in specs:
+        if spec.thinking:
+            parts.append(f"{spec.key}={spec.model_id} thinking={spec.thinking}")
+        elif spec.key == spec.model_id:
+            parts.append(spec.key)
+        else:
+            parts.append(f"{spec.key}={spec.model_id}")
+    return " ".join(parts)
+
+
+def plan_lines(
+    provider: str,
+    specs: list[ModelSpec],
+    base_url: str | None = None,
+) -> list[str]:
+    """Stdout lines for the resolved API. No secrets."""
+    lines = [
+        f"provider: {provider}",
+        f"api: {api_url_for(provider, base_url)}",
+        "models: " + format_model_plan(specs),
+    ]
+    translated = [
+        spec for spec in specs
+        if spec.key != spec.model_id or spec.thinking is not None
+    ]
+    if provider == "deepseek" and translated:
+        bits = []
+        for spec in translated:
+            think = (
+                f" thinking.type={spec.thinking}" if spec.thinking else ""
+            )
+            bits.append(f"{spec.key} -> model {spec.model_id}{think}")
+        lines.append(
+            "note: deepseek-chat and deepseek-reasoner are CLI names. "
+            "The Chat Completions body sends deepseek-flash. DeepSeek "
+            "discontinued those model ids on 2026-07-24 (changelog "
+            "2026-04-24): chat is thinking disabled, reasoner is thinking "
+            "enabled. " + "; ".join(bits)
+        )
+    if provider == "deepseek":
+        lines.append(
+            "note: generation_tokens is usage.completion_tokens. "
+            "thinking_tokens is usage.completion_tokens_details."
+            "reasoning_tokens when that value is a non-negative integer; "
+            "otherwise null. generated_chars is the length of message "
+            "content after fence stripping."
+        )
+    return lines
+
+
+def api_key_for(provider: str) -> str | None:
+    """Return the live key, or None after printing a fixed error line."""
+    if provider == "deepseek":
+        key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not key:
+            print("ERROR: DEEPSEEK_API_KEY not set", file=sys.stderr)
+            return None
+        return key
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
+        print(
+            "       A live run uses DeepSeek when DEEPSEEK_API_KEY is set "
+            "(--provider deepseek).",
+            file=sys.stderr,
+        )
+        return None
+    return key
+
+
+# ---------------------------------------------------------------------------
 # API call
 # ---------------------------------------------------------------------------
 
@@ -929,13 +1211,13 @@ def call_llm(
 
     payload = json.dumps({
         "model": model_id,
-        "max_tokens": 1024,
+        "max_tokens": ANTHROPIC_MAX_TOKENS,
         "system": system,
         "messages": [{"role": "user", "content": user}],
     }).encode()
 
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        ANTHROPIC_MESSAGES_URL,
         data=payload,
         headers={
             "x-api-key": api_key,
@@ -949,6 +1231,202 @@ def call_llm(
     if not isinstance(body, dict):
         raise ValueError("Messages API response was not a JSON object")
     return parse_provider_turn(body)
+
+
+def extract_openai_reasoning_tokens(usage: dict[str, Any]) -> int | None:
+    """Reasoning-token split, or None when this payload has no integer split.
+
+    A present 0 is a measured zero. The key reasoning_tokens, when present,
+    wins even if the value is null: that is unknown, and a sibling
+    thinking_tokens field is not a fallback. reasoning_content length is
+    never a token count.
+    """
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict) and "reasoning_tokens" in details:
+        return _nonneg_int(details.get("reasoning_tokens"))
+    return extract_thinking_tokens(usage)
+
+
+def openai_message_text(body: dict[str, Any]) -> str:
+    """Programme text from the first choice. Reasoning is not programme text."""
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        return ""
+    message = choice.get("message")
+    if isinstance(message, str):
+        return message
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if not isinstance(block, dict):
+                continue
+            kind = block.get("type")
+            if kind in ("thinking", "reasoning", "redacted_thinking"):
+                continue
+            text = block.get("text")
+            if not isinstance(text, str):
+                text = block.get("content") if kind in ("text", None) else None
+            if isinstance(text, str):
+                parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _openai_input_split(usage: dict[str, Any]) -> tuple[int, int]:
+    """Return (uncached input, cache hit). Cache creation is not invented.
+
+    When both prompt_cache_miss_tokens and prompt_cache_hit_tokens are
+    non-negative integers, those are the split. prompt_tokens equals their
+    sum on DeepSeek and is not added again. Otherwise prompt_tokens (or
+    input_tokens) is the total, and prompt_tokens_details.cached_tokens is
+    removed from that total when it is an integer that does not exceed it.
+    """
+    hit = _nonneg_int(usage.get("prompt_cache_hit_tokens"))
+    miss = _nonneg_int(usage.get("prompt_cache_miss_tokens"))
+    if hit is not None and miss is not None:
+        return miss, hit
+    prompt = _nonneg_int(usage.get("prompt_tokens"))
+    if prompt is None:
+        prompt = _nonneg_int(usage.get("input_tokens"))
+    if prompt is None:
+        prompt = 0
+    cached: int | None = None
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and "cached_tokens" in details:
+        cached = _nonneg_int(details.get("cached_tokens"))
+    if cached is not None and cached <= prompt:
+        return prompt - cached, cached
+    return prompt, 0
+
+
+def openai_finish_reason(body: dict[str, Any]) -> str | None:
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        return None
+    finish = choice.get("finish_reason")
+    if finish is None:
+        return None
+    if not isinstance(finish, str):
+        return str(finish)
+    return finish
+
+
+def parse_openai_chat_turn(body: dict[str, Any]) -> dict[str, Any]:
+    """Normalise one Chat Completions body into the parse_provider_turn shape.
+
+    generation_tokens is completion_tokens, then output_tokens. A missing
+    usage field is 0, the same rule as the Messages parser. thinking_tokens
+    stays null unless an integer reasoning split is present. Programme text
+    is message content only; reasoning_content is ignored. served_model is
+    the response model id, never the id we requested.
+    """
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    model = body.get("model")
+    if not isinstance(model, str) or not model.strip():
+        model = None
+    generation = _nonneg_int(usage.get("completion_tokens"))
+    if generation is None:
+        generation = _nonneg_int(usage.get("output_tokens"))
+    uncached, cache_hit = _openai_input_split(usage)
+    return {
+        "code": strip_fences(openai_message_text(body)),
+        "generation_tokens": 0 if generation is None else generation,
+        "input_tokens": uncached,
+        "thinking_tokens": extract_openai_reasoning_tokens(usage),
+        "served_model": model,
+        "cache_hit_tokens": cache_hit,
+        "cache_creation_tokens": 0,
+        "finish_reason": openai_finish_reason(body),
+    }
+
+
+def build_deepseek_body(
+    system: str,
+    user: str,
+    model_id: str,
+    thinking: str | None,
+    max_tokens: int = DEEPSEEK_MAX_TOKENS,
+) -> dict[str, Any]:
+    """JSON body for one non-streaming Chat Completions call."""
+    if thinking is not None and thinking not in ("enabled", "disabled"):
+        raise ValueError(f"thinking must be enabled or disabled, not {thinking!r}")
+    body: dict[str, Any] = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if thinking is not None:
+        body["thinking"] = {"type": thinking}
+    return body
+
+
+def call_deepseek(
+    system: str,
+    user: str,
+    model_id: str,
+    api_key: str,
+    thinking: str | None = None,
+    base_url: str | None = None,
+    urlopen: Any = None,
+) -> dict[str, Any]:
+    """One DeepSeek Chat Completions turn.
+
+    POST {base}/chat/completions with Authorization: Bearer. Parsed by
+    parse_openai_chat_turn. Raises on transport or HTTP error. Does not
+    invent a thinking split. The requested model_id is not copied into
+    served_model.
+    """
+    import urllib.error
+    import urllib.request
+
+    url = deepseek_chat_completions_url(deepseek_base_url(base_url))
+    payload = build_deepseek_body(system, user, model_id, thinking)
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    opener = urlopen or urllib.request.urlopen
+    try:
+        with opener(req, timeout=DEEPSEEK_TIMEOUT_S) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"HTTP {exc.code} from {url}: {detail}") from exc
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Chat Completions response from {url} was not JSON") from exc
+    if not isinstance(body, dict):
+        raise ValueError(f"Chat Completions response from {url} was not a JSON object")
+    if body.get("error") and not body.get("choices"):
+        raise RuntimeError(f"Chat Completions error from {url}: {body.get('error')}")
+    return parse_openai_chat_turn(body)
 
 
 # ---------------------------------------------------------------------------
@@ -1019,6 +1497,10 @@ def run_task(
     ilo_context_text: str | None = None,
     lang2_docs: str | None = None,
     task_class: str | None = None,
+    *,
+    provider: str = "anthropic",
+    thinking: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
@@ -1060,7 +1542,13 @@ def run_task(
 
     for attempt in range(1, retry_cap + 1):
         try:
-            parsed = call_llm(system, user, model_id, api_key)
+            if provider == "deepseek":
+                parsed = call_deepseek(
+                    system, user, model_id, api_key,
+                    thinking=thinking, base_url=base_url,
+                )
+            else:
+                parsed = call_llm(system, user, model_id, api_key)
         except Exception as exc:  # noqa: BLE001
             print(f"      [attempt {attempt}] API error: {exc}", file=sys.stderr)
             observations.append(AttemptObs(
@@ -1127,6 +1615,10 @@ def run_task(
     cell["fair_docs"] = fair_docs
     if task_class is not None:
         cell["task_class"] = task_class
+    cell["provider"] = provider
+    cell["api"] = api_url_for(provider, base_url)
+    if thinking is not None:
+        cell["thinking_request"] = thinking
     return cell
 
 
@@ -1288,7 +1780,14 @@ def write_markdown(
                     f"- Repair tokens by turn: {r['repair_tokens_by_turn']}  ",
                     f"- Wall time: {r['wall_time_s']}s  ",
                     f"- Outcome: **{r['final_outcome']}**  ",
+                    f"- Provider: {r.get('provider', '-')}  ",
                 ]
+                if r.get("api"):
+                    lines.append(f"- API: {r['api']}  ")
+                if r.get("thinking_request"):
+                    lines.append(
+                        f"- Thinking request: {r['thinking_request']}  "
+                    )
                 trace = r.get("attempt_trace") or []
                 if trace:
                     lines.append("- Attempts:  ")
@@ -1331,6 +1830,17 @@ def write_markdown(
         "- Re-run at any time; output files are date-stamped.",
         "- Human-floor bash programs: `bench/closed-loop/references-bash/`.",
     ]
+    if any(r.get("provider") == "deepseek" for r in results):
+        lines.append(
+            "- DeepSeek cells are OpenAI Chat Completions. "
+            "generation_tokens is usage.completion_tokens. "
+            "thinking_tokens is usage.completion_tokens_details.reasoning_tokens "
+            "when that value is a non-negative integer; otherwise null. "
+            "reasoning_content is not programme text and is not a token count. "
+            "generated_chars is the length of message content after fence stripping. "
+            "CLI names deepseek-chat and deepseek-reasoner are sent as "
+            "deepseek-flash with thinking disabled or enabled."
+        )
     stub_arms = sorted({
         r.get("lang_arm", r["language"])
         for r in results
@@ -1389,8 +1899,34 @@ def main() -> int:
                         help="Path to ilo binary.")
     parser.add_argument("--retry-cap", type=int, default=DEFAULT_RETRY_CAP,
                         help="Max repair attempts per task (default 5).")
-    parser.add_argument("--model", choices=["haiku", "sonnet", "both"],
-                        default="both", help="Model(s) to run.")
+    parser.add_argument(
+        "--provider",
+        choices=list(PROVIDERS),
+        default=None,
+        help=(
+            "LLM API. deepseek posts OpenAI-compatible Chat Completions to "
+            "DEEPSEEK_BASE_URL (default https://api.deepseek.com/chat/completions). "
+            "anthropic posts the Messages API. "
+            "Default: deepseek when DEEPSEEK_API_KEY is set, otherwise anthropic. "
+            "An explicit DeepSeek model id selects deepseek. haiku, sonnet, and "
+            "both select anthropic when --provider is omitted."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Model key. Anthropic: haiku, sonnet, both (default both when "
+            "Anthropic is selected). DeepSeek: deepseek-chat (default when "
+            "DeepSeek is selected; non-thinking flash), deepseek-reasoner "
+            "(thinking flash), deepseek-flash, deepseek-v4-pro, or another "
+            "deepseek-* id sent unchanged. "
+            "deepseek-chat and deepseek-reasoner are CLI names; the request "
+            "sends model deepseek-flash with thinking disabled or enabled, "
+            "because DeepSeek discontinued those model ids on 2026-07-24. "
+            "--model both with --provider deepseek runs chat and reasoner."
+        ),
+    )
     parser.add_argument("--task", metavar="ID",
                         help="Run only this task ID.")
     parser.add_argument("--lang2-name", default=None,
@@ -1444,6 +1980,17 @@ def main() -> int:
     parser.add_argument("--output-dir", default=None,
                         help="Override output directory (default: bench/).")
     args = parser.parse_args()
+
+    try:
+        provider, specs = resolve_model_plan(
+            args.provider,
+            args.model,
+            deepseek_key_set=deepseek_key_present(),
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    base_url = deepseek_base_url() if provider == "deepseek" else None
 
     global BENCH_DIR
     if args.output_dir:
@@ -1547,6 +2094,8 @@ def main() -> int:
                 )
         print(f"context: {context_mode}")
         print(f"niche: {NICHE_STANCE}")
+        for line in plan_lines(provider, specs, base_url):
+            print(line)
         print("language_neutral: " + ("false" if named else "true"))
         if named:
             print(
@@ -1568,6 +2117,10 @@ def main() -> int:
         print(HOWTO_FIXTURE, end="")
         return 0
 
+    api_key = api_key_for(provider)
+    if not api_key:
+        return 2
+
     # Verify ilo
     try:
         subprocess.run([args.ilo, "--version"], capture_output=True, check=True, timeout=5)
@@ -1586,29 +2139,20 @@ def main() -> int:
             return 2
         print(f"lang2 probe: {probe_detail}", file=sys.stderr)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
-        return 2
-
-    # Determine models to run
-    if args.model == "both":
-        model_keys = list(MODELS.keys())
-    else:
-        model_keys = [args.model]
-
     # ilo is always the language-of-record arm.
     languages = ["ilo"]
     if lang2:
         languages.append(lang2.name)
 
-    total_runs = len(all_tasks) * len(languages) * len(model_keys)
+    total_runs = len(all_tasks) * len(languages) * len(specs)
+    for line in plan_lines(provider, specs, base_url):
+        print(line)
     print(
         f"Closed-loop bench: {len(all_tasks)} tasks × "
         f"{len(languages)} languages ({' '.join(languages)}) × "
-        f"{len(model_keys)} models = "
+        f"{len(specs)} models = "
         f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode} "
-        f"docs_source={docs_source} fair_docs={fair_docs})"
+        f"docs_source={docs_source} fair_docs={fair_docs} provider={provider})"
     )
 
     results: list[dict[str, Any]] = []
@@ -1616,20 +2160,19 @@ def main() -> int:
 
     for task in all_tasks:
         for lang in languages:
-            for model_key in model_keys:
+            for spec in specs:
                 run_num += 1
-                model_id = MODELS[model_key]
                 print(
                     f"\n[{run_num}/{total_runs}] task={task['id']} "
-                    f"lang={lang} model={model_key}",
+                    f"lang={lang} model={spec.key} provider={provider}",
                     file=sys.stderr,
                 )
                 mods, text = prepared[task["id"]]
                 r = run_task(
                     task=task,
                     lang=lang,
-                    model_key=model_key,
-                    model_id=model_id,
+                    model_key=spec.key,
+                    model_id=spec.model_id,
                     api_key=api_key,
                     retry_cap=args.retry_cap,
                     ilo_bin=args.ilo,
@@ -1640,6 +2183,9 @@ def main() -> int:
                     ilo_context_text=text,
                     lang2_docs=args.lang2_docs,
                     task_class=task_class_of(task, classes),
+                    provider=provider,
+                    thinking=spec.thinking,
+                    base_url=base_url,
                 )
                 results.append(r)
                 print(
@@ -1659,6 +2205,16 @@ def main() -> int:
         "fair_bakeoff": bool(lang2) and fair_docs and not named,
         "language_neutral": not named,
         "language_named_in": named,
+        "provider": provider,
+        "api": api_url_for(provider, base_url),
+        "models": [
+            {
+                "model": spec.key,
+                "model_id": spec.model_id,
+                "thinking_request": spec.thinking,
+            }
+            for spec in specs
+        ],
     }
     json_path = write_json(results, date_str, context_mode, leg=leg, meta=meta)
     md_path = write_markdown(results, date_str, context_mode, leg=leg)
@@ -1671,15 +2227,15 @@ def main() -> int:
     # output sum is not a column.
     print("\nSummary (thinking and emitted chars; provider output is in the JSON):")
     print(
-        f"{'task':<22} {'lang':<6} {'model':<6} "
+        f"{'task':<22} {'lang':<6} {'model':<18} "
         f"{'think':>8} {'chars':>7} {'attempts':>8} {'outcome':<8} {'time':>6}"
     )
-    print("-" * 80)
+    print("-" * 92)
     for r in results:
         att = str(r["attempts_to_success"]) if r["attempts_to_success"] else "-"
         think = format_thinking(r["thinking_tokens"], r["thinking_unknown_attempts"])
         print(
-            f"{r['task']:<22} {r['language']:<6} {r['model']:<6} "
+            f"{r['task']:<22} {r['language']:<6} {r['model']:<18} "
             f"{think:>8} {r['generated_chars']:>7} {att:>8} {r['final_outcome']:<8} "
             f"{r['wall_time_s']:>5.1f}s"
         )
