@@ -79,6 +79,32 @@ null. `reasoning_content` is not program text and is not a token count.
 `generated_chars` is the length of `message.content` after fence
 stripping. Do not quote `generation_tokens` as density.
 
+## Repair shape hint (exp-03)
+
+`--repair-shape-hint` is off by default. With the flag, an ilo repair
+turn whose stderr contains `ILO-P003` — or the paren-header pair
+expected `` `>``, got `` `(` `` — appends a fixed gloss inside
+`make_repair_prompt`:
+
+```
+SHAPE: function headers are `name params>ret;body` — never `name()`.
+Zero-arg entry: `main>_;…` not `main()>_;…`. Example: `tri n:n>n;+n 1` then `main>_;prnt (tri 10)`.
+Call sites may use `(…)`; headers must not.
+```
+
+The initial prompt stays the baseline text. The flag is a retry cut
+(manifesto principle 6: structured compiler→agent surface). It does not
+change `generation_tokens` into a density claim. `--dry-run` prints
+`repair_shape_hint: on` or `off` and needs no API key. Each result cell
+and the JSON header record `repair_shape_hint`.
+
+```bash
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+  --context curated --retry-cap 2 --dry-run
+python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+  --context curated --retry-cap 2 --repair-shape-hint --dry-run
+```
+
 New result files belong at `bench/closed-loop-*.json` and must pass the
 validator. The CI job `Closed-loop metric gate` runs
 [`scripts/check-closed-loop-metrics.sh`](../scripts/check-closed-loop-metrics.sh)
