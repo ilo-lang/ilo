@@ -1,0 +1,59 @@
+{
+  "measurement": false,
+  "note": "Hand-built schema fixture, not a model run. Do not cite the numbers. Cells show the honest spine: both columns, emitted chars only, and thinking tokens only.",
+  "generated": "schema-fixture",
+  "harness": "fixture",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 30,
+      "thinking_tokens": 20,
+      "thinking_unknown_attempts": 0,
+      "code_tokens": 10,
+      "generated_chars": 40,
+      "final_code_chars": 40,
+      "code_chars_by_turn": [40],
+      "input_tokens": 100,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 1.0,
+      "final_outcome": "working",
+      "context": "full"
+    },
+    {
+      "task": "simple-function",
+      "language": "python",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 12,
+      "generated_chars": 48,
+      "input_tokens": 80,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 1.0,
+      "final_outcome": "working",
+      "context": "curated"
+    },
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "sonnet",
+      "model_id": "fixture",
+      "generation_tokens": 25,
+      "thinking_tokens": 18,
+      "thinking_unknown_attempts": 0,
+      "code_tokens": 7,
+      "input_tokens": 90,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 1.0,
+      "final_outcome": "partial"
+    }
+  ]
+}
