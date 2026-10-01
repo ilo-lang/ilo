@@ -9,6 +9,7 @@ val=(python3 scripts/validate-closed-loop-results.py)
 echo "== honest fixtures (must pass) =="
 "${val[@]}" bench/fixtures/honest-closed-loop-cell.json
 "${val[@]}" bench/fixtures/chars-only-cell.json
+"${val[@]}" bench/fixtures/closed-loop-harness-shape.json
 
 expect_fail() {
   local label=$1

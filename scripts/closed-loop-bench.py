@@ -42,8 +42,10 @@ including 0. A missing or non-integer split is unknown. It is not guessed
 from thinking-block length.
 
 Output
-  bench/closed-loop-<date>.json   structured JSON dataset
-  bench/closed-loop-<date>.md     markdown writeup
+  bench/closed-loop-<date>.json          ilo-only JSON
+  bench/closed-loop-<date>.md            ilo-only markdown
+  bench/closed-loop-<date>-<leg>.json    comparator leg (python, bash, …)
+                                         so interleaved arms do not clobber
 
 Usage
   # ilo only, both models
@@ -55,8 +57,19 @@ Usage
   # also benchmark a second language CLI
   python3 scripts/closed-loop-bench.py --lang2-name zero --lang2-bin zero --lang2-ext .zero
 
+  # Python arm (name python, binary python3, extension .py)
+  python3 scripts/closed-loop-bench.py --python
+
+  # bash arm. The runner is `bash <file>.sh` (the same [bin, file] shape).
+  python3 scripts/closed-loop-bench.py --bash
+  python3 scripts/closed-loop-bench.py --lang2-name bash --lang2-bin bash --lang2-ext .sh
+
+  # fair comparator docs (without this, lang2 is a memorised-prior stub)
+  python3 scripts/closed-loop-bench.py --python --lang2-docs path/to/python.md
+
   # list tasks, no LLM calls
   python3 scripts/closed-loop-bench.py --dry-run
+  python3 scripts/closed-loop-bench.py --dry-run --python
 
   # schema-shaped JSON with no API key (synthetic, not a measurement)
   python3 scripts/closed-loop-bench.py --emit-fixture bench/fixtures/closed-loop-harness-shape.json
@@ -104,8 +117,10 @@ Environment
 Retry cap
   Default N=5.  Override with --retry-cap N.
 
-Every result cell records the context arm (`context`, `context_modules`)
+Every result cell records the context arm (`context`, `context_modules`),
+the language arm (`lang_arm`, `docs_source`, `fair_docs`, `task_class`),
 and the honest columns above. generation_tokens is not a density claim.
+An ops row, or a bash win on wall time, is not an ilo manifesto loss.
 """
 
 from __future__ import annotations
@@ -113,6 +128,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -120,7 +137,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -129,6 +146,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "bench"
 TASKS_FILE = BENCH_DIR / "closed-loop" / "tasks.json"
+TASK_CLASS_FILE = BENCH_DIR / "closed-loop" / "task-class.json"
 SKILLS_DIR = REPO_ROOT / "skills" / "ilo"
 # Signature sheet for the curated/full arms. Not registered with
 # `ilo skill list`; the harness loads it by module name.
@@ -173,6 +191,203 @@ METRIC_NOTE = (
     "attempt reported a split). code_tokens is null when any billed attempt "
     "left thinking unknown."
 )
+
+# Ops and wall-clock wins for bash are expected. They are not an ilo loss.
+NICHE_STANCE = (
+    "language-of-record bakeoff; an ops task or a bash win on wall time "
+    "is not an ilo manifesto loss"
+)
+VALID_TASK_CLASSES = frozenset({"artefact", "ops", "sanity"})
+EXT_BY_LANG = {"python": ".py", "bash": ".sh"}
+# Names that must not appear in task text sent to every arm.
+KNOWN_LANGS = frozenset({
+    "ilo", "zero", "moonbit", "ailang", "nanolang", "bash", "python",
+    "rust", "javascript", "typescript", "node",
+})
+
+class Lang2(NamedTuple):
+    name: str
+    bin: str
+    ext: str
+
+
+def resolve_lang2(
+    python: bool,
+    bash: bool,
+    name: str | None,
+    bin_path: str | None,
+    ext: str | None,
+) -> tuple[Lang2 | None, str | None]:
+    """Resolve the optional comparator arm. Returns (arm, error).
+
+    ``--python`` is name ``python``, binary ``python3``, extension ``.py``.
+    ``--bash`` is name ``bash``, binary ``bash``, extension ``.sh``.
+    ``--lang2-name bash --lang2-bin bash --lang2-ext .sh`` is the same bash arm.
+    An omitted extension is ``.py`` / ``.sh`` for those names and ``.zero``
+    otherwise (the historical default).
+    """
+    if python and bash:
+        return None, "pass only one of --python and --bash"
+    if python:
+        if name and name != "python":
+            return None, f"--python sets the comparator to python, not {name}"
+        name = "python"
+        bin_path = bin_path or "python3"
+    elif bash:
+        if name and name != "bash":
+            return None, f"--bash sets the comparator to bash, not {name}"
+        name = "bash"
+        bin_path = bin_path or "bash"
+    if not name and not bin_path:
+        return None, None
+    if name and not bin_path:
+        return None, (
+            f"--lang2-name {name} needs --lang2-bin "
+            "(or use --python / --bash)"
+        )
+    if bin_path and not name:
+        return None, "--lang2-bin needs --lang2-name (or use --python / --bash)"
+    assert name is not None and bin_path is not None
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        return None, f"comparator name is not a safe filename leg: {name}"
+    if ext is None:
+        ext = EXT_BY_LANG.get(name, ".zero")
+    if not ext.startswith("."):
+        return None, f"--lang2-ext must start with '.': {ext}"
+    return Lang2(name, bin_path, ext), None
+
+
+def lang2_documentation(
+    lang: str, docs_path: str | None,
+) -> tuple[str, str, bool, str | None]:
+    """Return (text, docs_source, fair_docs, error).
+
+    No ``--lang2-docs`` means the memorised-prior stub. That arm is not a
+    fair bakeoff against ilo skill text. A path that was passed and is
+    missing or empty is an error: the run does not quietly substitute the
+    stub after the operator asked for a file.
+    """
+    if not docs_path:
+        text = f"(No formal language documentation available for {lang}.)"
+        return text, "stub", False, None
+    path = Path(docs_path)
+    if not path.is_file():
+        return "", "missing", False, f"--lang2-docs is not a file: {docs_path}"
+    text = path.read_text()
+    if not text.strip():
+        return "", "empty", False, f"--lang2-docs is empty: {docs_path}"
+    return text, "file", True, None
+
+
+def check_language_neutral(
+    tasks: list[dict[str, Any]],
+    langs: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """Task ids whose description names a language.
+
+    The description is sent verbatim to every arm, so naming one language
+    biases the others. ``langs`` adds whatever this invocation will run.
+    """
+    names = set(KNOWN_LANGS)
+    names.update(str(lang).lower() for lang in langs if lang)
+    bad: list[str] = []
+    for task in tasks:
+        words = set(re.findall(r"[a-z0-9]+", task["description"].lower()))
+        if words & names:
+            bad.append(task["id"])
+    return bad
+
+
+def load_task_classes(path: Path | None = None) -> dict[str, str]:
+    """Hand tags: artefact | ops | sanity. Missing file yields {}."""
+    path = path or TASK_CLASS_FILE
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text())
+    classes = data.get("classes", {})
+    if not isinstance(classes, dict):
+        raise ValueError(f"{path}: 'classes' must be an object")
+    bad = [f"{key}={value}" for key, value in classes.items()
+           if value not in VALID_TASK_CLASSES]
+    if bad:
+        raise ValueError(
+            "task_class must be artefact, ops, or sanity: " + ", ".join(bad)
+        )
+    return {str(key): str(value) for key, value in classes.items()}
+
+
+def task_class_of(task: dict[str, Any], classes: dict[str, str]) -> str | None:
+    """Inline ``task_class`` wins over the sidecar. Unknown values error."""
+    inline = task.get("task_class")
+    if inline is not None:
+        if inline not in VALID_TASK_CLASSES:
+            raise ValueError(
+                f"{task.get('id')}: task_class {inline!r} "
+                "is not artefact|ops|sanity"
+            )
+        return str(inline)
+    found = classes.get(task["id"])
+    return found
+
+
+def probe_lang_bin(bin_path: str) -> tuple[bool, str]:
+    """Confirm a comparator CLI can execute a file.
+
+    ``python3 --version`` and ``bash --version`` both exit 0. A strict
+    POSIX ``sh`` (dash) rejects ``--version`` and still runs ``sh file``.
+    A non-zero version probe falls back to ``bin -c 'exit 0'``, which
+    dash, bash, and python3 all accept, so the version-flag quirk does
+    not drop the arm.
+    """
+    if os.path.sep not in bin_path:
+        resolved = shutil.which(bin_path)
+        if resolved is None:
+            return False, f"not on PATH: {bin_path}"
+        exe = resolved
+    else:
+        exe = bin_path
+        if not os.path.isfile(exe):
+            return False, f"not found: {bin_path}"
+    try:
+        ver = subprocess.run(
+            [exe, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except FileNotFoundError:
+        return False, f"not found: {bin_path}"
+    except subprocess.TimeoutExpired:
+        return False, f"timed out: {bin_path} --version"
+    except OSError as exc:
+        return False, f"cannot exec {bin_path}: {exc}"
+    if ver.returncode == 0:
+        line = (ver.stdout or ver.stderr or "").strip().splitlines()
+        detail = line[0] if line else f"{exe} --version ok"
+        return True, detail
+    try:
+        smoke = subprocess.run(
+            [exe, "-c", "exit 0"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        return False, (
+            f"{bin_path} --version exited {ver.returncode}; smoke failed: {exc}"
+        )
+    if smoke.returncode == 0:
+        return True, (
+            f"{exe} (version flag exited {ver.returncode}; -c ok)"
+        )
+    return False, (
+        f"{bin_path} --version exited {ver.returncode} "
+        f"and -c exited {smoke.returncode}"
+    )
+
+
+def result_stem(date_str: str, leg: str | None) -> str:
+    """ilo-only keeps the historical name. A comparator leg is suffixed."""
+    if leg:
+        return f"closed-loop-{date_str}-{leg}"
+    return f"closed-loop-{date_str}"
+
 
 # ---------------------------------------------------------------------------
 # ILO skill context (cached once per process to match steady-state economics)
@@ -802,12 +1017,16 @@ def run_task(
     context_mode: str = DEFAULT_CONTEXT,
     ilo_modules: list[str] | None = None,
     ilo_context_text: str | None = None,
+    lang2_docs: str | None = None,
+    task_class: str | None = None,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
 
     # Build context. The arm label is recorded on every cell, including the
     # second language, so a matrix stays attributable to the arm that ran.
+    # ilo always gets skill text. A comparator gets --lang2-docs or the
+    # memorised-prior stub (not a fair bakeoff).
     if is_ilo:
         if ilo_modules is None:
             context_modules = modules_for(context_mode, task)
@@ -819,13 +1038,19 @@ def run_task(
             )
         else:
             context = ilo_context_text
+        docs_source = "skills"
+        fair_docs = True
         system = ILO_SYSTEM
         run_fn = lambda code: run_ilo(code, ilo_bin)  # noqa: E731
     else:
-        context = f"(No formal language documentation available for {lang}.)"
+        context, docs_source, fair_docs, docs_err = lang2_documentation(
+            lang, lang2_docs,
+        )
+        if docs_err:
+            raise ValueError(docs_err)
         context_modules = []
         system = LANG2_SYSTEM.format(lang_name=lang)
-        run_fn = lambda code: run_lang2(code, lang2_bin, lang2_ext)  # noqa: E731
+        run_fn = lambda code: run_lang2(code, lang2_bin or "", lang2_ext)  # noqa: E731
 
     user = make_initial_prompt(task, context, lang)
 
@@ -897,6 +1122,11 @@ def run_task(
     )
     cell["context"] = context_mode
     cell["context_modules"] = list(context_modules)
+    cell["lang_arm"] = lang
+    cell["docs_source"] = docs_source
+    cell["fair_docs"] = fair_docs
+    if task_class is not None:
+        cell["task_class"] = task_class
     return cell
 
 
@@ -908,16 +1138,27 @@ def write_json(
     results: list[dict[str, Any]],
     date_str: str,
     context_mode: str | None = None,
+    *,
+    leg: str | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> Path:
-    out = BENCH_DIR / f"closed-loop-{date_str}.json"
-    payload = {
+    out = BENCH_DIR / f"{result_stem(date_str, leg)}.json"
+    payload: dict[str, Any] = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "harness": "closed-loop-bench.py",
         "ticket": "ILO-364",
         "context": context_mode,
+        "leg": leg,
+        "niche": NICHE_STANCE,
         "note": METRIC_NOTE,
-        "results": results,
     }
+    if meta:
+        payload.update(meta)
+    payload["results"] = results
+    payload["context"] = context_mode
+    payload["leg"] = leg
+    payload["niche"] = NICHE_STANCE
+    payload["note"] = METRIC_NOTE
     out.write_text(json.dumps(payload, indent=2) + "\n")
     return out
 
@@ -926,8 +1167,10 @@ def write_markdown(
     results: list[dict[str, Any]],
     date_str: str,
     context_mode: str | None = None,
+    *,
+    leg: str | None = None,
 ) -> Path:
-    out = BENCH_DIR / f"closed-loop-{date_str}.md"
+    out = BENCH_DIR / f"{result_stem(date_str, leg)}.md"
 
     # Index results: (task, lang, model) -> record
     idx: dict[tuple[str, str, str], dict] = {}
@@ -950,7 +1193,7 @@ def write_markdown(
     elif comparators:
         versus = ", ".join(comparators)
     else:
-        versus = "comparator"
+        versus = "no comparator"
     lines: list[str] = [
         f"# Closed-loop benchmark: ilo vs {versus}",
         "",
@@ -1021,6 +1264,10 @@ def write_markdown(
                 lines += [
                     "",
                     f"**{lang} / {model}**  ",
+                    f"- Language arm: {r.get('lang_arm', lang)}  ",
+                    f"- Task class: {r.get('task_class', '-')}  ",
+                    f"- Docs: {r.get('docs_source', '-')} "
+                    f"(fair_docs={r.get('fair_docs', '-')})  ",
                     f"- Context arm: {r.get('context', context_mode)}  ",
                     f"- Context modules: {modules}  ",
                     f"- Thinking tokens: {format_thinking_detail(r.get('thinking_tokens'), unknown)}  ",
@@ -1072,7 +1319,43 @@ def write_markdown(
         "- Skill documentation is loaded once per process (steady-state caching).",
         "- Repair turns include the previous program.",
         "- One-shot economics (first attempt only) can be derived from `repair_tokens_by_turn` in the JSON.",
+        f"- {NICHE_STANCE}.",
+        "- Each cell's language arm is `lang_arm` (same value as `language`).",
+        "- `language_neutral` on the JSON envelope is false when task text "
+        "names a language. That confounds every arm.",
+        "- Python arm: `--python` (python / python3 / .py). "
+        "Bash arm: `--bash`, or `--lang2-name bash --lang2-bin bash --lang2-ext .sh`. "
+        "The runner is `[binary, tempfile]`, so `bash file.sh` and `python3 file.py` both work.",
+        "- A comparator file is suffixed with the leg "
+        "(`closed-loop-<date>-python.json`) so interleaved arms do not clobber.",
         "- Re-run at any time; output files are date-stamped.",
+        "- Human-floor bash programs: `bench/closed-loop/references-bash/`.",
+    ]
+    stub_arms = sorted({
+        r.get("lang_arm", r["language"])
+        for r in results
+        if r.get("docs_source") == "stub"
+    })
+    ops_tasks = sorted({
+        r["task"] for r in results if r.get("task_class") == "ops"
+    })
+    if stub_arms:
+        lines.append(
+            "- " + ", ".join(stub_arms) + " used the memorised-prior documentation "
+            "stub. This is not a fair bakeoff against ilo skills. "
+            "Pass `--lang2-docs PATH`."
+        )
+    else:
+        lines.append(
+            "- Comparator documentation was loaded from `--lang2-docs`, "
+            "or this run had no comparator arm."
+        )
+    if ops_tasks:
+        lines.append(
+            "- Ops tasks (" + ", ".join(ops_tasks) + ") are out of niche. "
+            "A bash win on those rows, including wall time, is not an ilo failure."
+        )
+    lines += [
         "",
         "## Deferred",
         "",
@@ -1111,11 +1394,24 @@ def main() -> int:
     parser.add_argument("--task", metavar="ID",
                         help="Run only this task ID.")
     parser.add_argument("--lang2-name", default=None,
-                        help="Name of second language to benchmark (e.g. zero).")
+                        help="Name of the comparator arm (e.g. zero, python, bash).")
     parser.add_argument("--lang2-bin", default=None,
-                        help="Path to second language CLI binary.")
-    parser.add_argument("--lang2-ext", default=".zero",
-                        help="File extension for second language source (default .zero).")
+                        help="Path to the comparator CLI. The runner executes [bin, file].")
+    parser.add_argument("--lang2-ext", default=None,
+                        help="Source extension. Default: .py for python, .sh for bash, else .zero.")
+    parser.add_argument("--python", action="store_true",
+                        help="Comparator shorthand: name python, binary python3, extension .py. "
+                             "--lang2-bin and --lang2-ext override.")
+    parser.add_argument("--bash", action="store_true",
+                        help="Comparator shorthand: name bash, binary bash, extension .sh. "
+                             "Same arm as --lang2-name bash --lang2-bin bash --lang2-ext .sh.")
+    parser.add_argument("--lang2-docs", default=None,
+                        help="Documentation file for the comparator, sent where ilo sends "
+                             "skill text. Without it the arm is a memorised-prior stub and "
+                             "is not a fair bakeoff.")
+    parser.add_argument("--require-language-neutral", action="store_true",
+                        help="Refuse to start if a task description names a language. "
+                             "The default is a warning; current tasks name ilo.")
     parser.add_argument(
         "--context",
         choices=list(CONTEXT_MODES),
@@ -1162,6 +1458,13 @@ def main() -> int:
     if args.emit_fixture and not args.dry_run:
         return 0
 
+    lang2, lang2_err = resolve_lang2(
+        args.python, args.bash, args.lang2_name, args.lang2_bin, args.lang2_ext,
+    )
+    if lang2_err:
+        print(f"ERROR: {lang2_err}", file=sys.stderr)
+        return 2
+
     # Load tasks
     tasks_data = json.loads(TASKS_FILE.read_text())
     all_tasks = tasks_data["tasks"]
@@ -1172,18 +1475,91 @@ def main() -> int:
             return 2
 
     try:
+        classes = load_task_classes()
+        for task in all_tasks:
+            task_class_of(task, classes)
         context_mode = resolve_context_mode(args.context, args.modules_from_task)
         prepared = prepare_ilo_contexts(all_tasks, context_mode, args.ilo)
-    except ContextError as exc:
+    except (ContextError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    named = check_language_neutral(
+        all_tasks, [lang2.name] if lang2 else [],
+    )
+    if named:
+        print(
+            "WARNING: task description names a language: " + ", ".join(named),
+            file=sys.stderr,
+        )
+        print(
+            "         Descriptions are sent verbatim to every arm, so this "
+            "confounds the bakeoff. Pass --require-language-neutral to refuse.",
+            file=sys.stderr,
+        )
+        if args.require_language_neutral:
+            return 2
+
+    docs_source = "skills"
+    fair_docs = True
+    if lang2:
+        _text, docs_source, fair_docs, docs_err = lang2_documentation(
+            lang2.name, args.lang2_docs,
+        )
+        if docs_err:
+            print(f"ERROR: {docs_err}", file=sys.stderr)
+            return 2
+        if not fair_docs:
+            print(
+                f"WARNING: {lang2.name} docs_source=stub. Not a fair bakeoff "
+                "against ilo skills. Pass --lang2-docs PATH.",
+                file=sys.stderr,
+            )
+    elif args.lang2_docs:
+        print(
+            "WARNING: --lang2-docs has no effect without a comparator arm.",
+            file=sys.stderr,
+        )
+
     if args.dry_run:
+        arms = ["ilo"] + ([lang2.name] if lang2 else [])
+        print("arms: " + " ".join(arms))
+        print(
+            f"lang_arm: ilo bin={args.ilo} ext=.ilo "
+            "docs_source=skills fair_docs=true"
+        )
+        if lang2:
+            ok, detail = probe_lang_bin(lang2.bin)
+            print(
+                f"lang_arm: {lang2.name} bin={lang2.bin} ext={lang2.ext} "
+                f"docs_source={docs_source} fair_docs={str(fair_docs).lower()} "
+                f"probe={'ok' if ok else 'fail'}"
+            )
+            print(f"probe_detail: {detail}")
+            if fair_docs:
+                print(
+                    f"note: {lang2.name} documentation loaded from {args.lang2_docs}."
+                )
+            else:
+                print(
+                    "note: lang2 docs are the memorised-prior stub; this is not "
+                    "a fair bakeoff against ilo skills. Pass --lang2-docs PATH."
+                )
         print(f"context: {context_mode}")
+        print(f"niche: {NICHE_STANCE}")
+        print("language_neutral: " + ("false" if named else "true"))
+        if named:
+            print(
+                "note: task text names a language (" + ", ".join(named) + "). "
+                "That confounds every arm."
+            )
         print("Tasks:")
         for t in all_tasks:
             mods, text = prepared[t["id"]]
-            print(f"  [{t['id']}] {t['description'][:80]}...")
+            klass = task_class_of(t, classes) or "-"
+            print(
+                f"  [{t['id']}] class={klass} {t['description'][:80]}..."
+            )
             print(f"          expected: {t['expected_output']!r}")
             print(f"          context: {context_mode}")
             print(f"          modules: {' '.join(mods)}")
@@ -1199,18 +1575,16 @@ def main() -> int:
         print(f"ERROR: ilo binary not found or not runnable: {args.ilo}", file=sys.stderr)
         return 2
 
-    # Verify lang2 if requested
-    lang2_bin: str | None = None
-    if args.lang2_name and args.lang2_bin:
-        try:
-            subprocess.run([args.lang2_bin, "--version"], capture_output=True, timeout=5)
-            lang2_bin = args.lang2_bin
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+    # A requested comparator that cannot run must not be relabelled as ilo-only.
+    if lang2:
+        probe_ok, probe_detail = probe_lang_bin(lang2.bin)
+        if not probe_ok:
             print(
-                f"WARNING: lang2 binary not found: {args.lang2_bin}. "
-                "Skipping second language.",
+                f"ERROR: {lang2.name} binary not usable ({probe_detail}).",
                 file=sys.stderr,
             )
+            return 2
+        print(f"lang2 probe: {probe_detail}", file=sys.stderr)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -1223,16 +1597,18 @@ def main() -> int:
     else:
         model_keys = [args.model]
 
-    # Determine languages
+    # ilo is always the language-of-record arm.
     languages = ["ilo"]
-    if lang2_bin and args.lang2_name:
-        languages.append(args.lang2_name)
+    if lang2:
+        languages.append(lang2.name)
 
     total_runs = len(all_tasks) * len(languages) * len(model_keys)
     print(
         f"Closed-loop bench: {len(all_tasks)} tasks × "
-        f"{len(languages)} languages × {len(model_keys)} models = "
-        f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode})"
+        f"{len(languages)} languages ({' '.join(languages)}) × "
+        f"{len(model_keys)} models = "
+        f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode} "
+        f"docs_source={docs_source} fair_docs={fair_docs})"
     )
 
     results: list[dict[str, Any]] = []
@@ -1257,11 +1633,13 @@ def main() -> int:
                     api_key=api_key,
                     retry_cap=args.retry_cap,
                     ilo_bin=args.ilo,
-                    lang2_bin=lang2_bin,
-                    lang2_ext=args.lang2_ext,
+                    lang2_bin=lang2.bin if lang2 else None,
+                    lang2_ext=lang2.ext if lang2 else ".zero",
                     context_mode=context_mode,
                     ilo_modules=mods,
                     ilo_context_text=text,
+                    lang2_docs=args.lang2_docs,
+                    task_class=task_class_of(task, classes),
                 )
                 results.append(r)
                 print(
@@ -1273,8 +1651,17 @@ def main() -> int:
                 )
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    json_path = write_json(results, date_str, context_mode)
-    md_path = write_markdown(results, date_str, context_mode)
+    leg = lang2.name if lang2 else None
+    meta = {
+        "lang_arms": languages,
+        "lang2_docs": args.lang2_docs,
+        "docs_source": docs_source,
+        "fair_bakeoff": bool(lang2) and fair_docs and not named,
+        "language_neutral": not named,
+        "language_named_in": named,
+    }
+    json_path = write_json(results, date_str, context_mode, leg=leg, meta=meta)
+    md_path = write_markdown(results, date_str, context_mode, leg=leg)
 
     print("\nResults written:")
     print(f"  JSON: {json_path}")

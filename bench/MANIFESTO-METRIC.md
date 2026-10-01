@@ -29,11 +29,22 @@ thinking is not code.
 
 ## Harness status
 
-`scripts/closed-loop-bench.py` on main is still the pre-repair harness.
-Later PRs land context arms, the thinking/chars columns, and the language
-arms. Until those land, this script still writes undivided
-`generation_tokens` and does not label a context arm. Do not publish its
-JSON or markdown totals as density.
+`scripts/closed-loop-bench.py` writes an honest cell. `thinking_tokens` is
+null when no billed attempt reported a split, and a partial sum is a lower
+bound. `generated_chars` is the length of emitted program text.
+`code_tokens` is null when any billed attempt left thinking unknown.
+`generation_tokens` stays the provider output sum. It is not a density
+claim, and the markdown table does not lead with it.
+
+The same cell records the context arm (`--context`, default `curated`)
+and the language arm (`lang_arm`). `--python` and `--bash` are the
+comparator shorthands. Without `--lang2-docs` the comparator is
+`fair_docs=false` and is not a fair bakeoff against ilo skills.
+`task_class` (`artefact` | `ops` | `sanity`) marks the row. An ops task,
+or a bash win on wall time, is not an ilo manifesto loss.
+
+`--dry-run` and `--emit-fixture` need no API key. The synthetic fixture
+is `bench/fixtures/closed-loop-harness-shape.json`.
 
 New result files belong at `bench/closed-loop-*.json` and must pass the
 validator. The CI job `Closed-loop metric gate` runs
@@ -44,8 +55,9 @@ on every pull request and on `main` / `next`. It does not read
 ## Historical results
 
 `closed-loop-2026-08-03.json` was never committed. An inventory of that
-local file recorded 5 of 5 cells with neither honest column. The same gap
-is what the current harness writes.
+local file recorded 5 of 5 cells with neither honest column. The current
+harness does not write that shape. The quarantined fixture keeps the
+failure so the gate still rejects it.
 
 That shape is quarantined, not republished as a result:
 
