@@ -295,6 +295,7 @@ TASK_CLASS_FILE = BENCH_DIR / "closed-loop" / "task-class.json"
 TASK_SETS = {
     "default": BENCH_DIR / "closed-loop" / "tasks.json",
     "artefact-exp07": BENCH_DIR / "closed-loop" / "tasks-artefact-exp07.json",
+    "artefact-exp08": BENCH_DIR / "closed-loop" / "tasks-artefact-exp08.json",
 }
 SKILLS_DIR = REPO_ROOT / "skills" / "ilo"
 # Signature sheet for the curated/full arms. Not registered with
@@ -313,8 +314,10 @@ CONTEXT_MODULES: dict[str, list[str]] = {
         "ilo-builtins-text",
         "ilo-builtins-math",
     ],
+    # exp-08 arm K: single compact excerpt (~4k chars), not curated skills.
+    "compact": ["ilo-excerpt-compact"],
 }
-CONTEXT_MODES = ("core", "curated", "full", "task-modules")
+CONTEXT_MODES = ("core", "curated", "full", "task-modules", "compact")
 DEFAULT_CONTEXT = "curated"
 
 DEFAULT_RETRY_CAP = 5
@@ -2589,7 +2592,7 @@ def main() -> int:
             "core = ilo-language + ilo-builtins-core. "
             "curated = core + ilo-builtins-sig (default). "
             "full = curated + io + text + math (explicit balloon). "
-            "task-modules = task['modules'] from tasks.json "
+            "task-modules = task['modules'] from tasks.json; compact = ilo-excerpt-compact "
             "(error if that list is missing)."
         ),
     )
