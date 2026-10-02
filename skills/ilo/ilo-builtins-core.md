@@ -36,8 +36,21 @@ See `examples/default-on-err.ilo` for the full pattern set.
 
 `map f xs`, `flt f xs`, `ct f xs`, `fld f xs init`. Inline lambdas: `map (x:n>n;+x 1) xs`.
 
+**Filter / count predicates are `>b`.** The lambda body must be a boolean *expression*, never a braceless guard (ILO-P023):
+
+```
+-- DO
+hi=flt (r:L t>b;>=(to-n (at r 2)) 50) rows
+n=ct (x:t>b;=x "healthy") labels
+
+-- DON'T (P023 — guard early-returns from enclosing fn)
+hi=flt (r:L t>n;>=(to-n (at r 2)) 50) rows
+```
+
 **`fld` arg order (gotcha):** outer is `fld fn xs init` (NOT `fn init xs` like Haskell/Python). Lambda is `{acc el> ...}` — accumulator first (NOT element-first like JS `reduce`). Wrong order surfaces as runtime type error, not parse error. Example: `fld {a x> +a x} [1 2 3] 0` → `6`.
 
 ## Map
 
-`mmap mset mget mhas mdel mkeys mvals mpairs`. `mget` returns nil on miss. `mkeys`/`mvals` sorted. `len m` is entry count. Keys typed text or integer; `mset m 7 v` works. `Int(1)` and `Text("1")` distinct. `mpairs m` -> list of `[k v]` pairs.
+`mmap mset mget mget-or mhas mdel mkeys mvals mpairs`. `mget` returns nil on miss. **`mget-or m k d`** returns `d` when the key is missing (never nil; `d` must match value type) — prefer this when normalising records. `mkeys`/`mvals` sorted. `len m` is entry count. Keys typed text or integer; `mset m 7 v` works. `Int(1)` and `Text("1")` distinct. `mpairs m` -> list of `[k v]` pairs.
+
+Record-shaped data: build with nested `mset (mset mmap "id" "1") "name" "Alice"`; type as `M t t` / `L (M t t)`. List element types need the element (`L t`, not bare `L>` — ILO-P007).

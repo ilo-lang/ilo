@@ -18,7 +18,7 @@
     {
       "id": "record-normalize",
       "task_class": "artefact",
-      "description": "Start from five messy map-like records (id, name, age) as in-programme literals: (1,\" Alice \",\"30\"), (2,\"Bob\",\"25.7\"), (3, missing name, \"40\"), (1,\"Alice\",\"30\") duplicate id, (4,\"  Dana  \", empty age). Normalise each row: trim name (default \"unknown\" if missing), coerce age to a floored integer (default 0). Deduplicate by id keeping the first. Print one line: rows=<count> total_age=<sum> avg_age=<rounded mean>.",
+      "description": "Start from five messy map-like records (keys id, name, age) as in-programme map literals built with mmap/mset, for example: mset (mset (mset mmap \"id\" \"1\") \"name\" \" Alice \") \"age\" \"30\"; mset (mset (mset mmap \"id\" \"2\") \"name\" \"Bob\") \"age\" \"25.7\"; mset (mset mmap \"id\" \"3\") \"age\" \"40\" (missing name); mset (mset (mset mmap \"id\" \"1\") \"name\" \"Alice\") \"age\" \"30\" (duplicate id); mset (mset (mset mmap \"id\" \"4\") \"name\" \"  Dana  \") \"age\" \"\" (empty age). Normalise each row: trim name (default \"unknown\" if missing), coerce age to a floored integer (default 0). Deduplicate by id keeping the first. Print one line: rows=<count> total_age=<sum> avg_age=<rounded mean>.",
       "expected_output": "rows=4 total_age=95 avg_age=24",
       "difficulty": "medium",
       "category": "records",
@@ -32,7 +32,7 @@
     {
       "id": "schedule-window",
       "task_class": "artefact",
-      "description": "Two fixed time windows in minutes from midnight: A is 09:00–12:00 (540–720) and B is 11:00–14:00 (660–840). Compute the overlap length in minutes (0 if they do not overlap). Print exactly: overlap_min=<n>.",
+      "description": "Two fixed time windows in minutes from midnight: A is 09:00\u201312:00 (540\u2013720) and B is 11:00\u201314:00 (660\u2013840). Compute the overlap length in minutes (0 if they do not overlap). Print exactly: overlap_min=<n>.",
       "expected_output": "overlap_min=60",
       "difficulty": "easy",
       "category": "schedule",

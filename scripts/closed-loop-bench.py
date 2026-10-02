@@ -135,7 +135,7 @@ Context arms (ilo skill modules). --dry-run needs no API key.
                 (errors if that list is missing)
 
   ilo-builtins-sig is read from bench/closed-loop/context/ (not an
-  `ilo skill list` entry). Other modules prefer `ilo skill get`, then
+  `ilo skill list` entry). Other modules prefer worktree `skills/ilo/<name>.md`, then `ilo skill get`, then
   skills/ilo/<name>.md.
 
   Every result cell records "context" (the arm) and "context_modules".
@@ -578,13 +578,21 @@ class ContextError(Exception):
 def load_skill_text(module_name: str, ilo_bin: str) -> str:
     """Load one skill module, caching in memory (steady-state: single load).
 
-    Prefers `ilo skill get`, then skills/ilo/<name>.md, then the harness
-    context directory. Raises ContextError when none of those yield text.
+    Prefers skills/ilo/<name>.md (worktree / teachable-surface patches), then
+    `ilo skill get` (bundled binary), then the harness context directory.
+    Raises ContextError when none of those yield text.
     A missing module is not replaced with a stub: a stub would look like a
     small context arm.
     """
     if module_name in _SKILL_CACHE:
         return _SKILL_CACHE[module_name]
+    for base in (SKILLS_DIR, CONTEXT_DIR):
+        path = base / f"{module_name}.md"
+        if path.is_file():
+            text = path.read_text()
+            if text.strip():
+                _SKILL_CACHE[module_name] = text
+                return text
     try:
         result = subprocess.run(
             [ilo_bin, "skill", "get", module_name],
@@ -595,18 +603,13 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
             return result.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    for base in (SKILLS_DIR, CONTEXT_DIR):
-        path = base / f"{module_name}.md"
-        if path.is_file():
-            text = path.read_text()
-            _SKILL_CACHE[module_name] = text
-            return text
     raise ContextError(
         f"context module {module_name!r} not found "
         f"(no `ilo skill get` text, and neither "
         f"{SKILLS_DIR / (module_name + '.md')} nor "
         f"{CONTEXT_DIR / (module_name + '.md')} exists)"
     )
+
 
 
 def resolve_context_mode(context: str | None, modules_from_task: bool) -> str:
