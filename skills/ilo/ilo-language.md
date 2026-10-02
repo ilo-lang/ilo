@@ -55,7 +55,17 @@ Worked example — scale `sz` by 30% with explicit divisor:
 
 ## guards & conditionals
 
-Three distinct shapes. `cond expr` early return (`>=sp 1000 "gold"`); `cond{body}` runs body NO early return; `cond{a}{b}` value no early return. Ternary: `?h a b` (`h`:bool), `?h cond a b` (`cond`:bool expr). `?h cond{...}` illegal - drop `?h` or drop braces. `!` negates all. Bare comparison IS a guard; bind to return a bool: `r=>a b;r`.
+Three distinct shapes — **do not mix**:
+
+| Shape | Syntax | Effect |
+|-------|--------|--------|
+| Braceless guard | `cond expr` | early-return `expr` from enclosing **fn** (`>=sp 1000 "gold"`) |
+| Braced body | `cond{body}` | run body; **no** early return; fall through |
+| Value if/else | `cond{a}{b}` or `?cond a b` | expression yielding a or b |
+
+Ternary: `?h a b` (`h`:bool), `?h cond a b` (`cond`:bool expr). **`?cond a {stmts}` is illegal** (P009) — drop `?` or drop braces. `!` negates all. Bare comparison at statement position **is** a guard; to bind a bool: `r=>a b;r` (or make the comparison the last expr of a `>b` lambda).
+
+**ILO-P023 — braceless guards illegal inside paren-lambdas.** `>=x 0 val` early-returns from the *enclosing fn*, not the lambda. Inside `(…;…)` use a comparison *expression* (for `flt`/`ct`: annotate `>b`) or prefix ternary `?cond then else` / braced match `?cond{then}{else}`. Fn-body guard chains (classifier style) stay legal outside lambdas.
 
 ## match
 
@@ -87,6 +97,8 @@ Tail calls do not consume host-stack frames. A function that recurses in tail po
 ## lambdas
 
 Parens: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT auto-fallback.
+
+**HOF predicates return `b`.** `flt` / `ct` lambdas: `(r:L t>b;>=(to-n (at r 2)) 50)` — comparison expression, not braceless guard. Wrong: `(r:L t>n;>=… 50)` → P023 (+ often P007 on repair). See also guards & conditionals (P023).
 
 ## multi-fn files
 
