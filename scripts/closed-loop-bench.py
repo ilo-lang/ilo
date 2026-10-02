@@ -39,6 +39,11 @@ Per task, per language, per model this script logs:
                              With --fold-meta-stdout, ilo turns also record
                              meta_recovery_rules when an orphan line under
                              `-- out:` was folded into that comment.
+                             With --constrain, turns record constrain_mode,
+                             whether the emit was rejected, and the codes.
+  - constrain_mode           none | reject-retry | local-mask (default none)
+  - constrain_reject_count   emits that failed ilo check before run
+  - constrain_reject_codes   codes from those rejects, first-seen order
   - served_models            response model ids, first-seen order
   - attempts_to_success      attempts until working (null if never)
   - success_rate             1.0 / 0.0 per run
@@ -217,6 +222,25 @@ meta noise sat in the source or on stdout. It is not a density claim.
 
   python3 scripts/closed-loop-bench.py --dry-run --fold-meta-stdout
 
+Constrained decode (exp-11). Default `--constrain none`. DeepSeek hosted
+Chat Completions cannot attach logit or grammar masks (`response_format`
+is JSON syntax only, not an ilo grammar). `--constrain reject-retry` is
+the feasible substitute: after fence-stripping and before header, meta,
+or soft-edge recovery, the harness runs `ilo check` on the raw emit. A
+failing check does not run the programme and is not a working outcome.
+The structured repair signal is the next user message, on the same
+channel as stderr repair, and the reject counts toward `--retry-cap`
+(not a free retry). `--constrain local-mask` is a placeholder for a
+future guided local sampler; it is not a DeepSeek mask, and a live run
+refuses it. `--dry-run` prints the mode and needs no API key. Cells
+record `constrain_mode`, `constrain_reject_count`, and
+`constrain_reject_codes`. Soft-edge recovery stays off unless
+`--soft-edge-recovery` is passed. This flag does not add an
+`ilo constrain` CLI.
+
+  python3 scripts/closed-loop-bench.py --dry-run --constrain none
+  python3 scripts/closed-loop-bench.py --dry-run --constrain reject-retry
+
   # exp-07 artefact-persona task bank (four CSV/records/schedule/rollup tasks)
   python3 scripts/closed-loop-bench.py --dry-run --task-set artefact-exp07
   python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
@@ -282,6 +306,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
+
+# scripts/ is on sys.path when this file is the entry point. Tests load it
+# via importlib, which does not add that directory, so insert it before
+# the sibling import.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from constrain_backend import make_constrain_backend  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1343,6 +1375,12 @@ class AttemptObs:
     soft_edge_recovery_applied: bool = False
     soft_edge_recovery_rules: list[str] = field(default_factory=list)
     soft_edge_recovery_audit: bool = False
+    # exp-11. Off by default (mode none, audit false) so older fixtures
+    # keep their trace shape. Live run_task turns set the audit.
+    constrain_audit: bool = False
+    constrain_mode: str = "none"
+    constrain_rejected: bool = False
+    constrain_reject_codes: list[str] = field(default_factory=list)
 
 
 def _clip(text: str, limit: int = TRACE_IO_CHARS) -> str:
@@ -1465,6 +1503,10 @@ def assemble_cell(
         if a.soft_edge_recovery_audit:
             entry["soft_edge_recovery_applied"] = a.soft_edge_recovery_applied
             entry["soft_edge_recovery_rules"] = list(a.soft_edge_recovery_rules)
+        if a.constrain_audit:
+            entry["constrain_mode"] = a.constrain_mode
+            entry["constrain_rejected"] = a.constrain_rejected
+            entry["constrain_reject_codes"] = list(a.constrain_reject_codes)
         trace.append(entry)
 
     if final_outcome == "working":
@@ -1962,8 +2004,15 @@ def build_deepseek_body(
     model_id: str,
     thinking: str | None,
     max_tokens: int = DEEPSEEK_MAX_TOKENS,
+    constrain: Any = None,
 ) -> dict[str, Any]:
-    """JSON body for one non-streaming Chat Completions call."""
+    """JSON body for one non-streaming Chat Completions call.
+
+    ``constrain.attach_request`` runs here when a backend is passed.
+    Reject-retry is a noop: DeepSeek hosted Chat Completions has no
+    logit or grammar mask field to set. A future local-mask backend
+    would annotate this same body.
+    """
     if thinking is not None and thinking not in ("enabled", "disabled"):
         raise ValueError(f"thinking must be enabled or disabled, not {thinking!r}")
     body: dict[str, Any] = {
@@ -1977,6 +2026,8 @@ def build_deepseek_body(
     }
     if thinking is not None:
         body["thinking"] = {"type": thinking}
+    if constrain is not None:
+        body = constrain.attach_request(body)
     return body
 
 
@@ -1988,19 +2039,24 @@ def call_deepseek(
     thinking: str | None = None,
     base_url: str | None = None,
     urlopen: Any = None,
+    constrain: Any = None,
 ) -> dict[str, Any]:
     """One DeepSeek Chat Completions turn.
 
     POST {base}/chat/completions with Authorization: Bearer. Parsed by
     parse_openai_chat_turn. Raises on transport or HTTP error. Does not
     invent a thinking split. The requested model_id is not copied into
-    served_model.
+    served_model. ``constrain`` is passed into ``build_deepseek_body``
+    so attach_request can annotate the JSON. Reject-retry attaches
+    nothing: this API cannot mask logits.
     """
     import urllib.error
     import urllib.request
 
     url = deepseek_chat_completions_url(deepseek_base_url(base_url))
-    payload = build_deepseek_body(system, user, model_id, thinking)
+    payload = build_deepseek_body(
+        system, user, model_id, thinking, constrain=constrain,
+    )
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         url,
@@ -2115,6 +2171,7 @@ def run_task(
     header_recovery: bool = False,
     fold_meta_stdout: bool = False,
     soft_edge_recovery: bool = False,
+    constrain: str = "none",
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
@@ -2122,6 +2179,15 @@ def run_task(
     fold_meta = bool(fold_meta_stdout) and is_ilo
     soft_edges = bool(soft_edge_recovery) and is_ilo
     count_emitted = recover_headers or fold_meta or soft_edges
+    constrain_backend = make_constrain_backend(constrain, ilo_bin=ilo_bin)
+    constrain_mode = constrain_backend.name
+    if constrain_mode == "local-mask":
+        raise ValueError(
+            "constrain local-mask is not implemented. DeepSeek hosted Chat "
+            "Completions cannot attach logit or grammar masks. Use reject-retry."
+        )
+    # ilo only. none is the control and does not call ilo check.
+    apply_constrain = is_ilo and constrain_mode != "none"
 
     # Build context. The arm label is recorded on every cell, including the
     # second language, so a matrix stays attributable to the arm that ran.
@@ -2161,9 +2227,17 @@ def run_task(
     for attempt in range(1, retry_cap + 1):
         try:
             if provider == "deepseek":
+                # Pass the backend only when constrain is on. The default
+                # path keeps the previous call shape so a stand-in that
+                # does not accept `constrain` still matches none.
+                ds_kwargs: dict[str, Any] = {
+                    "thinking": thinking,
+                    "base_url": base_url,
+                }
+                if apply_constrain:
+                    ds_kwargs["constrain"] = constrain_backend
                 parsed = call_deepseek(
-                    system, user, model_id, api_key,
-                    thinking=thinking, base_url=base_url,
+                    system, user, model_id, api_key, **ds_kwargs,
                 )
             else:
                 parsed = call_llm(system, user, model_id, api_key)
@@ -2183,6 +2257,8 @@ def run_task(
                 emitted_code="" if count_emitted else None,
                 meta_recovery_audit=fold_meta,
                 soft_edge_recovery_audit=soft_edges,
+                constrain_audit=True,
+                constrain_mode=constrain_mode,
             ))
             time.sleep(2)
             continue
@@ -2192,6 +2268,66 @@ def run_task(
         recovery_rules: list[str] = []
         preimage: str | None = None
         p003_before = False
+        # exp-11. parsed["code"] is already fence-stripped. Reject before
+        # header, meta, and soft-edge recovery so those rails cannot rewrite
+        # an illegal programme into a run. The reject is a billed attempt
+        # inside retry-cap; the repair signal is the next user message.
+        if apply_constrain:
+            checked = constrain_backend.validate_emit(emitted)
+            if not checked.ok:
+                constrain_codes = list(checked.codes)
+                if recover_headers:
+                    p003_before = p003_header_shape(emitted)
+                signal = checked.repair_signal or (
+                    "ILO-CONSTRAIN reject — programme failed ilo check before run."
+                )
+                think = parsed["thinking_tokens"]
+                observations.append(AttemptObs(
+                    code=emitted,
+                    generation_tokens=parsed["generation_tokens"],
+                    input_tokens=parsed["input_tokens"],
+                    thinking_tokens=think,
+                    served_model=parsed["served_model"],
+                    cache_hit_tokens=parsed["cache_hit_tokens"],
+                    cache_creation_tokens=parsed["cache_creation_tokens"],
+                    stderr=signal,
+                    stdout="",
+                    rc=None,
+                    outcome="failed",
+                    finish_reason=parsed["finish_reason"],
+                    billed=True,
+                    emitted_code=emitted if count_emitted else None,
+                    code_pre_recovery=emitted if recover_headers else None,
+                    header_recovery_applied=False,
+                    header_recovery_rules=[],
+                    header_recovery_preimage_sha256=None,
+                    p003_pre_recovery=p003_before,
+                    header_recovery_audit=recover_headers,
+                    meta_recovery_applied=False,
+                    meta_recovery_rules=[],
+                    meta_recovery_audit=fold_meta,
+                    soft_edge_recovery_applied=False,
+                    soft_edge_recovery_rules=[],
+                    soft_edge_recovery_audit=soft_edges,
+                    constrain_audit=True,
+                    constrain_mode=constrain_mode,
+                    constrain_rejected=True,
+                    constrain_reject_codes=constrain_codes,
+                ))
+                print(
+                    f"      attempt={attempt} outcome=failed "
+                    f"thinking={format_thinking(think, 0 if think is not None else 1)} "
+                    f"code_chars={len(emitted)} "
+                    f"provider_output_tokens={parsed['generation_tokens']} "
+                    f"constrain_reject={','.join(constrain_codes) or 'ILO-UNKNOWN'}",
+                    file=sys.stderr,
+                )
+                outcome = "failed"
+                user = make_repair_prompt(
+                    task, context, signal, lang, emitted,
+                    repair_shape_hint=repair_shape_hint,
+                )
+                continue
         if recover_headers:
             p003_before = p003_header_shape(emitted)
             code, recovery_rules = apply_header_recovery(emitted)
@@ -2236,6 +2372,10 @@ def run_task(
             soft_edge_recovery_applied=bool(soft_rules),
             soft_edge_recovery_rules=soft_rules,
             soft_edge_recovery_audit=soft_edges,
+            constrain_audit=True,
+            constrain_mode=constrain_mode,
+            constrain_rejected=False,
+            constrain_reject_codes=[],
         ))
 
         log = (
@@ -2317,6 +2457,17 @@ def run_task(
         obs.soft_edge_recovery_applied for obs in observations
     )
     cell["soft_edge_recovery_rules"] = soft_fired
+    cell["constrain_mode"] = constrain_mode
+    reject_codes: list[str] = []
+    reject_count = 0
+    for obs in observations:
+        if obs.constrain_rejected:
+            reject_count += 1
+        for code_id in obs.constrain_reject_codes:
+            if code_id not in reject_codes:
+                reject_codes.append(code_id)
+    cell["constrain_reject_count"] = reject_count
+    cell["constrain_reject_codes"] = reject_codes
     return cell
 
 
@@ -2509,6 +2660,14 @@ def write_markdown(
                     if r.get("soft_edge_recovery_applied"):
                         rules = ", ".join(r.get("soft_edge_recovery_rules") or [])
                         lines.append(f"- Soft-edge rules: {rules}  ")
+                if "constrain_mode" in r:
+                    lines.append(f"- Constrain: {r['constrain_mode']}  ")
+                    if r.get("constrain_reject_count"):
+                        codes = ", ".join(r.get("constrain_reject_codes") or [])
+                        lines.append(
+                            f"- Constrain rejects: {r['constrain_reject_count']}"
+                            f" ({codes})  "
+                        )
                 trace = r.get("attempt_trace") or []
                 if trace:
                     lines.append("- Attempts:  ")
@@ -2527,6 +2686,9 @@ def write_markdown(
                         if turn.get("meta_recovery_applied"):
                             rules = ",".join(turn.get("meta_recovery_rules") or [])
                             recovered += f" meta_recovery={rules}"
+                        if turn.get("constrain_rejected"):
+                            codes = ",".join(turn.get("constrain_reject_codes") or [])
+                            recovered += f" constrain_reject={codes}"
                         lines.append(
                             f"  - attempt {turn.get('attempt')}: "
                             f"outcome={turn.get('outcome')} "
@@ -2554,6 +2716,12 @@ def write_markdown(
         "  `-- out:` into that comment (M1) and ignores `-- out:` / `-- run:` /",
         "  `-- err:` lines when judging stdout. A trailing body `0` stays.",
         "  Character counts stay on the pre-fold text.",
+        "- `--constrain` (default none) is exp-11. reject-retry runs `ilo check`",
+        "  after fence-stripping and before header, meta, or soft-edge recovery.",
+        "  A reject does not run the programme, feeds a repair signal as the",
+        "  next user message, and counts toward the retry cap. DeepSeek hosted",
+        "  Chat Completions cannot attach logit or grammar masks; reject-retry",
+        "  is the feasible substitute. local-mask is not implemented.",
         "- One-shot economics (first attempt only) can be derived from `repair_tokens_by_turn` in the JSON.",
         f"- {NICHE_STANCE}.",
         "- Each cell's language arm is `lang_arm` (same value as `language`).",
@@ -2792,6 +2960,22 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--constrain",
+        choices=("none", "reject-retry", "local-mask"),
+        default="none",
+        help=(
+            "exp-11 constrained decode. Default none (off). reject-retry "
+            "runs ilo check on the fence-stripped emit before header, meta, "
+            "or soft-edge recovery. A failing check does not run the "
+            "programme; the repair signal is the next user message and the "
+            "reject counts toward --retry-cap. DeepSeek hosted Chat "
+            "Completions cannot attach logit or grammar masks; reject-retry "
+            "is the feasible substitute, not a logit mask. local-mask is a "
+            "placeholder for a future guided local sampler and is refused "
+            "on a live run. Does not add an ilo constrain CLI."
+        ),
+    )
+    parser.add_argument(
         "--emit-fixture",
         metavar="PATH",
         help=(
@@ -2968,6 +3152,27 @@ def main() -> int:
                 "note: soft edges SE3 (L> ≡ L _) and SE1 (ternary mix → "
                 "brace ternary when else has no ';') rewrite once before ilo."
             )
+        print(f"constrain: {args.constrain}")
+        if args.constrain == "reject-retry":
+            print(
+                "note: after fence-strip, ilo check rejects an illegal "
+                "programme before header, meta, or soft-edge recovery. "
+                "The repair signal is the next user message and the reject "
+                "counts toward retry-cap. The programme is not run. "
+                "DeepSeek hosted Chat Completions cannot attach logit or "
+                "grammar masks; reject-retry is the feasible substitute."
+            )
+        elif args.constrain == "local-mask":
+            print(
+                "note: local-mask is not implemented. DeepSeek hosted API "
+                "has no logit or grammar mask field. A live run refuses "
+                "this mode."
+            )
+        if args.constrain != "none" and args.soft_edge_recovery:
+            print(
+                "note: the constrain arm keeps soft-edge recovery off. "
+                "Both flags are set."
+            )
         print(f"niche: {NICHE_STANCE}")
         for line in plan_lines(provider, specs, base_url):
             print(line)
@@ -2991,6 +3196,15 @@ def main() -> int:
         print()
         print(HOWTO_FIXTURE, end="")
         return 0
+
+    if args.constrain == "local-mask":
+        print(
+            "ERROR: --constrain local-mask is not implemented. DeepSeek "
+            "hosted Chat Completions cannot attach logit or grammar masks. "
+            "Use --constrain reject-retry for post-emit ilo check.",
+            file=sys.stderr,
+        )
+        return 2
 
     api_key = api_key_for(provider)
     if not api_key:
@@ -3031,7 +3245,8 @@ def main() -> int:
         f"repair_shape_hint={'on' if args.repair_shape_hint else 'off'} "
         f"header_recovery={'on' if args.header_recovery else 'off'} "
         f"fold_meta_stdout={'on' if args.fold_meta_stdout else 'off'} "
-        f"soft_edge_recovery={'on' if args.soft_edge_recovery else 'off'})"
+        f"soft_edge_recovery={'on' if args.soft_edge_recovery else 'off'} "
+        f"constrain={args.constrain})"
     )
 
     results: list[dict[str, Any]] = []
@@ -3069,6 +3284,7 @@ def main() -> int:
                     header_recovery=args.header_recovery,
                     fold_meta_stdout=args.fold_meta_stdout,
                     soft_edge_recovery=args.soft_edge_recovery,
+                    constrain=args.constrain,
                 )
                 results.append(r)
                 print(
@@ -3094,6 +3310,7 @@ def main() -> int:
         "header_recovery": bool(args.header_recovery),
         "fold_meta_stdout": bool(args.fold_meta_stdout),
         "soft_edge_recovery": bool(args.soft_edge_recovery),
+        "constrain": args.constrain,
         "models": [
             {
                 "model": spec.key,
