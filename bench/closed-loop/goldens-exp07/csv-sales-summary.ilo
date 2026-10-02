@@ -1,0 +1,21 @@
+-- csv-pipeline: parse literal CSV, filter rows where sales>=50, group-by region, sum per region
+-- run: main
+-- out: sales>=50 by region: east=200 north=60 west=90
+
+to-n s:t>n;v=num s;?v{~x:x;^_:0}
+
+row-region r:L t>t;at r 1
+
+main>t;
+  csv="alice,east,80\nbob,west,30\ncarol,east,120\ndave,west,90\neve,north,60";
+  rows=spl csv "\n";
+  parsed=map (r:t>L t;spl r ",") rows;
+  hi=flt (r:L t>b;>=(to-n (at r 2)) 50) parsed;
+  g=grp row-region hi;
+  ks=mkeys g;
+  r1=at ks 0;r2=at ks 1;r3=at ks 2;
+  g1=mget g r1;g2=mget g r2;g3=mget g r3;
+  s1=fld (a:n r:L t>n;+a (to-n (at r 2))) g1 0;
+  s2=fld (a:n r:L t>n;+a (to-n (at r 2))) g2 0;
+  s3=fld (a:n r:L t>n;+a (to-n (at r 2))) g3 0;
+  fmt "sales>=50 by region: {}={} {}={} {}={}" r1 s1 r2 s2 r3 s3

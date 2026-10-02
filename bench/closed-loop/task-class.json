@@ -24,6 +24,10 @@
     "log-level-count": "artefact",
     "weekday-of-date": "artefact",
     "least-squares-slope": "artefact",
-    "kmeans-assign": "artefact"
+    "kmeans-assign": "artefact",
+    "csv-sales-summary": "artefact",
+    "record-normalize": "artefact",
+    "schedule-window": "artefact",
+    "typed-rollup": "artefact"
   }
 }

@@ -135,7 +135,7 @@ Context arms (ilo skill modules). --dry-run needs no API key.
                 (errors if that list is missing)
 
   ilo-builtins-sig is read from bench/closed-loop/context/ (not an
-  `ilo skill list` entry). Other modules prefer `ilo skill get`, then
+  `ilo skill list` entry). Other modules prefer worktree `skills/ilo/<name>.md`, then `ilo skill get`, then
   skills/ilo/<name>.md.
 
   Every result cell records "context" (the arm) and "context_modules".
@@ -217,6 +217,12 @@ meta noise sat in the source or on stdout. It is not a density claim.
 
   python3 scripts/closed-loop-bench.py --dry-run --fold-meta-stdout
 
+  # exp-07 artefact-persona task bank (four CSV/records/schedule/rollup tasks)
+  python3 scripts/closed-loop-bench.py --dry-run --task-set artefact-exp07
+  python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
+    --task-set artefact-exp07 --context curated --retry-cap 2 \
+    --repair-shape-hint --header-recovery --fold-meta-stdout
+
 Environment
   DEEPSEEK_API_KEY    live DeepSeek runs. Preferred when set and neither
                       --provider nor an Anthropic model is requested.
@@ -285,6 +291,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "bench"
 TASKS_FILE = BENCH_DIR / "closed-loop" / "tasks.json"
 TASK_CLASS_FILE = BENCH_DIR / "closed-loop" / "task-class.json"
+# Named task banks under bench/closed-loop/. Default remains tasks.json.
+TASK_SETS = {
+    "default": BENCH_DIR / "closed-loop" / "tasks.json",
+    "artefact-exp07": BENCH_DIR / "closed-loop" / "tasks-artefact-exp07.json",
+}
 SKILLS_DIR = REPO_ROOT / "skills" / "ilo"
 # Signature sheet for the curated/full arms. Not registered with
 # `ilo skill list`; the harness loads it by module name.
@@ -567,13 +578,21 @@ class ContextError(Exception):
 def load_skill_text(module_name: str, ilo_bin: str) -> str:
     """Load one skill module, caching in memory (steady-state: single load).
 
-    Prefers `ilo skill get`, then skills/ilo/<name>.md, then the harness
-    context directory. Raises ContextError when none of those yield text.
+    Prefers skills/ilo/<name>.md (worktree / teachable-surface patches), then
+    `ilo skill get` (bundled binary), then the harness context directory.
+    Raises ContextError when none of those yield text.
     A missing module is not replaced with a stub: a stub would look like a
     small context arm.
     """
     if module_name in _SKILL_CACHE:
         return _SKILL_CACHE[module_name]
+    for base in (SKILLS_DIR, CONTEXT_DIR):
+        path = base / f"{module_name}.md"
+        if path.is_file():
+            text = path.read_text()
+            if text.strip():
+                _SKILL_CACHE[module_name] = text
+                return text
     try:
         result = subprocess.run(
             [ilo_bin, "skill", "get", module_name],
@@ -584,18 +603,13 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
             return result.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    for base in (SKILLS_DIR, CONTEXT_DIR):
-        path = base / f"{module_name}.md"
-        if path.is_file():
-            text = path.read_text()
-            _SKILL_CACHE[module_name] = text
-            return text
     raise ContextError(
         f"context module {module_name!r} not found "
         f"(no `ilo skill get` text, and neither "
         f"{SKILLS_DIR / (module_name + '.md')} nor "
         f"{CONTEXT_DIR / (module_name + '.md')} exists)"
     )
+
 
 
 def resolve_context_mode(context: str | None, modules_from_task: bool) -> str:
@@ -2584,6 +2598,25 @@ def main() -> int:
         action="store_true",
         help="Alias for --context task-modules.",
     )
+    parser.add_argument(
+        "--tasks-file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Load tasks from PATH instead of bench/closed-loop/tasks.json. "
+            "Mutually exclusive with --task-set."
+        ),
+    )
+    parser.add_argument(
+        "--task-set",
+        metavar="NAME",
+        default=None,
+        choices=sorted(TASK_SETS.keys()),
+        help=(
+            "Named task bank: default (tasks.json) or artefact-exp07 "
+            "(tasks-artefact-exp07.json). Mutually exclusive with --tasks-file."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true",
                         help="Print task specs and context arm, then exit. "
                              "No LLM calls and no API key.")
@@ -2682,13 +2715,28 @@ def main() -> int:
         print(f"ERROR: {lang2_err}", file=sys.stderr)
         return 2
 
-    # Load tasks
-    tasks_data = json.loads(TASKS_FILE.read_text())
+    # Load tasks (default bank, named set, or explicit file)
+    if args.tasks_file and args.task_set:
+        print("ERROR: pass only one of --tasks-file and --task-set", file=sys.stderr)
+        return 2
+    if args.tasks_file:
+        tasks_path = Path(args.tasks_file)
+    elif args.task_set:
+        tasks_path = TASK_SETS[args.task_set]
+    else:
+        tasks_path = TASKS_FILE
+    if not tasks_path.is_file():
+        print(f"ERROR: tasks file not found: {tasks_path}", file=sys.stderr)
+        return 2
+    tasks_data = json.loads(tasks_path.read_text())
     all_tasks = tasks_data["tasks"]
     if args.task:
         all_tasks = [t for t in all_tasks if t["id"] == args.task]
         if not all_tasks:
-            print(f"ERROR: task '{args.task}' not found in tasks.json", file=sys.stderr)
+            print(
+                f"ERROR: task '{args.task}' not found in {tasks_path}",
+                file=sys.stderr,
+            )
             return 2
 
     try:
