@@ -1,0 +1,79 @@
+{
+  "generated": "not-a-measurement",
+  "harness": "closed-loop-bench.py",
+  "ticket": "ILO-364",
+  "fixture": "undivided-shape",
+  "note": "Shape of the pre-repair harness cell: generation_tokens only, no thinking_tokens, no generated_chars. The unpublished 2026-08-03 file had this gap on 5 of 5 cells and was never committed. Counts below are placeholders, not that run.",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "pre-repair-harness",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0,
+      "wall_time_s": 0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "with-dependencies",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "pre-repair-harness",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0,
+      "wall_time_s": 0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "data-transform",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "pre-repair-harness",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0,
+      "wall_time_s": 0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "tool-interaction",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "pre-repair-harness",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0,
+      "wall_time_s": 0,
+      "final_outcome": "failed"
+    },
+    {
+      "task": "workflow-rollback",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "pre-repair-harness",
+      "generation_tokens": 0,
+      "input_tokens": 0,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": null,
+      "attempts_total": 0,
+      "success_rate": 0,
+      "wall_time_s": 0,
+      "final_outcome": "failed"
+    }
+  ]
+}

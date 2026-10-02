@@ -1,0 +1,33 @@
+{
+  "stance": "language-of-record bakeoff; an ops task or a bash win on wall time is not an ilo manifesto loss",
+  "classes": {
+    "simple-function": "sanity",
+    "with-dependencies": "sanity",
+    "gcd-lcm": "sanity",
+    "prime-count": "sanity",
+    "fizzbuzz-range": "sanity",
+    "hard-recursion": "sanity",
+    "tool-interaction": "ops",
+    "data-transform": "artefact",
+    "workflow-rollback": "artefact",
+    "hard-records": "artefact",
+    "hard-text-regex": "artefact",
+    "pipeline-report": "artefact",
+    "text-analysis": "artefact",
+    "flatten-sum": "artefact",
+    "dedupe-order": "artefact",
+    "run-length-encode": "artefact",
+    "top-words": "artefact",
+    "cron-expand": "artefact",
+    "record-summary": "artefact",
+    "csv-aggregate": "artefact",
+    "log-level-count": "artefact",
+    "weekday-of-date": "artefact",
+    "least-squares-slope": "artefact",
+    "kmeans-assign": "artefact",
+    "csv-sales-summary": "artefact",
+    "record-normalize": "artefact",
+    "schedule-window": "artefact",
+    "typed-rollup": "artefact"
+  }
+}

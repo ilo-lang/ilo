@@ -25,6 +25,10 @@ jobs:
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: '3.12'
+    - name: Closed-loop context arms (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+      run: python3 scripts/test_closed_loop_context.py
     - name: Install skills-ref (agentskills.io reference validator)
       run: pip install git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref
     - name: Validate Agent Skills spec conformance
@@ -42,6 +46,26 @@ jobs:
       # Stubs curl and exercises happy / tamper / missing-asset paths so a
       # refactor can't silently drop the supply-chain integrity check.
       run: bash scripts/install/test-install-sh.sh
+    - name: Closed-loop honest columns (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_metrics.py
+    - name: Closed-loop repair shape hint (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_repair_hint.py
+    - name: Closed-loop header recovery (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_header_recovery.py
+    - name: Closed-loop meta stdout fold (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_meta_fold.py
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference
