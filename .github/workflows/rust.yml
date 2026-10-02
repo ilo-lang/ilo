@@ -66,6 +66,16 @@ jobs:
         ANTHROPIC_API_KEY: ""
         DEEPSEEK_API_KEY: ""
       run: python3 scripts/test_closed_loop_meta_fold.py
+    - name: Closed-loop constrain backend (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_constrain_backend.py
+    - name: Closed-loop constrain hook (no API key)
+      env:
+        ANTHROPIC_API_KEY: ""
+        DEEPSEEK_API_KEY: ""
+      run: python3 scripts/test_closed_loop_constrain.py
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference

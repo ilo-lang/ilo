@@ -170,6 +170,25 @@ python3 scripts/closed-loop-bench.py --provider deepseek --model deepseek-chat \
   --fold-meta-stdout --dry-run
 ```
 
+## Constrained decode (exp-11)
+
+`--constrain` defaults to `none`. DeepSeek hosted Chat Completions cannot
+attach logit or grammar masks. `--constrain reject-retry` is the feasible
+substitute: after fence-stripping, and before header, meta, or soft-edge
+recovery, the harness runs `ilo check` on the raw emit. A failing check
+does not run the programme. The repair signal is the next user message,
+on the same channel as stderr repair, and the reject counts toward
+`--retry-cap`. Cells record `constrain_mode`, `constrain_reject_count`,
+and `constrain_reject_codes`. Soft-edge recovery stays off unless that
+flag is passed. `local-mask` is a placeholder for a future local guided
+sampler and is not a DeepSeek mask. This does not add an `ilo constrain`
+CLI. `--dry-run` prints the mode and needs no API key.
+
+```bash
+python3 scripts/closed-loop-bench.py --dry-run --constrain none
+python3 scripts/closed-loop-bench.py --dry-run --constrain reject-retry
+```
+
 New result files belong at `bench/closed-loop-*.json` and must pass the
 validator. The CI job `Closed-loop metric gate` runs
 [`scripts/check-closed-loop-metrics.sh`](../scripts/check-closed-loop-metrics.sh)

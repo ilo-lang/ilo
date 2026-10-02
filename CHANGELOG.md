@@ -6,6 +6,8 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ### Added
 
+- **Closed-loop constrain hook (exp-11).** `scripts/closed-loop-bench.py` takes `--constrain {none,reject-retry,local-mask}` (default `none`). DeepSeek hosted Chat Completions cannot attach logit or grammar masks. `reject-retry` is the feasible substitute: after fence-stripping and before header, meta, or soft-edge recovery, the harness runs `ilo check` on the raw emit. A failing check does not run the programme; the repair signal is the next user message and the reject counts toward `--retry-cap`. Cells record `constrain_mode`, `constrain_reject_count`, and `constrain_reject_codes`. Soft-edge and header recovery stay off unless those flags are passed. `local-mask` is refused on a live run (placeholder for a future guided local sampler). This does not add an `ilo constrain` CLI. `--dry-run` needs no API key.
+
 - **Soft edges / shape collapse (exp-09).** Parser soft-accepts elided list
   element types: bare `L>` / `L;` ≡ `L _` (shared P007 footgun from artefact
   record/rollup). Docs still prefer explicit `L _` / `L n` — this is
