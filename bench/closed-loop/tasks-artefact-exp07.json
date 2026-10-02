@@ -1,5 +1,5 @@
 {
-  "note": "exp-07 artefact-persona closed-loop set. Language-neutral prompts. Inputs in-programme literals. Rails frozen: hint + header-recovery + fold-meta-stdout. exp-08 Fork 2: modules are aggressively small CONTEXT_DIR excerpt packs (not near-full curated skills) \u2014 measure reliability + inp; do not pad.",
+  "note": "exp-07 artefact-persona closed-loop set. Language-neutral prompts. Inputs in-programme literals. Rails frozen: hint + header-recovery + fold-meta-stdout. exp-08 Fork 2: modules are aggressively small CONTEXT_DIR excerpt packs (not near-full curated skills) — measure reliability + inp; do not pad. Arm B (--context task-modules) reads modules. Arm C (--context task-oneshape) reads oneshape_modules and does not replace modules. Four tasks; do not widen.",
   "tasks": [
     {
       "id": "csv-sales-summary",
@@ -10,6 +10,9 @@
       "category": "csv-pipeline",
       "modules": [
         "ilo-excerpt-csv"
+      ],
+      "oneshape_modules": [
+        "ilo-excerpt-csv-oneshape"
       ]
     },
     {
@@ -21,6 +24,9 @@
       "category": "records",
       "modules": [
         "ilo-excerpt-record"
+      ],
+      "oneshape_modules": [
+        "ilo-excerpt-record-oneshape"
       ]
     },
     {
@@ -32,6 +38,9 @@
       "category": "schedule",
       "modules": [
         "ilo-excerpt-schedule"
+      ],
+      "oneshape_modules": [
+        "ilo-excerpt-schedule-oneshape"
       ]
     },
     {
@@ -43,6 +52,9 @@
       "category": "typed-summary",
       "modules": [
         "ilo-excerpt-typed"
+      ],
+      "oneshape_modules": [
+        "ilo-excerpt-typed-oneshape"
       ]
     }
   ]

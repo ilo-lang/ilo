@@ -15,6 +15,18 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "closed-loop-bench.py"
 TASKS = REPO_ROOT / "bench" / "closed-loop" / "tasks.json"
+ARTEFACT = REPO_ROOT / "bench" / "closed-loop" / "tasks-artefact-exp07.json"
+CONTEXT = REPO_ROOT / "bench" / "closed-loop" / "context"
+CARD = CONTEXT / "one-shape-conditional.md"
+RUN_NOTE = REPO_ROOT / "bench" / "closed-loop" / "arm-c-run-note.md"
+
+SHAPE_LINES = (
+    "Conditional (only): `?h cond then else`. Example: `m=?h >ov 0 ov 0`. "
+    "Nested else: `(?h cond then else)`.",
+    "Non-canonical here: `?h a b`, `?h{then}{else}`, `?cond{then}{else}`, "
+    "match `?x{...}`, braceless guard.",
+)
+LOOP_LINE = "Loop: `@name xs{body}` — no `in`, not a decorator."
 
 
 def load_harness():
@@ -211,6 +223,129 @@ class DryRunTest(unittest.TestCase):
         )
         self.assertIn("Context arm: core", md)
         self.assertIn("ilo-language, ilo-builtins-core", md)
+
+
+def artefact_tasks() -> list[dict]:
+    return json.loads(ARTEFACT.read_text())["tasks"]
+
+
+class TaskOneshapeTest(unittest.TestCase):
+    def test_arm_resolves_and_rejects_alias_mix(self) -> None:
+        self.assertEqual(
+            H.resolve_context_mode("task-oneshape", False), "task-oneshape",
+        )
+        with self.assertRaises(H.ContextError):
+            H.resolve_context_mode("task-oneshape", True)
+
+    def test_artefact_modules_stay_arm_b(self) -> None:
+        tasks = artefact_tasks()
+        self.assertEqual(
+            [t["id"] for t in tasks],
+            [
+                "csv-sales-summary",
+                "record-normalize",
+                "schedule-window",
+                "typed-rollup",
+            ],
+        )
+        for task in tasks:
+            self.assertEqual(H.modules_for("task-modules", task), task["modules"])
+            self.assertEqual(
+                H.modules_for("task-oneshape", task), task["oneshape_modules"],
+            )
+            self.assertNotEqual(task["modules"], task["oneshape_modules"])
+
+    def test_missing_oneshape_list_errors(self) -> None:
+        with self.assertRaises(H.ContextError):
+            H.modules_for("task-oneshape", {"id": "no-oneshape", "modules": ["x"]})
+        with self.assertRaises(H.ContextError):
+            H.modules_for(
+                "task-oneshape", {"id": "empty", "oneshape_modules": []},
+            )
+        with self.assertRaises(H.ContextError):
+            H.modules_for("task-oneshape", None)
+
+    def test_shape_lines_match_card_byte_for_byte(self) -> None:
+        card = CARD.read_text().splitlines()
+        for line in SHAPE_LINES:
+            self.assertEqual(card.count(line), 1)
+        for name in (
+            "ilo-excerpt-csv-oneshape",
+            "ilo-excerpt-record-oneshape",
+            "ilo-excerpt-schedule-oneshape",
+            "ilo-excerpt-typed-oneshape",
+        ):
+            lines = (CONTEXT / f"{name}.md").read_text().splitlines()
+            for line in SHAPE_LINES:
+                self.assertEqual(lines.count(line), 1, name)
+        for name in ("ilo-excerpt-record-oneshape", "ilo-excerpt-typed-oneshape"):
+            lines = (CONTEXT / f"{name}.md").read_text().splitlines()
+            self.assertEqual(lines.count(LOOP_LINE), 1, name)
+
+    def test_oneshape_does_not_teach_a_second_conditional(self) -> None:
+        banned = ("?h{", "?cond{", "?x{", "early-return", "true:", "false:")
+        for name in (
+            "ilo-excerpt-csv-oneshape",
+            "ilo-excerpt-record-oneshape",
+            "ilo-excerpt-schedule-oneshape",
+            "ilo-excerpt-typed-oneshape",
+        ):
+            text = (CONTEXT / f"{name}.md").read_text()
+            kept = text.replace(SHAPE_LINES[1], "")
+            for token in banned:
+                self.assertNotIn(token, kept, f"{name} teaches {token}")
+            self.assertNotIn("?h a b", kept)
+
+    def test_oneshape_stays_in_arm_b_band(self) -> None:
+        for task in artefact_tasks():
+            arm_b = H.ilo_context("ilo", "task-modules", task)
+            arm_c = H.ilo_context("ilo", "task-oneshape", task)
+            self.assertLess(len(arm_c), 1200, task["id"])
+            self.assertLess(len(arm_c), int(len(arm_b) * 1.5) + 1, task["id"])
+            self.assertIn(SHAPE_LINES[0], arm_c)
+            self.assertIn(SHAPE_LINES[1], arm_c)
+
+    def test_run_note_records_card_sha(self) -> None:
+        import hashlib
+        digest = hashlib.sha256(CARD.read_bytes()).hexdigest()
+        note = RUN_NOTE.read_text()
+        self.assertIn(digest, note)
+        self.assertIn("7b15b28dac876f977d5280387e6ae09c5bb56b8f", note)
+        self.assertLessEqual(
+            len(CARD.read_text().splitlines()), 40,
+        )
+
+    def test_dry_run_artefact_oneshape(self) -> None:
+        proc = dry_run([
+            "--task-set", "artefact-exp07", "--context", "task-oneshape",
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("context: task-oneshape", proc.stdout)
+        self.assertNotIn("ANTHROPIC_API_KEY", proc.stderr)
+        expected = {
+            "csv-sales-summary": ["ilo-excerpt-csv-oneshape"],
+            "record-normalize": ["ilo-excerpt-record-oneshape"],
+            "schedule-window": ["ilo-excerpt-schedule-oneshape"],
+            "typed-rollup": ["ilo-excerpt-typed-oneshape"],
+        }
+        chars = []
+        for task_id, mods in expected.items():
+            self.assertEqual(modules_of(proc.stdout, task_id), mods)
+            block = proc.stdout.split(f"[{task_id}]", 1)[1]
+            line = next(
+                ln for ln in block.splitlines()
+                if ln.strip().startswith("context_chars:")
+            )
+            chars.append(int(line.split(":", 1)[1].strip()))
+        self.assertTrue(all(n < 1200 for n in chars))
+        arm_b = dry_run([
+            "--task-set", "artefact-exp07", "--context", "task-modules",
+        ])
+        self.assertEqual(arm_b.returncode, 0, arm_b.stderr)
+        self.assertEqual(
+            modules_of(arm_b.stdout, "schedule-window"),
+            ["ilo-excerpt-schedule"],
+        )
 
 
 if __name__ == "__main__":

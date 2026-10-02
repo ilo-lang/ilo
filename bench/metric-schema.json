@@ -74,7 +74,7 @@
     },
     "context": {
       "type": "string",
-      "description": "Context arm label: full | curated | core | task-modules | compact"
+      "description": "Context arm label: full | curated | core | task-modules | task-oneshape | compact"
     },
     "cache_mode": { "type": "string", "enum": ["warm", "cold"] },
     "task_class": {

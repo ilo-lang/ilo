@@ -127,12 +127,17 @@ Context arms (ilo skill modules). --dry-run needs no API key.
   python3 scripts/closed-loop-bench.py --dry-run --context full
   python3 scripts/closed-loop-bench.py --dry-run --context task-modules
   python3 scripts/closed-loop-bench.py --dry-run --modules-from-task
+  python3 scripts/closed-loop-bench.py --dry-run --task-set artefact-exp07 \
+    --context task-oneshape
 
-  core          ilo-language, ilo-builtins-core
-  curated       core + ilo-builtins-sig
-  full          curated + ilo-builtins-io, ilo-builtins-text, ilo-builtins-math
-  task-modules  exactly task["modules"] in bench/closed-loop/tasks.json
-                (errors if that list is missing)
+  core           ilo-language, ilo-builtins-core
+  curated        core + ilo-builtins-sig
+  full           curated + ilo-builtins-io, ilo-builtins-text, ilo-builtins-math
+  task-modules   exactly task["modules"] in the loaded task bank
+                 (errors if that list is missing)
+  task-oneshape  exactly task["oneshape_modules"] (Arm C, one ?h shape).
+                 artefact-exp07 declares that list. Errors if it is missing.
+                 Does not replace task-modules.
 
   ilo-builtins-sig is read from bench/closed-loop/context/ (not an
   `ilo skill list` entry). Other modules prefer worktree `skills/ilo/<name>.md`, then `ilo skill get`, then
@@ -302,7 +307,7 @@ SKILLS_DIR = REPO_ROOT / "skills" / "ilo"
 # `ilo skill list`; the harness loads it by module name.
 CONTEXT_DIR = BENCH_DIR / "closed-loop" / "context"
 
-# Fixed arms. task-modules is resolved per task from tasks.json.
+# Fixed arms. task-modules and task-oneshape are resolved per task.
 CONTEXT_MODULES: dict[str, list[str]] = {
     "core": ["ilo-language", "ilo-builtins-core"],
     "curated": ["ilo-language", "ilo-builtins-core", "ilo-builtins-sig"],
@@ -317,7 +322,14 @@ CONTEXT_MODULES: dict[str, list[str]] = {
     # exp-08 arm K: single compact excerpt (~4k chars), not curated skills.
     "compact": ["ilo-excerpt-compact"],
 }
-CONTEXT_MODES = ("core", "curated", "full", "task-modules", "compact")
+CONTEXT_MODES = (
+    "core",
+    "curated",
+    "full",
+    "task-modules",
+    "task-oneshape",
+    "compact",
+)
 DEFAULT_CONTEXT = "curated"
 
 DEFAULT_RETRY_CAP = 5
@@ -630,6 +642,8 @@ def resolve_context_mode(context: str | None, modules_from_task: bool) -> str:
         return "task-modules"
     if context is None:
         return DEFAULT_CONTEXT
+    if context == "task-oneshape":
+        return context
     if context not in CONTEXT_MODULES:
         raise ContextError(f"unknown context mode {context!r}")
     return context
@@ -638,8 +652,9 @@ def resolve_context_mode(context: str | None, modules_from_task: bool) -> str:
 def modules_for(context_mode: str, task: dict[str, Any] | None = None) -> list[str]:
     """Module names loaded for this arm.
 
-    task-modules joins task["modules"] and errors when that list is missing
-    or empty. Fixed arms ignore the task.
+    task-modules joins task["modules"]. task-oneshape joins
+    task["oneshape_modules"]. Either errors when that list is missing or
+    empty. Fixed arms ignore the task.
     """
     if context_mode == "task-modules":
         if task is None:
@@ -654,6 +669,21 @@ def modules_for(context_mode: str, task: dict[str, Any] | None = None) -> list[s
             raise ContextError(
                 f"--context task-modules: task {task_id!r} has no non-empty "
                 f'"modules" list in {TASKS_FILE}'
+            )
+        return [m.strip() for m in mods]
+    if context_mode == "task-oneshape":
+        if task is None:
+            raise ContextError("task-oneshape requires a task")
+        mods = task.get("oneshape_modules")
+        task_id = task.get("id", "?")
+        if (
+            not isinstance(mods, list)
+            or not mods
+            or not all(isinstance(m, str) and m.strip() for m in mods)
+        ):
+            raise ContextError(
+                f"--context task-oneshape: task {task_id!r} has no non-empty "
+                f'"oneshape_modules" list in the loaded task bank'
             )
         return [m.strip() for m in mods]
     try:
@@ -2594,8 +2624,11 @@ def main() -> int:
             "core = ilo-language + ilo-builtins-core. "
             "curated = core + ilo-builtins-sig (default). "
             "full = curated + io + text + math (explicit balloon). "
-            "task-modules = task['modules'] from tasks.json; compact = ilo-excerpt-compact "
-            "(error if that list is missing)."
+            "task-modules = task['modules'] from the loaded task bank. "
+            "task-oneshape = task['oneshape_modules'] (Arm C: one ?h shape; "
+            "artefact-exp07 declares it). "
+            "compact = ilo-excerpt-compact. "
+            "task-modules and task-oneshape error if their list is missing."
         ),
     )
     parser.add_argument(
