@@ -1,0 +1,124 @@
+{
+  "generated": "fixture",
+  "harness": "closed-loop-bench.py --emit-fixture",
+  "ticket": "ILO-364",
+  "note": "Synthetic cells for the honest metric shape. Not a measurement. generation_tokens is the provider output sum and may include thinking. It is not a density claim. Honest columns are thinking_tokens and generated_chars (both emitted; thinking_tokens is null when no billed attempt reported a split). code_tokens is null when any billed attempt left thinking unknown. Validate with scripts/validate-closed-loop-results.py (bench/metric-schema.json, PR #797).",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "claude-haiku-4-5",
+      "served_models": [
+        "claude-haiku-4-5"
+      ],
+      "generation_tokens": 120,
+      "thinking_tokens": 90,
+      "thinking_unknown_attempts": 0,
+      "code_tokens": 30,
+      "generated_chars": 13,
+      "final_code_chars": 13,
+      "code_chars_by_turn": [
+        13
+      ],
+      "input_tokens": 800,
+      "input_cache_hit_tokens": 0,
+      "input_cache_miss_tokens": 800,
+      "repair_tokens_by_turn": [],
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1.0,
+      "wall_time_s": 1.25,
+      "final_outcome": "working",
+      "attempt_trace": [
+        {
+          "attempt": 1,
+          "billed": true,
+          "code": "-- run: main\n",
+          "code_chars": 13,
+          "stderr": "",
+          "stdout": "ok\n",
+          "rc": 0,
+          "outcome": "working",
+          "thinking_tokens": 90,
+          "generation_tokens": 120,
+          "input_tokens": 800,
+          "cache_hit_tokens": 0,
+          "cache_creation_tokens": 0,
+          "served_model": "claude-haiku-4-5",
+          "finish_reason": "end_turn",
+          "api_error": null
+        }
+      ]
+    },
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "claude-haiku-4-5",
+      "served_models": [
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001"
+      ],
+      "generation_tokens": 90,
+      "thinking_tokens": 10,
+      "thinking_unknown_attempts": 1,
+      "code_tokens": null,
+      "generated_chars": 4,
+      "final_code_chars": 2,
+      "code_chars_by_turn": [
+        2,
+        2
+      ],
+      "input_tokens": 215,
+      "input_cache_hit_tokens": 20,
+      "input_cache_miss_tokens": 195,
+      "repair_tokens_by_turn": [
+        50
+      ],
+      "attempts_to_success": 2,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 2.5,
+      "final_outcome": "working",
+      "attempt_trace": [
+        {
+          "attempt": 1,
+          "billed": true,
+          "code": "x\n",
+          "code_chars": 2,
+          "stderr": "ILO-P011\n",
+          "stdout": "",
+          "rc": 1,
+          "outcome": "failed",
+          "thinking_tokens": null,
+          "generation_tokens": 40,
+          "input_tokens": 90,
+          "cache_hit_tokens": 0,
+          "cache_creation_tokens": 0,
+          "served_model": "claude-haiku-4-5",
+          "finish_reason": "end_turn",
+          "api_error": null
+        },
+        {
+          "attempt": 2,
+          "billed": true,
+          "code": "y\n",
+          "code_chars": 2,
+          "stderr": "",
+          "stdout": "ok\n",
+          "rc": 0,
+          "outcome": "working",
+          "thinking_tokens": 10,
+          "generation_tokens": 50,
+          "input_tokens": 100,
+          "cache_hit_tokens": 20,
+          "cache_creation_tokens": 5,
+          "served_model": "claude-haiku-4-5-20251001",
+          "finish_reason": "end_turn",
+          "api_error": null
+        }
+      ]
+    }
+  ]
+}

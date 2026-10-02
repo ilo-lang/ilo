@@ -2138,8 +2138,15 @@ statement boundary; bind the chain to a local first. For example, split \
             }
             Some(Token::ListType) => {
                 self.advance();
-                let inner = self.parse_type()?;
-                Ok(Type::List(Box::new(inner)))
+                // Exp-09 S3 soft edge: bare `L>` / `L;` / elided element ≡ `L _`.
+                // Accept-or-rewrite shared P007 footgun; do not grow the type
+                // grammar surface (still write `L _` / `L n` in docs).
+                if self.boundary_at_cursor().is_some() || !self.can_start_type() {
+                    Ok(Type::List(Box::new(Type::Any)))
+                } else {
+                    let inner = self.parse_type()?;
+                    Ok(Type::List(Box::new(inner)))
+                }
             }
             Some(Token::MapType) => {
                 self.advance();
