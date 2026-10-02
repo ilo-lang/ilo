@@ -2255,6 +2255,7 @@ def write_json(
     payload["leg"] = leg
     payload["niche"] = NICHE_STANCE
     payload["note"] = METRIC_NOTE
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2) + "\n")
     return out
 
@@ -2267,6 +2268,7 @@ def write_markdown(
     leg: str | None = None,
 ) -> Path:
     out = BENCH_DIR / f"{result_stem(date_str, leg)}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
 
     # Index results: (task, lang, model) -> record
     idx: dict[tuple[str, str, str], dict] = {}
