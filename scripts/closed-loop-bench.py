@@ -1095,6 +1095,73 @@ def _is_orphan_number(body: str) -> bool:
     return _ORPHAN_NUMBER_RE.fullmatch(body.strip()) is not None
 
 
+
+# Exp-09 soft edges (S1 + S3). Accept-or-rewrite shared footguns before ilo.
+# Default off. Not a new header R-rule; rails (hint/header/fold-meta) stay
+# independently frozen. Prefer rewrite over growing the language surface.
+_SE3_L_GT = re.compile(r"\bL>")
+_SE3_RET_BARE_L = re.compile(r"(>)(\s*)L;")
+_SE3_RET_BARE_L_EOL = re.compile(r"(>)(\s*)L\s*$", re.MULTILINE)
+# S1: prefix-ternary then-arm + brace else with no ';' inside → brace ternary.
+# `?cond then {else}` and `?cond then{else}` (illegal mix) → `?cond{then}{else}`.
+_SE1_MIX = re.compile(
+    r"\?"
+    r"(?P<cond>"
+    r"(?:h\s+)?"
+    r"(?:"
+    r"\([^\n()]*(?:\([^\n()]*\)[^\n()]*)*\)"
+    r"|[A-Za-z_][A-Za-z0-9_-]*"
+    r"|=[^\s{\n]+"
+    r"|>=[^\s{\n]+"
+    r"|<=[^\s{\n]+"
+    r"|!=[^\s{\n]+"
+    r"|>[^\s{\n]+"
+    r"|<[^\s{\n]+"
+    r")"
+    r")"
+    r"\s+"
+    r"(?P<then>"
+    r"\"[^\"\n]*\""
+    r"|'[^'\n]*'"
+    r"|[A-Za-z_][A-Za-z0-9_-]*"
+    r"|\d+(?:\.\d+)?"
+    r")"
+    r"\s*"
+    r"\{(?P<else>[^{};]*)\}"
+)
+
+
+def apply_soft_edge_recovery(code: str) -> tuple[str, list[str]]:
+    """Rewrite shared soft-edge footguns once. Returns (text, rule ids).
+
+    SE3: bare `L>` / return `>L;` ≡ `L _` (elided list element).
+    SE1: illegal prefix-ternary + brace-else mix with expression-only else
+    collapses to brace ternary `?cond{then}{else}`.
+    """
+    fired: list[str] = []
+    text = code
+
+    se3 = _SE3_L_GT.sub("L _>", text)
+    se3 = _SE3_RET_BARE_L.sub(r"\1\2L _;", se3)
+    se3 = _SE3_RET_BARE_L_EOL.sub(r"\1\2L _", se3)
+    if se3 != text:
+        fired.append("SE3")
+        text = se3
+
+    def _se1_sub(match: re.Match[str]) -> str:
+        cond = match.group("cond")
+        then = match.group("then")
+        else_body = match.group("else")
+        return f"?{cond}{{{then}}}{{{else_body}}}"
+
+    se1, n = _SE1_MIX.subn(_se1_sub, text)
+    if n:
+        fired.append("SE1")
+        text = se1
+
+    return text, fired
+
+
 def apply_meta_stdout_fold(code: str) -> tuple[str, list[str]]:
     """Join orphan numeric lines under `-- out:` into that comment.
 
@@ -1273,6 +1340,9 @@ class AttemptObs:
     meta_recovery_applied: bool = False
     meta_recovery_rules: list[str] = field(default_factory=list)
     meta_recovery_audit: bool = False
+    soft_edge_recovery_applied: bool = False
+    soft_edge_recovery_rules: list[str] = field(default_factory=list)
+    soft_edge_recovery_audit: bool = False
 
 
 def _clip(text: str, limit: int = TRACE_IO_CHARS) -> str:
@@ -1392,6 +1462,9 @@ def assemble_cell(
         if a.meta_recovery_audit:
             entry["meta_recovery_applied"] = a.meta_recovery_applied
             entry["meta_recovery_rules"] = list(a.meta_recovery_rules)
+        if a.soft_edge_recovery_audit:
+            entry["soft_edge_recovery_applied"] = a.soft_edge_recovery_applied
+            entry["soft_edge_recovery_rules"] = list(a.soft_edge_recovery_rules)
         trace.append(entry)
 
     if final_outcome == "working":
@@ -2041,12 +2114,14 @@ def run_task(
     repair_shape_hint: bool = False,
     header_recovery: bool = False,
     fold_meta_stdout: bool = False,
+    soft_edge_recovery: bool = False,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
     recover_headers = bool(header_recovery) and is_ilo
     fold_meta = bool(fold_meta_stdout) and is_ilo
-    count_emitted = recover_headers or fold_meta
+    soft_edges = bool(soft_edge_recovery) and is_ilo
+    count_emitted = recover_headers or fold_meta or soft_edges
 
     # Build context. The arm label is recorded on every cell, including the
     # second language, so a matrix stays attributable to the arm that ran.
@@ -2107,6 +2182,7 @@ def run_task(
                 code_pre_recovery="" if recover_headers else None,
                 emitted_code="" if count_emitted else None,
                 meta_recovery_audit=fold_meta,
+                soft_edge_recovery_audit=soft_edges,
             ))
             time.sleep(2)
             continue
@@ -2124,6 +2200,9 @@ def run_task(
         meta_rules: list[str] = []
         if fold_meta:
             code, meta_rules = apply_meta_stdout_fold(code)
+        soft_rules: list[str] = []
+        if soft_edges:
+            code, soft_rules = apply_soft_edge_recovery(code)
         stdout, stderr, rc = run_fn(code)
         outcome = classify_outcome(
             task["expected_output"], stdout, stderr, rc,
@@ -2154,6 +2233,9 @@ def run_task(
             meta_recovery_applied=bool(meta_rules),
             meta_recovery_rules=meta_rules,
             meta_recovery_audit=fold_meta,
+            soft_edge_recovery_applied=bool(soft_rules),
+            soft_edge_recovery_rules=soft_rules,
+            soft_edge_recovery_audit=soft_edges,
         ))
 
         log = (
@@ -2166,6 +2248,8 @@ def run_task(
             log += " header_recovery=" + ",".join(recovery_rules)
         if meta_rules:
             log += " meta_recovery=" + ",".join(meta_rules)
+        if soft_rules:
+            log += " soft_edge=" + ",".join(soft_rules)
         print(log, file=sys.stderr)
 
         if outcome == "working":
@@ -2223,6 +2307,16 @@ def run_task(
     cell["meta_recovery_rules"] = [
         rule_id for rule_id in _META_RULE_ORDER if rule_id in meta_fired
     ]
+    cell["soft_edge_recovery"] = bool(soft_edge_recovery)
+    soft_fired: list[str] = []
+    for obs in observations:
+        for rule_id in obs.soft_edge_recovery_rules:
+            if rule_id not in soft_fired:
+                soft_fired.append(rule_id)
+    cell["soft_edge_recovery_applied"] = any(
+        obs.soft_edge_recovery_applied for obs in observations
+    )
+    cell["soft_edge_recovery_rules"] = soft_fired
     return cell
 
 
@@ -2409,6 +2503,12 @@ def write_markdown(
                     if r.get("meta_recovery_applied"):
                         rules = ", ".join(r.get("meta_recovery_rules") or [])
                         lines.append(f"- Meta recovery rules: {rules}  ")
+                if "soft_edge_recovery" in r:
+                    state = "on" if r["soft_edge_recovery"] else "off"
+                    lines.append(f"- Soft-edge recovery: {state}  ")
+                    if r.get("soft_edge_recovery_applied"):
+                        rules = ", ".join(r.get("soft_edge_recovery_rules") or [])
+                        lines.append(f"- Soft-edge rules: {rules}  ")
                 trace = r.get("attempt_trace") or []
                 if trace:
                     lines.append("- Attempts:  ")
@@ -2678,6 +2778,20 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--soft-edge-recovery",
+        action="store_true",
+        help=(
+            "Before each ilo invoke (after header/meta recovery), rewrite "
+            "shared soft-edge footguns once (exp-09): SE3 soft `L>` / bare "
+            "return `L` ≡ `L _`; SE1 collapse illegal prefix-ternary + "
+            "brace-else mixes with expression-only else into brace ternary "
+            "`?cond{then}{else}`. Default off. Not a header R-rule. Attempt "
+            "trace records soft_edge_recovery_rules. Emitted character "
+            "counts stay on the pre-rewrite text. Manifesto P2/P6: cut "
+            "illegal next-token entropy without growing the language surface."
+        ),
+    )
+    parser.add_argument(
         "--emit-fixture",
         metavar="PATH",
         help=(
@@ -2845,6 +2959,15 @@ def main() -> int:
                 "that comment (M1). Stdout lines that are -- out: / -- run: "
                 "/ -- err: are ignored when judging. A trailing body 0 stays."
             )
+        print(
+            "soft_edge_recovery: "
+            + ("on" if args.soft_edge_recovery else "off")
+        )
+        if args.soft_edge_recovery:
+            print(
+                "note: soft edges SE3 (L> ≡ L _) and SE1 (ternary mix → "
+                "brace ternary when else has no ';') rewrite once before ilo."
+            )
         print(f"niche: {NICHE_STANCE}")
         for line in plan_lines(provider, specs, base_url):
             print(line)
@@ -2907,7 +3030,8 @@ def main() -> int:
         f"docs_source={docs_source} fair_docs={fair_docs} provider={provider} "
         f"repair_shape_hint={'on' if args.repair_shape_hint else 'off'} "
         f"header_recovery={'on' if args.header_recovery else 'off'} "
-        f"fold_meta_stdout={'on' if args.fold_meta_stdout else 'off'})"
+        f"fold_meta_stdout={'on' if args.fold_meta_stdout else 'off'} "
+        f"soft_edge_recovery={'on' if args.soft_edge_recovery else 'off'})"
     )
 
     results: list[dict[str, Any]] = []
@@ -2944,6 +3068,7 @@ def main() -> int:
                     repair_shape_hint=args.repair_shape_hint,
                     header_recovery=args.header_recovery,
                     fold_meta_stdout=args.fold_meta_stdout,
+                    soft_edge_recovery=args.soft_edge_recovery,
                 )
                 results.append(r)
                 print(
@@ -2968,6 +3093,7 @@ def main() -> int:
         "repair_shape_hint": bool(args.repair_shape_hint),
         "header_recovery": bool(args.header_recovery),
         "fold_meta_stdout": bool(args.fold_meta_stdout),
+        "soft_edge_recovery": bool(args.soft_edge_recovery),
         "models": [
             {
                 "model": spec.key,

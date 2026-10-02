@@ -313,6 +313,10 @@ was expected but a different token was found.
 **Example:**
 
     f x: >n;x   -- type missing after `:`
+
+**Soft edge (exp-09 S3):** bare `L>` / elided list element is accepted as
+`L _` (same as writing the underscore). Prefer explicit `L _` or `L n` in
+new code; the soft accept exists to cut a shared agent footgun.
 "#,
     },
     ErrorEntry {

@@ -4,6 +4,18 @@ For the release process and tag conventions, see [RELEASING.md](RELEASING.md).
 
 ## Unreleased
 
+### Added
+
+- **Soft edges / shape collapse (exp-09).** Parser soft-accepts elided list
+  element types: bare `L>` / `L;` ≡ `L _` (shared P007 footgun from artefact
+  record/rollup). Docs still prefer explicit `L _` / `L n` — this is
+  accept-or-rewrite, not a new recommended shape. Closed-loop harness gains
+  `--soft-edge-recovery` (default off): SE3 mirrors the parser soft-`L>` in
+  text before `ilo`, and SE1 collapses illegal prefix-ternary + brace-else
+  mixes with expression-only else into brace ternary `?cond{then}{else}`.
+  Not a header R-rule; hint/header/fold-meta stay independently frozen.
+  Attempt trace records `soft_edge_recovery_rules`. Manifesto P2/P6.
+
 ### Changed
 
 - **Closed-loop harness context arms.** `scripts/closed-loop-bench.py` takes `--context {core,curated,full,task-modules}` (`--modules-from-task` is the task-modules alias). Default is `curated` (`ilo-language`, `ilo-builtins-core`, `ilo-builtins-sig`). `full` adds `ilo-builtins-io`, `ilo-builtins-text`, and `ilo-builtins-math` and is the explicit balloon. `task-modules` loads only `task["modules"]` from `bench/closed-loop/tasks.json` and exits with an error when that list is missing. Every result cell records `context` and `context_modules`. Runs from before this flag always loaded language+core+text+math+io and wrote no arm label; that set is not a named mode (`full` also loads the signature sheet). `--dry-run` prints the arm, the module list, and the loaded character count, and does not need `ANTHROPIC_API_KEY`. This is the lever for measuring context loading (manifesto principle 3). It does not report a density result. `ilo-builtins-sig` lives at `bench/closed-loop/context/ilo-builtins-sig.md` and is not an `ilo skill list` entry.
