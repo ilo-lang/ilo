@@ -61,3 +61,13 @@ The manifesto framing: agents budget around the reserve list once, not once per 
 ## WASM / npm
 
 `cargo build --target wasm32-wasip1 --release --no-default-features` produces `ilo.wasm` (2.1MB). The `npm/` directory wraps it in a Node.js WASI shim published as `ilo-lang` on npm. Requires `NPM_TOKEN` secret in GitHub repo settings.
+
+## Speaking to Daniel
+
+When you speak to Daniel on a call, use ASD-STE100 Simplified Technical English.
+
+- Use short sentences.
+- Use common words.
+- Give one meaning to each word.
+- Do not invent terms.
+- Use this project's vocabulary.
