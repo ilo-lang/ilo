@@ -78,3 +78,11 @@ On calls with Daniel, three rules apply together on every call.
 - ASD-STE100 Simplified Technical English: short sentences, common words, one meaning per word, no invented terms, use this project's vocabulary.
 - Avoid the AI speak banned in Daniel's writer's style guide at /Users/dan/code/dan-site/docs/writing-styleguide.txt. That file has the full list. Banned types: em dashes, buzzwords, enthusiasm words, hedging phrases, filler openers, formulaic closers, dismissive minimisers, developer-tool verbs used metaphorically, sensory experience claims, bombastic phrasing, grandiose framing, "Verdict:" labels, "The pattern I use" / "The approach I take" / "The trick" setup lines, "X, not Y" rhetorical punchlines, "Genuinely X" / "actually X" as hedged enthusiasm, tricolon-as-closer, reviewing tools you have not actually run, and the structural tells: tricolons, stat-list pile-ons, negation tricolons.
 - On pull requests from ilo work, review the change as usual, then merge it. Do not wait for Daniel's confirmation.
+
+## Knowledge base
+
+The knowledge base is the Neon project `personal-kb`, database `kb`, branch `main`. Agents read and write the knowledge base through Neon.
+
+ilo project files are rows in the `documents` table whose `path` starts with `ilo/`. Personal and cross-agent notes are the `notes` and `links` tables in that same database.
+
+`/workspace/ilo/kb` and `/Users/dan/code/kb` are not the knowledge base. An hourly job copies `/workspace/ilo/kb` into `documents` under the `ilo/` prefix. That folder is only the write path for the job. Do not delete the folder.
