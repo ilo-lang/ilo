@@ -81,8 +81,8 @@ On calls with Daniel, three rules apply together on every call.
 
 ## Knowledge base
 
-The knowledge base is the Neon project `personal-kb`, database `kb`, branch `main`. Agents read and write the knowledge base through Neon.
+Neon is the only knowledge base: project `personal-kb`, database `kb`, branch `main`.
 
-ilo project files are rows in the `documents` table whose `path` starts with `ilo/`. Personal and cross-agent notes are the `notes` and `links` tables in that same database.
+Agents read and write ilo project files in the `documents` table. Each `path` starts with `ilo/`. `path` is the primary key. `body` is the file text. `frontmatter` is optional jsonb. `loaded_at` defaults to the current time. `kind` is `binary` for a binary file. For every other file, `kind` is the first folder under `ilo/`, or `root` when the file sits directly under `ilo/`.
 
-`/workspace/ilo/kb` and `/Users/dan/code/kb` are not the knowledge base. An hourly job copies `/workspace/ilo/kb` into `documents` under the `ilo/` prefix. That folder is only the write path for the job. Do not delete the folder.
+Personal notes stay in the `notes` and `links` tables in that same database.
