@@ -668,7 +668,15 @@ fn levenshtein(a: &str, b: &str) -> usize {
     dp[m][n]
 }
 
-const BUILTINS: &[(&str, &[&str], &str)] = &[
+/// Signature table for every builtin: `(name, param_types, return_type)`.
+///
+/// Public so external tooling (notably the standalone `ilo-lsp` language
+/// server, which consumes `ilo` as a library) can build completion,
+/// signature-help, and hover catalogues that track the language exactly.
+/// Rows are added alongside the builtin itself; `Builtin::ALL` and this
+/// table must agree (see `tests/regression_reserved_names_doc.rs` for the
+/// analogous doc guard).
+pub const BUILTINS: &[(&str, &[&str], &str)] = &[
     // (name, param_types, return_type_desc)
     // We use special strings to describe signatures
     ("len", &["list_or_text"], "n"),
