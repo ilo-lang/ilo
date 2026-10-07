@@ -1,0 +1,28 @@
+{
+  "generated": "fixture",
+  "harness": "hand-built",
+  "note": "Synthetic cell for the schema gate. Not a measurement. generation_tokens is the provider total only; the honest columns are thinking_tokens and generated_chars.",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture-model",
+      "served_models": ["fixture-model"],
+      "generation_tokens": 120,
+      "thinking_tokens": 90,
+      "thinking_unknown_attempts": 0,
+      "code_tokens": 30,
+      "generated_chars": 40,
+      "final_code_chars": 40,
+      "code_chars_by_turn": [40],
+      "input_tokens": 800,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1,
+      "wall_time_s": 1.5,
+      "final_outcome": "working",
+      "context": "curated"
+    }
+  ]
+}

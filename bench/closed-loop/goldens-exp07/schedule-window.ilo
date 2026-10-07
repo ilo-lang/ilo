@@ -1,0 +1,10 @@
+-- schedule-window: overlap minutes of two fixed windows
+-- run: main
+-- out: overlap_min=60
+main>t
+  a0=540;a1=720;b0=660;b1=840
+  lo=max a0 b0
+  hi=min a1 b1
+  ov=- hi lo
+  m=?h >ov 0 ov 0
+  fmt "overlap_min={}" (str m)

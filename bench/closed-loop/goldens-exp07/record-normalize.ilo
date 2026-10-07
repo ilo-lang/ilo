@@ -1,0 +1,51 @@
+-- data-wrangler: clean messy records, normalise types, dedup, summarise
+
+-- A "record" is M t t (text-keyed, text-valued)
+-- Messy input: some missing names, bad ages, duplicate ids
+
+-- Normalise one raw row: fill missing fields, coerce age to clean integer text
+norm r:M t t>M t t;
+  nm=mget-or r "name" "unknown";
+  ag-raw=mget-or r "age" "0";
+  ag-n=default-on-err (num ag-raw) 0;
+  ag-clean=str (flr ag-n);
+  id=mget-or r "id" "0";
+  m0=mset mmap "id" id;
+  m1=mset m0 "name" (trm nm);
+  mset m1 "age" ag-clean
+
+-- Dedup by id: keep first seen
+dedup rs:L (M t t)>L (M t t);
+  seen=mmap;
+  out=[];
+  @r rs{
+    id=mget-or r "id" "0";
+    exists=mhas seen id;
+    exists{cnt};
+    out=+=out r;
+    seen=mset seen id "1"
+  };
+  out
+
+-- Collect ages from cleaned rows as numbers
+ages rs:L (M t t)>L n;
+  map (r:M t t>n;ag=mget-or r "age" "0";default-on-err (num ag) 0) rs
+
+main>t;
+  -- Inline messy dataset: duplicates, missing fields, whitespace, non-integer age
+  r0=mset (mset (mset mmap "id" "1") "name" " Alice ") "age" "30";
+  r1=mset (mset (mset mmap "id" "2") "name" "Bob") "age" "25.7";
+  r2=mset (mset mmap "id" "3") "age" "40";
+  r3=mset (mset (mset mmap "id" "1") "name" "Alice") "age" "30";
+  r4=mset (mset (mset mmap "id" "4") "name" "  Dana  ") "age" "";
+  raw=[r0 r1 r2 r3 r4];
+  cleaned=map norm raw;
+  deduped=dedup cleaned;
+  ag=ages deduped;
+  c=len deduped;
+  tot=sum ag;
+  av-r=rou (avg ag);
+  fmt "rows={} total_age={} avg_age={}" (str c) (str tot) (str av-r)
+
+-- run: main
+-- out: rows=4 total_age=95 avg_age=24

@@ -1,0 +1,20 @@
+{
+  "generated": "fixture",
+  "harness": "hand-built",
+  "note": "thinking_tokens is present but null, and generated_chars is absent. Must fail. Not a measurement.",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture-model",
+      "generation_tokens": 10,
+      "thinking_tokens": null,
+      "input_tokens": 10,
+      "attempts_total": 1,
+      "success_rate": 0,
+      "wall_time_s": 0.1,
+      "final_outcome": "failed"
+    }
+  ]
+}

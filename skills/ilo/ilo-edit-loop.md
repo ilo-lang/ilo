@@ -27,7 +27,9 @@ ilo verifies before it runs, every error carries a stable `ILO-XXXX` code, and d
 - **T006 arity** - signature is in the message; no named args.
 - **T004 type mismatch** - body's last expression must match declared return.
 - **T010 bare `!` rejected** - widen to `>R t e`, use `??`, or match.
-- **P009 unparenthesised lambda** - wrap `(p:t>r;body)`.
+- **P009 unparenthesised lambda / mixed conditionals** - wrap `(p:t>r;body)`; if stderr mentions ternary vs brace shapes, drop `?` or drop braces — never `?cond a {stmts}`.
+- **P023 braceless guard in lambda** - replace `>=… val` inside `(…;…)` with `?>=… then else` or a `>b` comparison expression for `flt`/`ct`.
+- **P007 expected type** - fill list element types (`L t` not `L>`); fix mangled `name:L>…` headers.
 - **T007 calling a value** - shadowed a builtin, or wrote `fn(x)` for `fn x`.
 - **R012 capture not supported** - drop the capture or pass as arg (every public backend supports Phase 2 captures natively).
 - **R030 HTTP** - `^e` is a domain outcome, not a panic.
