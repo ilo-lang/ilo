@@ -1,0 +1,23 @@
+{
+  "measurement": false,
+  "note": "Honest column is present, but code_tokens is set while thinking_unknown_attempts > 0. Must fail even under --allow-historical-fail.",
+  "generated": "schema-fixture",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "ilo",
+      "model": "haiku",
+      "model_id": "fixture",
+      "generation_tokens": 30,
+      "thinking_tokens": 10,
+      "thinking_unknown_attempts": 2,
+      "code_tokens": 20,
+      "generated_chars": 15,
+      "input_tokens": 10,
+      "attempts_total": 2,
+      "success_rate": 1.0,
+      "wall_time_s": 1.0,
+      "final_outcome": "working"
+    }
+  ]
+}

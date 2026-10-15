@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ilo-closed-loop-result-cell-2026-10-01",
+  "title": "Honest closed-loop cell (intent→green)",
+  "description": "One task × lang_arm × model cell. generation_tokens alone is never a density claim. Enforced by scripts/validate-closed-loop-results.py (a null thinking_tokens does not satisfy the honest column).",
+  "type": "object",
+  "required": [
+    "task",
+    "language",
+    "model",
+    "model_id",
+    "generation_tokens",
+    "input_tokens",
+    "attempts_total",
+    "success_rate",
+    "wall_time_s",
+    "final_outcome"
+  ],
+  "properties": {
+    "task": { "type": "string" },
+    "language": {
+      "type": "string",
+      "description": "lang_arm: ilo | python | bash | zero | …"
+    },
+    "model": { "type": "string" },
+    "model_id": { "type": "string" },
+    "served_models": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Provenance: models that actually served turns"
+    },
+    "generation_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Provider output_tokens sum — may include thinking"
+    },
+    "thinking_tokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Lower bound if thinking_unknown_attempts > 0. Null does not satisfy the honest column."
+    },
+    "thinking_unknown_attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "code_tokens": {
+      "type": ["integer", "null"],
+      "description": "generation_tokens - thinking_tokens only if unknowns==0; else null"
+    },
+    "generated_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sum of len(emitted code) across attempts"
+    },
+    "final_code_chars": { "type": "integer", "minimum": 0 },
+    "code_chars_by_turn": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "input_tokens": { "type": "integer", "minimum": 0 },
+    "input_cache_hit_tokens": { "type": "integer", "minimum": 0 },
+    "input_cache_miss_tokens": { "type": "integer", "minimum": 0 },
+    "repair_tokens_by_turn": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "attempts_to_success": { "type": ["integer", "null"], "minimum": 1 },
+    "attempts_total": { "type": "integer", "minimum": 0 },
+    "success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "wall_time_s": { "type": "number", "minimum": 0 },
+    "final_outcome": {
+      "type": "string",
+      "enum": ["working", "partial", "failed"]
+    },
+    "context": {
+      "type": "string",
+      "description": "Context arm label: full | curated | core | task-modules | compact"
+    },
+    "cache_mode": { "type": "string", "enum": ["warm", "cold"] },
+    "task_class": {
+      "type": "string",
+      "enum": ["artefact", "ops", "sanity"]
+    },
+    "attempt_trace": {
+      "type": "array",
+      "description": "Per-attempt code/stderr for P6 forensics"
+    }
+  },
+  "allOf": [
+    {
+      "description": "Honest spine prefers thinking split OR code chars; both ideal. A null thinking_tokens does not count.",
+      "anyOf": [
+        { "required": ["thinking_tokens"] },
+        { "required": ["generated_chars"] }
+      ]
+    }
+  ]
+}

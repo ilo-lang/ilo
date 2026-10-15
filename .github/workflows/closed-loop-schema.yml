@@ -1,0 +1,21 @@
+name: Closed-loop schema
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+    branches: [main, next]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Validate closed-loop metric schema
+        # Fixture gate only. Do not pass ANTHROPIC_API_KEY; the harness is
+        # still pre-repair and this job must not call a model.
+        run: bash scripts/check-closed-loop-schema.sh
