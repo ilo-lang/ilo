@@ -15,7 +15,9 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 - **P003 unexpected token** - missing brace/semi, or `=<a b`. Use `<=a b`. Multi-line indented bodies work natively; no need to collapse to `;`-separated.
 - **P011 reserved name** - builtin or alias name used as binding LHS or function name (`head=...`, `length=...`, `flat=...`). The call-site rewrite silently mis-dispatches to the builtin. Rename: `myhd`, `hdr`, `flatv`, etc.
-- **P009 unparenthesised lambda** - wrap `(p:t>r;body)`.
+- **P007 expected type** - type slot got something else. Often bare `L>` / `L>L` / `L>t` missing an element type — write `L t`, `L n`, `L (M t t)`. Or a text literal where a type was parsed (broken lambda header).
+- **P009 expected expression / unparenthesised lambda** - wrap `(p:t>r;body)`; also fires on **mixed conditional shapes** (`?cond a {stmts}` — pick ternary *or* braced body, not both) and broken match/`@` tails.
+- **P023 braceless guard in lambda** - `>=x 0 val` inside `(…;…)` early-returns from the enclosing fn. Rewrite as comparison expr (`>b` for `flt`/`ct`) or `?cond then else`.
 - **P020 incomplete function header** - header missing `>type;body`; finish it.
 - **P021 double-minus prefix-binop trap** - `- -*a b *c d` ambiguous. Use `- 0 +*a b *c d` or bind first.
 - **P103 AST nesting depth exceeded** - parser refused source nesting more than 256 levels deep (DoS guard for `ilo serv`). Flatten by binding intermediates, or raise the cap with `--max-ast-depth N`.
