@@ -1,0 +1,38 @@
+-- DevOps/SRE health probe classifier: status + latency -> healthy/degraded/down counts
+
+type probe{code:n;lat:n}
+
+cls c:n lat:n>t
+  =c 0 "down"
+  >=c 500 "down"
+  <c 200 "down"
+  >=c 400 "degraded"
+  >lat 500 "degraded"
+  "healthy"
+
+main>t
+  ps=[
+    probe code:200 lat:120
+    probe code:200 lat:650
+    probe code:503 lat:30
+    probe code:200 lat:210
+    probe code:0   lat:0
+    probe code:404 lat:80
+    probe code:200 lat:480
+  ]
+  h=0
+  d=0
+  dn=0
+  @p ps{
+    lbl=cls p.code p.lat
+    =lbl "healthy"{h=+h 1}
+    =lbl "degraded"{d=+d 1}
+    =lbl "down"{dn=+dn 1}
+  }
+  hs=str h
+  ds=str d
+  dns=str dn
+  fmt "healthy={} degraded={} down={}" hs ds dns
+
+-- run: main
+-- out: healthy=3 degraded=2 down=2
