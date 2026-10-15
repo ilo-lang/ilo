@@ -1,0 +1,24 @@
+{
+  "generated": "fixture",
+  "harness": "hand-built",
+  "note": "Synthetic cell: emitted-code chars present, thinking split absent. Satisfies the honest column. Not a measurement.",
+  "results": [
+    {
+      "task": "simple-function",
+      "language": "python",
+      "model": "haiku",
+      "model_id": "fixture-model",
+      "generation_tokens": 50,
+      "generated_chars": 24,
+      "final_code_chars": 24,
+      "code_chars_by_turn": [24],
+      "input_tokens": 400,
+      "attempts_to_success": 1,
+      "attempts_total": 1,
+      "success_rate": 1,
+      "wall_time_s": 0.4,
+      "final_outcome": "working",
+      "context": "curated"
+    }
+  ]
+}
