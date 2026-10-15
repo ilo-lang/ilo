@@ -39,8 +39,35 @@ Usage
   # single model
   python3 scripts/closed-loop-bench.py --model haiku
 
+Context arms (ilo skill modules). --dry-run needs no API key.
+  Default is curated. full is the explicit balloon control.
+  Historical runs before this flag always loaded
+  ilo-language + ilo-builtins-core + ilo-builtins-text +
+  ilo-builtins-math + ilo-builtins-io and wrote no arm label.
+  That set is not a named mode. full also loads ilo-builtins-sig.
+
+  python3 scripts/closed-loop-bench.py --dry-run --context core
+  python3 scripts/closed-loop-bench.py --dry-run --context curated
+  python3 scripts/closed-loop-bench.py --dry-run --context full
+  python3 scripts/closed-loop-bench.py --dry-run --context task-modules
+  python3 scripts/closed-loop-bench.py --dry-run --modules-from-task
+
+  core          ilo-language, ilo-builtins-core
+  curated       core + ilo-builtins-sig
+  full          curated + ilo-builtins-io, ilo-builtins-text, ilo-builtins-math
+  task-modules  exactly task["modules"] in bench/closed-loop/tasks.json
+                (errors if that list is missing)
+
+  ilo-builtins-sig is read from bench/closed-loop/context/ (not an
+  `ilo skill list` entry). Other modules prefer `ilo skill get`, then
+  skills/ilo/<name>.md.
+
+  Every result cell records "context" (the arm) and "context_modules".
+  This flag cuts which documentation is loaded (manifesto principle 3,
+  self-contained context). It does not by itself report a density result.
+
 Environment
-  ANTHROPIC_API_KEY   required
+  ANTHROPIC_API_KEY   required for a live run; not required for --dry-run
 
 Retry cap
   Default N=5.  Override with --retry-cap N.
@@ -68,6 +95,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "bench"
 TASKS_FILE = BENCH_DIR / "closed-loop" / "tasks.json"
 SKILLS_DIR = REPO_ROOT / "skills" / "ilo"
+# Signature sheet for the curated/full arms. Not registered with
+# `ilo skill list`; the harness loads it by module name.
+CONTEXT_DIR = BENCH_DIR / "closed-loop" / "context"
+
+# Fixed arms. task-modules is resolved per task from tasks.json.
+CONTEXT_MODULES: dict[str, list[str]] = {
+    "core": ["ilo-language", "ilo-builtins-core"],
+    "curated": ["ilo-language", "ilo-builtins-core", "ilo-builtins-sig"],
+    "full": [
+        "ilo-language",
+        "ilo-builtins-core",
+        "ilo-builtins-sig",
+        "ilo-builtins-io",
+        "ilo-builtins-text",
+        "ilo-builtins-math",
+    ],
+}
+CONTEXT_MODES = ("core", "curated", "full", "task-modules")
+DEFAULT_CONTEXT = "curated"
 
 DEFAULT_RETRY_CAP = 5
 ILO_TIMEOUT = 20  # seconds per ilo run
@@ -88,8 +134,18 @@ OUTCOME_RANK = {"working": 2, "partial": 1, "failed": 0}
 _SKILL_CACHE: dict[str, str] = {}
 
 
+class ContextError(Exception):
+    """Context arm could not be built. The message is safe to print."""
+
+
 def load_skill_text(module_name: str, ilo_bin: str) -> str:
-    """Load skill module, caching in memory (steady-state: single load)."""
+    """Load one skill module, caching in memory (steady-state: single load).
+
+    Prefers `ilo skill get`, then skills/ilo/<name>.md, then the harness
+    context directory. Raises ContextError when none of those yield text.
+    A missing module is not replaced with a stub: a stub would look like a
+    small context arm.
+    """
     if module_name in _SKILL_CACHE:
         return _SKILL_CACHE[module_name]
     try:
@@ -102,21 +158,89 @@ def load_skill_text(module_name: str, ilo_bin: str) -> str:
             return result.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    path = SKILLS_DIR / f"{module_name}.md"
-    if path.exists():
-        text = path.read_text()
-        _SKILL_CACHE[module_name] = text
-        return text
-    fallback = f"# {module_name}\n(skill module not found)\n"
-    _SKILL_CACHE[module_name] = fallback
-    return fallback
+    for base in (SKILLS_DIR, CONTEXT_DIR):
+        path = base / f"{module_name}.md"
+        if path.is_file():
+            text = path.read_text()
+            _SKILL_CACHE[module_name] = text
+            return text
+    raise ContextError(
+        f"context module {module_name!r} not found "
+        f"(no `ilo skill get` text, and neither "
+        f"{SKILLS_DIR / (module_name + '.md')} nor "
+        f"{CONTEXT_DIR / (module_name + '.md')} exists)"
+    )
 
 
-def ilo_context(ilo_bin: str) -> str:
-    """Return the core ilo skill documentation (cached)."""
-    mods = ["ilo-language", "ilo-builtins-core", "ilo-builtins-text",
-            "ilo-builtins-math", "ilo-builtins-io"]
+def resolve_context_mode(context: str | None, modules_from_task: bool) -> str:
+    """Pick the context arm. Default is curated.
+
+    --modules-from-task is the task-modules arm. Combining it with a
+    different --context value is an error.
+    """
+    if modules_from_task and context not in (None, "task-modules"):
+        raise ContextError(
+            "--modules-from-task selects context arm task-modules; "
+            f"do not combine it with --context {context}"
+        )
+    if modules_from_task or context == "task-modules":
+        return "task-modules"
+    if context is None:
+        return DEFAULT_CONTEXT
+    if context not in CONTEXT_MODULES:
+        raise ContextError(f"unknown context mode {context!r}")
+    return context
+
+
+def modules_for(context_mode: str, task: dict[str, Any] | None = None) -> list[str]:
+    """Module names loaded for this arm.
+
+    task-modules joins task["modules"] and errors when that list is missing
+    or empty. Fixed arms ignore the task.
+    """
+    if context_mode == "task-modules":
+        if task is None:
+            raise ContextError("task-modules requires a task")
+        mods = task.get("modules")
+        task_id = task.get("id", "?")
+        if (
+            not isinstance(mods, list)
+            or not mods
+            or not all(isinstance(m, str) and m.strip() for m in mods)
+        ):
+            raise ContextError(
+                f"--context task-modules: task {task_id!r} has no non-empty "
+                f'"modules" list in {TASKS_FILE}'
+            )
+        return [m.strip() for m in mods]
+    try:
+        return list(CONTEXT_MODULES[context_mode])
+    except KeyError as exc:
+        raise ContextError(f"unknown context mode {context_mode!r}") from exc
+
+
+def ilo_context(
+    ilo_bin: str,
+    context_mode: str = DEFAULT_CONTEXT,
+    task: dict[str, Any] | None = None,
+) -> str:
+    """Return the ilo skill documentation for one context arm (cached)."""
+    mods = modules_for(context_mode, task)
     return "\n\n".join(load_skill_text(m, ilo_bin) for m in mods)
+
+
+def prepare_ilo_contexts(
+    tasks: list[dict[str, Any]],
+    context_mode: str,
+    ilo_bin: str,
+) -> dict[str, tuple[list[str], str]]:
+    """Resolve modules and joined text for each task before any LLM call."""
+    prepared: dict[str, tuple[list[str], str]] = {}
+    for task in tasks:
+        mods = modules_for(context_mode, task)
+        text = "\n\n".join(load_skill_text(m, ilo_bin) for m in mods)
+        prepared[task["id"]] = (mods, text)
+    return prepared
 
 
 # ---------------------------------------------------------------------------
@@ -276,17 +400,23 @@ def run_task(
     ilo_bin: str,
     lang2_bin: str | None,
     lang2_ext: str,
+    context_mode: str,
+    ilo_modules: list[str],
+    ilo_context_text: str,
 ) -> dict[str, Any]:
     model_id_used = model_id
     is_ilo = (lang == "ilo")
 
-    # Build context
+    # Build context. The arm label is recorded on every cell, including the
+    # second language, so a matrix stays attributable to the arm that ran.
     if is_ilo:
-        context = ilo_context(ilo_bin)
+        context = ilo_context_text
+        context_modules = list(ilo_modules)
         system = ILO_SYSTEM
         run_fn = lambda code: run_ilo(code, ilo_bin)  # noqa: E731
     else:
         context = f"(No formal language documentation available for {lang}.)"
+        context_modules = []
         system = LANG2_SYSTEM.format(lang_name=lang)
         run_fn = lambda code: run_lang2(code, lang2_bin, lang2_ext)  # noqa: E731
 
@@ -339,6 +469,8 @@ def run_task(
         "language": lang,
         "model": model_key,
         "model_id": model_id_used,
+        "context": context_mode,
+        "context_modules": context_modules,
         "generation_tokens": total_gen_tokens,
         "input_tokens": total_input_tokens,
         "repair_tokens_by_turn": repair_tokens_by_turn,
@@ -354,19 +486,22 @@ def run_task(
 # Output helpers
 # ---------------------------------------------------------------------------
 
-def write_json(results: list[dict[str, Any]], date_str: str) -> Path:
+def write_json(results: list[dict[str, Any]], date_str: str, context_mode: str) -> Path:
     out = BENCH_DIR / f"closed-loop-{date_str}.json"
     payload = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "harness": "closed-loop-bench.py",
         "ticket": "ILO-364",
+        "context": context_mode,
         "results": results,
     }
     out.write_text(json.dumps(payload, indent=2))
     return out
 
 
-def write_markdown(results: list[dict[str, Any]], date_str: str) -> Path:
+def write_markdown(
+    results: list[dict[str, Any]], date_str: str, context_mode: str,
+) -> Path:
     out = BENCH_DIR / f"closed-loop-{date_str}.md"
 
     # Index results: (task, lang, model) -> record
@@ -389,6 +524,7 @@ def write_markdown(results: list[dict[str, Any]], date_str: str) -> Path:
         f"",
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ",
         f"Ticket: [ILO-364](https://linear.app/ilo-lang/issue/ILO-364)  ",
+        f"Context arm: {context_mode}  ",
         f"Retry cap: {DEFAULT_RETRY_CAP}",
         f"",
         f"## Summary",
@@ -439,9 +575,12 @@ def write_markdown(results: list[dict[str, Any]], date_str: str) -> Path:
                 r = idx.get((task, lang, model))
                 if not r:
                     continue
+                modules = ", ".join(r.get("context_modules") or []) or "(none)"
                 lines += [
                     f"",
                     f"**{lang} / {model}**  ",
+                    f"- Context arm: {r.get('context', context_mode)}  ",
+                    f"- Context modules: {modules}  ",
                     f"- Generation tokens: {r['generation_tokens']}  ",
                     f"- Input tokens (context): {r['input_tokens']}  ",
                     f"- Attempts total: {r['attempts_total']}  ",
@@ -457,6 +596,8 @@ def write_markdown(results: list[dict[str, Any]], date_str: str) -> Path:
         f"",
         f"- Zero language CLI was not available in this environment; Zero column deferred.",
         f"  To add Zero, run: `python3 scripts/closed-loop-bench.py --lang2-name zero --lang2-bin <path-to-zero> --lang2-ext .zero`",
+        f"- Context arm for this file: `{context_mode}`. "
+        f"Each cell also records `context` and `context_modules`.",
         f"- Skill documentation is loaded once per process (steady-state caching).",
         f"- One-shot economics (first attempt only) can be derived from `repair_tokens_by_turn` in the JSON.",
         f"- Re-run at any time; output files are date-stamped.",
@@ -493,8 +634,27 @@ def main() -> int:
                         help="Path to second language CLI binary.")
     parser.add_argument("--lang2-ext", default=".zero",
                         help="File extension for second language source (default .zero).")
+    parser.add_argument(
+        "--context",
+        choices=list(CONTEXT_MODES),
+        default=None,
+        help=(
+            "ilo skill modules to load. "
+            "core = ilo-language + ilo-builtins-core. "
+            "curated = core + ilo-builtins-sig (default). "
+            "full = curated + io + text + math (explicit balloon). "
+            "task-modules = task['modules'] from tasks.json "
+            "(error if that list is missing)."
+        ),
+    )
+    parser.add_argument(
+        "--modules-from-task",
+        action="store_true",
+        help="Alias for --context task-modules.",
+    )
     parser.add_argument("--dry-run", action="store_true",
-                        help="Print task specs and exit without making LLM calls.")
+                        help="Print task specs and context arm, then exit. "
+                             "No LLM calls and no API key.")
     parser.add_argument("--output-dir", default=None,
                         help="Override output directory (default: bench/).")
     args = parser.parse_args()
@@ -512,11 +672,23 @@ def main() -> int:
             print(f"ERROR: task '{args.task}' not found in tasks.json", file=sys.stderr)
             return 2
 
+    try:
+        context_mode = resolve_context_mode(args.context, args.modules_from_task)
+        prepared = prepare_ilo_contexts(all_tasks, context_mode, args.ilo)
+    except ContextError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     if args.dry_run:
+        print(f"context: {context_mode}")
         print("Tasks:")
         for t in all_tasks:
+            mods, text = prepared[t["id"]]
             print(f"  [{t['id']}] {t['description'][:80]}...")
             print(f"          expected: {t['expected_output']!r}")
+            print(f"          context: {context_mode}")
+            print(f"          modules: {' '.join(mods)}")
+            print(f"          context_chars: {len(text)}")
         return 0
 
     # Verify ilo
@@ -559,7 +731,7 @@ def main() -> int:
     print(
         f"Closed-loop bench: {len(all_tasks)} tasks × "
         f"{len(languages)} languages × {len(model_keys)} models = "
-        f"{total_runs} runs  (retry_cap={args.retry_cap})"
+        f"{total_runs} runs  (retry_cap={args.retry_cap} context={context_mode})"
     )
 
     results: list[dict[str, Any]] = []
@@ -575,6 +747,7 @@ def main() -> int:
                     f"lang={lang} model={model_key}",
                     file=sys.stderr,
                 )
+                mods, text = prepared[task["id"]]
                 r = run_task(
                     task=task,
                     lang=lang,
@@ -585,6 +758,9 @@ def main() -> int:
                     ilo_bin=args.ilo,
                     lang2_bin=lang2_bin,
                     lang2_ext=args.lang2_ext,
+                    context_mode=context_mode,
+                    ilo_modules=mods,
+                    ilo_context_text=text,
                 )
                 results.append(r)
                 print(
@@ -594,8 +770,8 @@ def main() -> int:
                 )
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    json_path = write_json(results, date_str)
-    md_path = write_markdown(results, date_str)
+    json_path = write_json(results, date_str, context_mode)
+    md_path = write_markdown(results, date_str, context_mode)
 
     print(f"\nResults written:")
     print(f"  JSON: {json_path}")
