@@ -1,0 +1,74 @@
+# Closed-loop metric
+
+Intent → green is the only cost that counts:
+
+```
+spec + generation + context + error feedback + retries
+```
+
+A closed-loop cell is one task × language arm × model. The schema is
+[`metric-schema.json`](metric-schema.json). The gate is
+[`scripts/validate-closed-loop-results.py`](../scripts/validate-closed-loop-results.py)
+(stdlib only, no API key).
+
+## What is not a density claim
+
+`generation_tokens` is the provider output-token sum. On a thinking model
+that sum includes thinking. Quoting it as emitted-code density, or as an
+intent→green win, is not a measurement.
+
+A cell is honest when at least one of these is a non-null integer:
+
+- `thinking_tokens` — provider thinking tokens (a lower bound when
+  `thinking_unknown_attempts > 0`)
+- `generated_chars` — length of emitted code across attempts
+
+Both is the target. A present-but-null `thinking_tokens` does not count.
+If any attempt left thinking unknown, `code_tokens` must be null: unknown
+thinking is not code.
+
+## Harness status
+
+`scripts/closed-loop-bench.py` writes an honest cell. `thinking_tokens` is
+null when no billed attempt reported a split, and a partial sum is a lower
+bound. `generated_chars` is the length of emitted program text.
+`code_tokens` is null when any billed attempt left thinking unknown.
+`generation_tokens` stays the provider output sum. It is not a density
+claim, and the markdown table does not lead with it.
+
+The same cell records the context arm (`--context`, default `curated`)
+and the language arm (`lang_arm`). `--python` and `--bash` are the
+comparator shorthands. Without `--lang2-docs` the comparator is
+`fair_docs=false` and is not a fair bakeoff against ilo skills.
+`task_class` (`artefact` | `ops` | `sanity`) marks the row. An ops task,
+or a bash win on wall time, is not an ilo manifesto loss.
+
+`--dry-run` and `--emit-fixture` need no API key. The synthetic fixture
+is `bench/fixtures/closed-loop-harness-shape.json`.
+
+New result files belong at `bench/closed-loop-*.json` and must pass the
+validator. The CI job `Closed-loop metric gate` runs
+[`scripts/check-closed-loop-metrics.sh`](../scripts/check-closed-loop-metrics.sh)
+on every pull request and on `main` / `next`. It does not read
+`ANTHROPIC_API_KEY` and does not call a model.
+
+## Historical results
+
+`closed-loop-2026-08-03.json` was never committed. An inventory of that
+local file recorded 5 of 5 cells with neither honest column. The current
+harness does not write that shape. The quarantined fixture keeps the
+failure so the gate still rejects it.
+
+That shape is quarantined, not republished as a result:
+
+- [`historical/closed-loop-2026-08-03.undivided-shape.json`](historical/closed-loop-2026-08-03.undivided-shape.json)
+  is a hand-built shape fixture. Counts are placeholders (zeros), not the
+  unpublished run.
+- `bench/historical/` is outside the `bench/closed-loop-*.json` publish
+  glob, so new results cannot hide beside it.
+- The gate asserts this fixture still fails. `--allow-historical-fail`
+  prints that failure and still rejects every non-historical file.
+
+Putting a pre-repair dump at `bench/closed-loop-2026-08-03.json` fails CI
+on purpose. Move it under `bench/historical/` or regenerate it from a
+harness that emits an honest column.
