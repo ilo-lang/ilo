@@ -1,0 +1,28 @@
+-- prefix-vs-infix.ilo — `+x y` vs `x + y` for arithmetic.
+--
+-- ilo allows BOTH prefix and infix for the four arithmetic operators.
+-- The prefix form is preferred because:
+--   1. It saves whitespace tokens.
+--   2. It composes uniformly: `sqrt + (* a a) (* b b)` reads left-to-right
+--      with no precedence reasoning. The same shape with infix needs
+--      careful grouping — `sqrt (* a a) + (* b b)` does NOT compute the
+--      hypotenuse (sqrt applies only to the first argument, then `+` adds
+--      the rest), so the infix attempt at hypot reads `sqrt(9) + 16 = 19`
+--      instead of `sqrt(25) = 5`.
+--
+-- Prefer prefix. Use infix only at the top level of a single binary op
+-- where there's no precedence ambiguity (`x = + a b` reads fine; mixing
+-- infix and prefix in the same expression invites surprises).
+
+-- Preferred: prefix throughout. Reads as `sqrt of (a*a + b*b)`.
+hypot a:n b:n>n;sqrt + (* a a) (* b b)
+
+-- The wrong-feeling infix shape, included so the gotcha is visible.
+-- The example harness pins the wrong answer (19, not 5) so any future
+-- change in associativity is caught here, not by personas in the wild.
+hypot-broken a:n b:n>n;sqrt (* a a) + (* b b)
+
+-- run: hypot 3 4
+-- out: 5
+-- run: hypot-broken 3 4
+-- out: 19

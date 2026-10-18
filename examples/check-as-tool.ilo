@@ -1,0 +1,37 @@
+-- check-as-tool.ilo — using `ilo check` from shell as a verifier tool.
+--
+-- `ilo check <file>` runs the verifier without executing. Exit 0 means
+-- clean; any other code means diagnostics were emitted. Default output
+-- is human-readable; pass `--json` for one JSON object per diagnostic on
+-- stdout (newline-delimited) to consume programmatically.
+--
+--   ilo check broken.ilo                 -- human-readable, exit 1 on error
+--   ilo check broken.ilo --json          -- JSON-line diagnostics, exit 1
+--   ilo check src/*.ilo                  -- check multiple files
+--   ilo check --show-effects file.ilo    -- emit inferred effect sets too
+--
+-- The JSON shape per line (companion to the ILO diagnostic registry):
+--   { "code": "ILO-T005", "severity": "error",
+--     "message": "undefined function 'foo'",
+--     "labels": [{ "line": 7, "col": 12, "start": 142, "end": 145,
+--                  "message": "here", "primary": true }],
+--     "notes": ["in function 'main'"],
+--     "suggestion": "did you mean 'foo2'?" }
+--
+-- Use `ilo check --json` in a pre-commit hook to enforce zero diagnostics:
+--
+--   git diff --name-only --cached -- '*.ilo' \
+--     | xargs -r ilo check --json \
+--     | jq -e 'select(.severity == "error")' && exit 1
+--
+-- For CI gating, the same pattern with `select(.code | startswith("ILO-T"))`
+-- catches all type-system errors while letting warnings pass.
+
+-- This file itself is a trivial valid program — `ilo check check-as-tool.ilo`
+-- should exit 0 and emit nothing. That's the contract the documentation
+-- above relies on.
+
+ok>n;42
+
+-- run: ok
+-- out: 42

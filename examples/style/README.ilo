@@ -1,0 +1,24 @@
+-- style/ — side-by-side examples showing the same behaviour two different
+-- ways. The point is to bias agents toward the manifesto-preferred shape
+-- by making the contrast visible at the example level.
+--
+-- Files in this directory each show:
+--   - the dense / preferred form (token-minimal, principle 1)
+--   - the explicit form (more familiar to readers from other languages)
+-- and pin both with `-- run:` so the regression harness keeps them in
+-- lockstep.
+--
+-- Index:
+--
+--   foreach-vs-map.ilo       -- `@x xs{...}` vs `map (x:_>_;...) xs`
+--   q-vs-match.ilo           -- `?r{ok(v):...;err(e):...}` vs explicit ?
+--   pipe-vs-nested.ilo       -- threaded `use<-` vs nested calls
+--   prefix-vs-infix.ilo      -- `+x y` vs `x + y` for arithmetic
+--
+-- These exist as compile-only references; the harness exercises them via
+-- their `-- run:` headers.
+
+ok>n;0
+
+-- run: ok
+-- out: 0

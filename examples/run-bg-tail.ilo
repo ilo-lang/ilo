@@ -1,0 +1,34 @@
+-- run-bg-tail.ilo — `run-bg cmd argv > R n t` (ILO-35).
+--
+-- Fire-and-forget background spawn. Returns Ok(pid:n) immediately without
+-- waiting for the child. Child inherits parent's stdout/stderr and reads
+-- /dev/null on stdin. Use when you want to start a long-running server or
+-- worker and continue executing ilo code.
+--
+-- `run-bg` differs from `run` (waits for completion) and `run2` (waits +
+-- returns typed RunResult). Use run-bg for daemons, batch jobs, or any
+-- process whose output you don't care about from inside ilo.
+
+-- Spawn a short sleep in the background; we get the pid back immediately
+-- and main returns without waiting for the sleep to finish.
+spawn-pid>n;run-bg!! "sleep" ["0.05"]
+
+-- pid is always positive on success.
+pid-positive>b;p=run-bg!! "sleep" ["0.05"];>p 0
+
+-- Spawn-then-continue: launch a no-op background process, then do real work.
+-- The example doesn't need to coordinate with the child; that's the point.
+spawn-then-compute>n
+  _=run-bg!! "true" []
+  + 21 21
+
+-- Nonexistent command returns Err (spawn failure is observable).
+spawn-missing-is-err>b;r=run-bg "no-such-command-xyz" [];?r{~p:false;^e:true}
+
+-- engine-skip: jit
+-- run: pid-positive
+-- out: true
+-- run: spawn-then-compute
+-- out: 42
+-- run: spawn-missing-is-err
+-- out: true

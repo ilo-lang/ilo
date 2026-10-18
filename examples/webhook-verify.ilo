@@ -1,0 +1,73 @@
+-- webhook-verify.ilo — Stripe-style HMAC-SHA256 webhook signature check.
+--
+-- Real webhook receivers need three things for security:
+--   1. Constant-time signature comparison (no early-exit timing leak)
+--   2. Replay-window enforcement (reject signatures older than N seconds)
+--   3. Canonical signed-payload format (timestamp + delimiter + body)
+--
+-- ilo provides all three primitives directly: hmac-sha256 for the digest,
+-- ct-eq for constant-time text equality, and idxof+slc for parsing the
+-- `t=<ts>,v1=<sig>` Stripe-Signature header shape.
+--
+-- This is the per-builtin reference for hmac-sha256 in a real use case.
+-- For the raw builtin demo, see crypto-primitives.ilo.
+
+-- Compute the expected signature for a Stripe-style signed payload.
+-- Stripe's signed string is `<timestamp>.<body>` — both joined with `.`.
+sign-payload secret:t ts:t body:t>t
+  signed=++ts "." body
+  hmac-sha256 secret signed
+
+-- Parse `t=<ts>,v1=<sig>` -> Map{"t":<ts>, "v1":<sig>}.
+-- Real headers can carry multiple v* schemes; this picks the first v1.
+parse-header h:t>M t t
+  m=mmap
+  i-comma=idxof! h ","
+  ts-pair=slc h 0 i-comma
+  sig-pair=slc h (+ i-comma 1) (len h)
+  i-eq-ts=idxof! ts-pair "="
+  i-eq-sig=idxof! sig-pair "="
+  m=mset m "t" (slc ts-pair (+ i-eq-ts 1) (len ts-pair))
+  m=mset m "v1" (slc sig-pair (+ i-eq-sig 1) (len sig-pair))
+  m
+
+-- Verify a signature with a freshness window. Returns true only when:
+--   1. The header parses cleanly
+--   2. The recomputed HMAC matches the header's v1 (ct-eq, not =)
+--   3. The signed timestamp is within `window-sec` of `nw`
+-- Note: `nw` not `now` - `now` is a builtin and ILO-P011 rejects it as a name.
+verify-webhook secret:t header:t body:t nw:n window-sec:n>b
+  m=parse-header header
+  ts-text=mget!! m "t"
+  v1=mget!! m "v1"
+  expected=sign-payload secret ts-text body
+  ts=num!! ts-text
+  age=- nw ts
+  sig-ok=ct-eq expected v1
+  fresh=<= age window-sec
+  & sig-ok fresh
+
+-- ── Test vectors ─────────────────────────────────────────────────────────
+
+-- Pre-computed signature for `secret`=`whsec_test`, `ts`=`1700000000`,
+-- body=`{"id":42}`. Joined string is `1700000000.{"id":42}`.
+ok-sig>b;verify-webhook "whsec_test" "t=1700000000,v1=0883b47833284e5d3b8fffddf4e143870ebbac24eb2540ca2f0a8325f297277a" "{\"id\":42}" 1700000060 300
+
+-- Same payload but the body has been tampered with - signature mismatch.
+bad-body>b;verify-webhook "whsec_test" "t=1700000000,v1=0883b47833284e5d3b8fffddf4e143870ebbac24eb2540ca2f0a8325f297277a" "{\"id\":99}" 1700000060 300
+
+-- Same payload but `nw` is 10 minutes after the signed timestamp; outside
+-- the 5-minute (300s) replay window.
+stale>b;verify-webhook "whsec_test" "t=1700000000,v1=0883b47833284e5d3b8fffddf4e143870ebbac24eb2540ca2f0a8325f297277a" "{\"id\":42}" 1700000600 300
+
+-- Show the recomputed signature so anyone tweaking the example can re-anchor.
+echo-sig>t;sign-payload "whsec_test" "1700000000" "{\"id\":42}"
+
+-- run: echo-sig
+-- out: 0883b47833284e5d3b8fffddf4e143870ebbac24eb2540ca2f0a8325f297277a
+-- run: ok-sig
+-- out: true
+-- run: bad-body
+-- out: false
+-- run: stale
+-- out: false
