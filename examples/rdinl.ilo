@@ -6,5 +6,5 @@
 -- It can only run in a pipeline; the engine harness skips it (no -- run: marker).
 
 main>n
-lines=rdinl!
-len (flt (\l;>(len l) 0) lines)
+  lines=rdinl!
+  len (flt (l:t>b;>(len l) 0) lines)

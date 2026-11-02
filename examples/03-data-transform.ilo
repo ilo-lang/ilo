@@ -1,2 +1,25 @@
-cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
-sms cs:L customer>L summary;@c cs{lv=cls c.spent;dc=?lv{"gold":20;"silver":10;"bronze":5};summary name:c.name level:lv discount:dc}
+-- 03-data-transform: classify customers by total spend into a tier and
+-- project a summary record (name, level, discount) for each customer.
+
+type customer{
+  name:t;spent:n
+}
+
+type summary{
+  name:t;level:t;discount:n
+}
+
+tier sp:n>t
+  >=sp 1000 "gold"
+  >=sp 500 "silver"
+  "bronze"
+
+summarize cs:L customer>L summary
+  out=[]
+  @c cs{
+    lv=tier c.spent
+    dc=?lv{"gold":20;"silver":10;"bronze":5;_:0}
+    sm=summary name:c.name level:lv discount:dc
+    out=+=out sm
+  }
+  out

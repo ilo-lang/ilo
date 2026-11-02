@@ -1,1 +1,28 @@
-ntf uid:t msg:t>R _ t;get-user uid;?{^er:^+"Lookup failed: "er;~d:!d.verified{ret ^"Email not verified"};send-email d.email "Notification" msg;?{^er:^+"Send failed: "er;~_:~_}}
+-- 04-tool-interaction: look up a user by id, guard on their verification
+-- status, and send them a notification. Both stages return a Result and
+-- the function propagates failures as errors.
+
+type user{
+  email:t;verified:b
+}
+
+get-user uid:t>R user t
+  =uid "" ^"empty user id"
+  ~user email:uid verified:true
+
+send-email addr:t topic:t msg:t>R t t
+  =addr "" ^"no recipient"
+  ~"sent"
+
+notify uid:t msg:t>R t t
+  u=get-user uid
+  ?u{
+    ~d:{
+      !d.verified{ret ^"Email not verified"}
+      s=send-email d.email "Notification" msg
+      ?s{~_:~"sent";^er:^+"Send failed: "er}
+    }
+    ^er:{
+      ^+"Lookup failed: "er
+    }
+  }

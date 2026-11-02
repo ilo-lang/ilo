@@ -29,8 +29,6 @@ check-net>R t t
 -- denied one (read outside the prefix), printing the outcomes.
 main>_
   res-ok = permitted-read()
-  ?{res-ok|er: prnt +"file read denied: " er
-           ~v:  prnt +"file read ok, contents: " v}
+  ?res-ok{~v:prnt +"file read ok, contents: " v;^e:prnt +"file read denied: " e}
   res-deny = denied-read()
-  ?{res-deny|er: prnt +"denied read blocked as expected: " er
-             ~v:  prnt +"WARNING: denied read returned value " v}
+  ?res-deny{~v:prnt +"WARNING: denied read returned value " v;^e:prnt +"denied read blocked as expected: " e}

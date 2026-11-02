@@ -34,7 +34,7 @@ shipping-cost weight:n country:t>n
   15
 
 apply-discount total:n code:t>n
-  =code "HALF" */total 0.5
+  =code "HALF" *total 0.5
   =code "10OFF" -total 10
   =code "FREE" 0
   total
@@ -51,5 +51,5 @@ build-order items:L item addr:addr code:t>R order t
 
 -- Checkout
 checkout items:L item addr:addr code:t>R receipt t
-  ord=build-order! items addr code
-  ~receipt order-id:"ORD-001" total:ord.total status:"confirmed"
+  myord=build-order! items addr code
+  ~receipt order-id:"ORD-001" total:myord.total status:"confirmed"

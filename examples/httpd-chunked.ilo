@@ -23,4 +23,4 @@ body-chunks>L t
   ["Hello" ", " "world" "\n" "from " "ilo " "httpd" " chunked!\n"]
 
 handler req:_>rsp
-  rsp status:200 body:body-chunks
+  rsp status:200 body:body-chunks()
