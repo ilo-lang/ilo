@@ -63,7 +63,7 @@ fn apply_line_scoped_edit(current: &str, edit: &crate::diagnostic::FixEdit) -> O
         return None;
     }
     let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-    out.splice(lo..hi, [edit.after.clone()].into_iter());
+    out.splice(lo..hi, [edit.after.clone()]);
     Some(out.join("\n"))
 }
 
