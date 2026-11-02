@@ -103,6 +103,9 @@ pub enum Cmd {
     /// Verify a program without running it.
     Check(CheckArgs),
 
+    /// Language server over LSP stdio (editor-facing).
+    Lsp(LspArgs),
+
     /// Show language specification or compact spec.
     #[command(alias = "help")]
     Spec(SpecArgs),
@@ -274,6 +277,12 @@ pub struct ServArgs {
     pub tools_path: Option<String>,
 }
 
+// ── Mcp ──────────────────────────────────────────────────────────────────────
+
+/// No options yet: MCP runs over stdio with newline-delimited JSON-RPC.
+#[derive(Args, Debug)]
+pub struct LspArgs {}
+
 // ── Httpd ──────────────────────────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
@@ -419,6 +428,7 @@ pub struct CheckArgs {
     #[arg(long)]
     pub show_effects: bool,
 }
+
 
 // ── Test ───────────────────────────────────────────────────────────────────────
 

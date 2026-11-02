@@ -4898,6 +4898,20 @@ impl VerifyContext {
                         (Ty::Text, Ty::Number) => {
                             Some("use 'num' to parse text (returns R n t)".to_string())
                         }
+                        (Ty::Number, Ty::Bool) => {
+                            // A numeric-literal ternary tail in a bool-returning
+                            // function is canonical `?cond 1 0` → `true`/`false`.
+                            if body.last().is_some_and(|stmt| {
+                                matches!(&stmt.node, crate::ast::Stmt::Expr(crate::ast::Expr::Ternary { .. }))
+                            }) {
+                                Some(crate::diagnostic::FIX_HINT_TERNARY_BOOL_LITERALS.to_string())
+                            } else {
+                                Some(
+                                    "change the return expression to b, or update the return type annotation"
+                                        .to_string(),
+                                )
+                            }
+                        }
                         _ => Some(format!(
                             "change the return expression to {expected}, or update the return type annotation"
                         )),
@@ -5902,6 +5916,8 @@ impl VerifyContext {
                                         .to_string(),
                                 )
                             }
+                        } else if callee == "range" && args.len() == 1 {
+                            Some(crate::diagnostic::FIX_HINT_RANGE_ZERO_START.to_string())
                         } else {
                             None
                         };
@@ -6111,7 +6127,23 @@ impl VerifyContext {
                             );
                         }
                     }
-                    let (ret_ty, errors) = builtin_check_args(callee, &arg_types, func, Some(span));
+                    let (ret_ty, mut errors) = builtin_check_args(callee, &arg_types, func, Some(span));
+                    // Offer a narrow, mechanically safe swap only when the
+                    // inferred types prove the common `at index collection`
+                    // reversal. Ambiguous or merely malformed calls remain
+                    // diagnostic-only.
+                    if callee == "at"
+                        && matches!(arg_types.first(), Some(Ty::Number))
+                        && matches!(arg_types.get(1), Some(Ty::List(_) | Ty::Text))
+                    {
+                        for error in &mut errors {
+                            if error.code == "ILO-T013" {
+                                error.hint = Some(
+                                    crate::diagnostic::FIX_HINT_SWAP_AT_ARGS.to_string(),
+                                );
+                            }
+                        }
+                    }
                     self.errors.extend(errors);
                     ret_ty
                 } else if let Some(sig) = self.functions.get(callee) {
@@ -6396,7 +6428,18 @@ impl VerifyContext {
                     for (n, _, _) in BUILTINS {
                         candidates.push(n.to_string());
                     }
-                    let hint = if self.glued_eq_binding_sites.contains(callee) {
+                    let join_matches_cat_args = callee == "join"
+                        && matches!(
+                            arg_types.as_slice(),
+                            [Ty::List(inner), Ty::Text] if matches!(inner.as_ref(), Ty::Text)
+                        );
+                    let not_matches_boolean =
+                        callee == "not" && matches!(arg_types.as_slice(), [Ty::Bool]);
+                    let hint = if join_matches_cat_args {
+                        Some(crate::diagnostic::FIX_HINT_JOIN_TO_CAT.to_string())
+                    } else if not_matches_boolean {
+                        Some(crate::diagnostic::FIX_HINT_NOT_TO_BANG.to_string())
+                    } else if self.glued_eq_binding_sites.contains(callee) {
                         Some(glued_double_eq_hint(callee, args))
                     } else {
                         closest_match(callee, candidates.iter())
