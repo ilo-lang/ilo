@@ -115,6 +115,15 @@ impl Fix {
                 if from == to {
                     return None;
                 }
+                // Renaming a call to a *builtin* is not a typo fix: the
+                // builtin has different semantics and different arity, so
+                // the "corrected" program may not even compile. The
+                // closest-match suggester happily proposes e.g. `not` ->
+                // `now`; applying that mechanically is worse than doing
+                // nothing. Only propose renames to non-builtin names.
+                if crate::verify::is_builtin(to) {
+                    return None;
+                }
                 Some(Fix::Rename {
                     from: from.to_string(),
                     to: to.to_string(),
@@ -427,6 +436,16 @@ fn derive_typo_rename(d: &Diagnostic, source: &str) -> Option<FixPlan> {
     }
     let before = source[span.start..span.end].to_string();
     if before.is_empty() || after.is_empty() {
+        return None;
+    }
+
+    // A suggestion that names a *builtin* is not a typo fix. Builtins have
+    // different arity and semantics, so renaming a call to one (e.g.
+    // `not n` -> `now n`) produces a program that is wrong in a new way.
+    // The closest-match suggester proposes these freely because the names
+    // are spelled similarly; refuse them so no automatic repair can apply
+    // one.
+    if crate::verify::is_builtin(&after) {
         return None;
     }
 

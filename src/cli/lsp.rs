@@ -515,7 +515,7 @@ mod tests {
     fn tool_definitions_match_implementations() {
         let defs = tool_definitions();
         let names: Vec<_> = defs.iter().map(|d| d["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["ilo_validate", "ilo_fix", "ilo_inspect", "ilo_hover", "ilo_definition", "ilo_complete", "ilo_symbols", "ilo_scaffold", "ilo_run_visible", "ilo_format"]);
+        assert_eq!(names, ["ilo_validate", "ilo_fix", "ilo_inspect", "ilo_hover", "ilo_definition", "ilo_complete", "ilo_symbols", "ilo_apply_fix", "ilo_scaffold", "ilo_run_visible", "ilo_format"]);
     }
 
     #[test]

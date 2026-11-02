@@ -9,6 +9,7 @@ use ilo::codegen;
 use ilo::diagnostic;
 use ilo::graph;
 use ilo::lang_svc::imports::{resolve_imports, BuildTarget};
+use ilo::lang_svc;
 #[cfg(test)]
 use ilo::lang_svc::imports::decl_name;
 use ilo::interpreter;
@@ -3062,6 +3063,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             let explicit_json = cli.global.explicit_json();
             check_cmd(&c.source, mode, explicit_json, c.strict, c.show_effects)
         }
+        Some(cli::Cmd::Fix(f)) => fix_cmd(&f.source, f.max_iters, f.safe_only),
         Some(cli::Cmd::Lsp(_)) => {
             cli::lsp::run();
             0
@@ -3628,6 +3630,48 @@ fn resolve_engine_func_name<'a>(
 /// out rather than reused so a future verify-only invocation path
 /// (e.g. an `--check-only` flag on `run`) can call into the same logic
 /// without disturbing the run hot path.
+fn fix_cmd(source_arg: &str, max_iters: usize, safe_only: bool) -> i32 {
+    // Read source from file or treat as inline code.
+    let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        match std::fs::read_to_string(source_arg) {
+            Ok(s) => (s, true),
+            Err(e) => {
+                eprintln!("Error reading {}: {}", source_arg, e);
+                return 1;
+            }
+        }
+    } else {
+        if source_arg.is_empty() {
+            eprintln!("Error: empty code string");
+            return 1;
+        }
+        (source_arg.to_string(), false)
+    };
+
+    // A file path lets the fixer resolve relative imports and keeps
+    // `fix_plan.path` pointing at the file the caller should edit.
+    let path = if is_file { Some(source_arg) } else { None };
+
+    let result = if safe_only {
+        lang_svc::repair_safe(&source, path, max_iters)
+    } else {
+        lang_svc::repair(&source, path, max_iters)
+    };
+
+    // One JSON object on stdout so agents can parse it without a decoder.
+    println!("{}", result);
+
+    let ok = result
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if ok {
+        0
+    } else {
+        1
+    }
+}
+
 fn check_cmd(
     source_arg: &str,
     mode: OutputMode,

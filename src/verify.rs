@@ -1048,8 +1048,15 @@ fn builtin_arity(name: &str) -> Option<usize> {
         .map(|(_, params, _)| params.len())
 }
 
-fn is_builtin(name: &str) -> bool {
-    Builtin::is_builtin(name)
+/// Whether `name` is a builtin. Public so the diagnostic layer can tell
+/// an ordinary typo suggestion (safe to rename) from a builtin suggestion
+/// (different semantics — not safe to rename mechanically).
+///
+/// Uses the full `BUILTINS` signature table rather than the VM opcode
+/// enum: the table also lists tree-bridge builtins (`now`, `rdin`, …) that
+/// have no dedicated opcode but are still reserved names.
+pub fn is_builtin(name: &str) -> bool {
+    Builtin::is_builtin(name) || BUILTINS.iter().any(|(n, _, _)| *n == name)
 }
 
 /// Detect the common param-order mistake in closure-bind HOFs like
