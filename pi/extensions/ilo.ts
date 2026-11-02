@@ -1,8 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ToolResultEvent,
+	ToolResultEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, resolve as resolvePath } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type Details = Record<string, unknown>;
@@ -21,8 +25,10 @@ interface PendingRequest {
 
 interface ReplState {
 	process: ChildProcessWithoutNullStreams;
+	cwd: string;
 	buffer: string;
 	idleTimer: NodeJS.Timeout | null;
+	killTimer: NodeJS.Timeout | null;
 	pending: PendingRequest[];
 }
 
@@ -36,10 +42,18 @@ function resolveIloBinary(): string {
 	const bundled = resolvePath(extDir, "..", "node_modules", ".bin", "ilo");
 	if (existsSync(bundled)) return bundled;
 
+	const executable = process.platform === "win32" ? "ilo.exe" : "ilo";
+	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+		if (!directory) continue;
+		const candidate = join(directory, executable);
+		if (existsSync(candidate)) return candidate;
+	}
+	const checkoutBuild = resolvePath(extDir, "../../target/debug", executable);
+	if (existsSync(checkoutBuild)) return checkoutBuild;
 	return "ilo";
 }
 
-function runIlo(args: string[], stdin?: string, signal?: AbortSignal): Promise<{
+function runIlo(args: string[], stdin?: string, signal?: AbortSignal, cwd?: string): Promise<{
 	stdout: string;
 	stderr: string;
 	exitCode: number | null;
@@ -47,10 +61,23 @@ function runIlo(args: string[], stdin?: string, signal?: AbortSignal): Promise<{
 	return new Promise((resolve, reject) => {
 		const child = spawn(resolveIloBinary(), args, {
 			stdio: ["pipe", "pipe", "pipe"],
+			...(cwd ? { cwd } : {}),
 		});
 
 		let stdout = "";
 		let stderr = "";
+		let forceKillTimer: NodeJS.Timeout | undefined;
+		const cleanup = () => {
+			if (forceKillTimer) clearTimeout(forceKillTimer);
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const onAbort = () => {
+			child.kill("SIGTERM");
+			forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 1_000);
+			forceKillTimer.unref();
+		};
+		if (signal?.aborted) onAbort();
+		else signal?.addEventListener("abort", onAbort, { once: true });
 
 		child.stdout.on("data", (chunk) => {
 			stdout += chunk.toString();
@@ -59,20 +86,18 @@ function runIlo(args: string[], stdin?: string, signal?: AbortSignal): Promise<{
 			stderr += chunk.toString();
 		});
 
-		child.on("error", reject);
+		child.on("error", (error) => {
+			cleanup();
+			reject(error);
+		});
 		child.on("close", (exitCode) => {
+			cleanup();
 			resolve({ stdout, stderr, exitCode });
 		});
 
 		// Swallow EPIPE if the child exits before we finish writing stdin.
 		// Without this, the 'error' event becomes uncaught.
 		child.stdin.on("error", () => {});
-
-		if (signal) {
-			signal.addEventListener("abort", () => {
-				child.kill("SIGTERM");
-			}, { once: true });
-		}
 
 		try {
 			if (stdin !== undefined) child.stdin.write(stdin);
@@ -84,38 +109,45 @@ function runIlo(args: string[], stdin?: string, signal?: AbortSignal): Promise<{
 }
 
 function resetReplIdleTimer() {
-	if (!repl) return;
-	if (repl.idleTimer) clearTimeout(repl.idleTimer);
-	repl.idleTimer = setTimeout(() => {
-		stopRepl();
+	const state = repl;
+	if (!state) return;
+	if (state.idleTimer) clearTimeout(state.idleTimer);
+	state.idleTimer = setTimeout(() => {
+		// A timer from an old process must never stop a newer session.
+		if (repl === state) stopRepl();
 	}, REPL_IDLE_TIMEOUT_MS);
 }
 
-function stopRepl() {
-	if (!repl) return;
-	if (repl.idleTimer) clearTimeout(repl.idleTimer);
-	for (const pending of repl.pending) {
-		pending.reject(new Error("REPL session stopped before response arrived"));
-	}
+function stopRepl(reason = new Error("REPL session stopped before response arrived")) {
+	const state = repl;
+	if (!state) return;
+	repl = null;
+	if (state.idleTimer) clearTimeout(state.idleTimer);
+	for (const pending of state.pending.splice(0)) pending.reject(reason);
 	try {
-		repl.process.kill("SIGTERM");
+		state.process.kill("SIGTERM");
+		state.killTimer = setTimeout(() => state.process.kill("SIGKILL"), 1_000);
+		state.killTimer.unref();
 	} catch {
 		// ignore
 	}
-	repl = null;
 }
 
-function startRepl(): ReplState {
-	if (repl) return repl;
+function startRepl(cwd: string): ReplState {
+	if (repl?.cwd === cwd) return repl;
+	if (repl) stopRepl(new Error("ilo serv working directory changed; session reset"));
 
 	const proc = spawn(resolveIloBinary(), ["serv"], {
 		stdio: ["pipe", "pipe", "pipe"],
+		cwd,
 	});
 
 	const state: ReplState = {
 		process: proc,
+		cwd,
 		buffer: "",
 		idleTimer: null,
+		killTimer: null,
 		pending: [],
 	};
 	repl = state;
@@ -130,6 +162,14 @@ function startRepl(): ReplState {
 		while (newlineIndex !== -1) {
 			const line = state.buffer.slice(0, newlineIndex);
 			state.buffer = state.buffer.slice(newlineIndex + 1);
+			// Startup notifications are not responses to queued requests.
+			try {
+				const message = JSON.parse(line);
+				if (message?.ready === true && !("ok" in message) && !("error" in message)) {
+					newlineIndex = state.buffer.indexOf("\n");
+					continue;
+				}
+			} catch { /* Preserve non-JSON responses for error reporting. */ }
 			const pending = state.pending.shift();
 			if (pending) {
 				pending.resolve(line);
@@ -146,7 +186,9 @@ function startRepl(): ReplState {
 	proc.stdin.on("error", () => {});
 
 	proc.on("close", () => {
-		for (const pending of state.pending) {
+		if (state.idleTimer) clearTimeout(state.idleTimer);
+		if (state.killTimer) clearTimeout(state.killTimer);
+		for (const pending of state.pending.splice(0)) {
 			pending.reject(new Error("ilo serv exited"));
 		}
 		state.pending = [];
@@ -154,7 +196,9 @@ function startRepl(): ReplState {
 	});
 
 	proc.on("error", (err) => {
-		for (const pending of state.pending) {
+		if (state.idleTimer) clearTimeout(state.idleTimer);
+		if (state.killTimer) clearTimeout(state.killTimer);
+		for (const pending of state.pending.splice(0)) {
 			pending.reject(err);
 		}
 		state.pending = [];
@@ -165,8 +209,9 @@ function startRepl(): ReplState {
 	return state;
 }
 
-function sendToRepl(payload: object, signal?: AbortSignal): Promise<string> {
-	const state = repl ?? startRepl();
+function sendToRepl(payload: object, signal?: AbortSignal, cwd = process.cwd()): Promise<string> {
+	if (signal?.aborted) return Promise.reject(new Error("ilo serv request aborted"));
+	const state = repl?.cwd === cwd ? repl : startRepl(cwd);
 	resetReplIdleTimer();
 
 	return new Promise<string>((resolve, reject) => {
@@ -176,9 +221,10 @@ function sendToRepl(payload: object, signal?: AbortSignal): Promise<string> {
 		}
 
 		const timer = setTimeout(() => {
-			const index = state.pending.indexOf(entry);
-			if (index !== -1) state.pending.splice(index, 1);
-			reject(new Error("ilo serv request timed out"));
+			// A response may still arrive after timeout. Retiring the session
+			// prevents that stale line being paired with a later request.
+			if (repl === state) stopRepl(new Error("ilo serv request timed out; session reset"));
+			else entry.reject(new Error("ilo serv request timed out"));
 		}, REPL_REQUEST_TIMEOUT_MS);
 
 		const entry: PendingRequest = {
@@ -195,9 +241,10 @@ function sendToRepl(payload: object, signal?: AbortSignal): Promise<string> {
 		};
 
 		const onAbort = () => {
-			const index = state.pending.indexOf(entry);
-			if (index !== -1) state.pending.splice(index, 1);
-			entry.reject(new Error("ilo serv request aborted"));
+			// Do not remove only this queue slot: the corresponding response can
+			// still arrive and would then resolve the next caller's request.
+			if (repl === state) stopRepl(new Error("ilo serv request aborted; session reset"));
+			else entry.reject(new Error("ilo serv request aborted"));
 		};
 		if (signal) signal.addEventListener("abort", onAbort, { once: true });
 
@@ -221,7 +268,299 @@ function describeIloError(err: unknown): string {
 	return message;
 }
 
+// ---------------------------------------------------------------------------
+// Hooks: invariants enforced by mechanism, not by skill prose.
+//
+// Design rule: skills carry *knowledge* (what `?{...}` arms mean); hooks
+// carry *invariants* (validate after editing, never shell out to `ilo`).
+// Every "always/never" sentence that would otherwise live in SKILL.md is a
+// candidate for extraction into a handler below. Hooks are fail-open: any
+// internal error returns undefined and the turn proceeds untouched.
+//
+// Cross-harness equivalents (Pi only is implemented; logic is portable):
+// - validate-on-edit `tool_result` handler → Claude Code `PostToolUse`
+//   with matcher `Edit|Write` (or `Bash`), appending to `additionalContext`;
+//   Codex `[[hooks]]` on the equivalent post-tool event.
+// - run-failure enrichment → Claude Code `PostToolUse` matcher on the
+//   run tool, same `additionalContext` channel.
+// - `bash` redirect `tool_call` block → Claude Code `PreToolUse` matcher
+//   `Bash` returning `"decision": "block"` with a reason.
+// - settle gate (`agent_before_settle` + `continue: true`) → Claude Code
+//   `Stop` hook returning a block-with-reason, forcing continuation.
+// - `registerMcpServer("ilo", ...)` bridge → `claude mcp add` /
+//   Codex `mcp_servers` config (native in both; no code needed).
+//
+// Disable all hooks (tools keep working) with ILO_NO_HOOKS=1.
+// ---------------------------------------------------------------------------
+
+const ILO_HOOKS_DISABLED =
+	process.env.ILO_NO_HOOKS === "1" || process.env.ILO_NO_HOOKS === "true";
+const ILO_CHECK_TIMEOUT_MS = 15_000;
+const ILO_DIAG_SNIPPET_MAX = 2000;
+
+/** .ilo files edited but not yet cleanly validated. Cleared on session_start. */
+const dirtyIloFiles = new Set<string>();
+/** Settle-gate loop guard: at most one forced continuation per user request. */
+let settleNudgedTurnIndex: number | null = null;
+let currentTurnIndex = 0;
+
+function iloPathFromInput(input: Record<string, unknown>, cwd: string): string | null {
+	const raw = input.path ?? input.file;
+	if (typeof raw !== "string" || !raw.endsWith(".ilo")) return null;
+	return isAbsolute(raw) ? raw : resolvePath(cwd, raw);
+}
+
+function iloPathsFromCommand(command: unknown, cwd: string): string[] {
+	if (typeof command !== "string" || !command.includes(".ilo")) return [];
+	const found = new Set<string>();
+	for (const match of command.matchAll(/["']?([\w./~$-][\w./~$-]*\.ilo)["']?/g)) {
+		try {
+			const path = isAbsolute(match[1]) ? match[1] : resolvePath(cwd, match[1]);
+			if (existsSync(path)) found.add(path);
+		} catch {
+			// ignore; existence check is best-effort
+		}
+	}
+	return [...found];
+}
+
+function readableDiagnostics(output: string): string {
+	return output.split("\n").map((line) => {
+		try {
+			const d = JSON.parse(line);
+			if (typeof d.message !== "string") return line;
+			const label = d.labels?.find((l: { primary?: boolean }) => l.primary);
+			const location = label?.line ? `${label.line}:${label.col ?? 1} ` : "";
+			return `${location}${d.code ?? d.severity ?? "diagnostic"}: ${d.message}${d.suggestion ? `\n  → ${d.suggestion}` : ""}`;
+		} catch { return line; }
+	}).join("\n");
+}
+
+/** Run `ilo check` on an input. Returns compact diagnostics, or null when clean. Never throws. */
+async function checkIlo(args: string[], dirtyPath?: string): Promise<string | null> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), ILO_CHECK_TIMEOUT_MS);
+	try {
+		const result = await runIlo(["check", ...args], undefined, controller.signal);
+		const output = `${result.stdout}\n${result.stderr}`.trim();
+		if (result.exitCode === 0 && output === "" && dirtyPath) dirtyIloFiles.delete(dirtyPath);
+		if (result.exitCode === 0 && output === "") return null;
+		const readable = readableDiagnostics(output);
+		const head =
+			readable.length > ILO_DIAG_SNIPPET_MAX
+				? readable.slice(0, ILO_DIAG_SNIPPET_MAX) + "\n\u2026(truncated)"
+				: readable;
+		// A failing file check leaves its dirty marker set for the settle gate.
+		return head === "" ? `(exit ${result.exitCode}, no output)` : head;
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function checkIloFile(path: string): Promise<string | null> {
+	return checkIlo([path], path);
+}
+
+function checkIloSource(source: string): Promise<string | null> {
+	return checkIlo([source]);
+}
+
+function markDirty(path: string): void {
+	dirtyIloFiles.add(path);
+}
+
+function appendTextResult(
+	event: ToolResultEvent,
+	suffix: string,
+): ToolResultEventResult {
+	return {
+		content: [...event.content, { type: "text", text: suffix }],
+		...(event.structuredContent !== undefined ? { structuredContent: event.structuredContent } : {}),
+	};
+}
+
+function hasFixPlan(structured: unknown): { has: boolean; code?: string } {
+	try {
+		const v = structured as { diagnostics?: Array<{ code?: string; fix_plan?: unknown }> };
+		const d = v?.diagnostics?.find((x) => x?.fix_plan != null);
+		return d ? { has: true, code: d.code } : { has: false };
+	} catch { return { has: false }; }
+}
+
+function registerIloHooks(pi: ExtensionAPI): void {
+	if (ILO_HOOKS_DISABLED) return;
+
+	pi.on("session_start", () => {
+		dirtyIloFiles.clear();
+		settleNudgedTurnIndex = null;
+	});
+
+	pi.on("before_agent_start", () => {
+		settleNudgedTurnIndex = null;
+	});
+
+	pi.on("turn_start", (event) => {
+		currentTurnIndex = event.turnIndex;
+	});
+
+	// Validate-on-edit: errors surface in the same turn, no model step needed.
+	pi.on("tool_result", async (event, ctx) => {
+		try {
+			if (event.toolName === "edit" || event.toolName === "write") {
+				const path = iloPathFromInput(event.input, ctx.cwd);
+				if (!path) return;
+				markDirty(path);
+				const diagnostics = await checkIloFile(path);
+				if (diagnostics === null) return;
+				return appendTextResult(event, `[ilo] validation of ${path}:\n${diagnostics}`);
+			}
+			if (event.toolName === "bash") {
+				const paths = iloPathsFromCommand(event.input.command, ctx.cwd);
+				if (paths.length === 0) return;
+				const sections: string[] = [];
+				for (const path of paths) {
+					markDirty(path);
+					const diagnostics = await checkIloFile(path);
+					if (diagnostics !== null) sections.push(`[ilo] validation of ${path}:\n${diagnostics}`);
+				}
+				if (sections.length === 0) return;
+				return appendTextResult(event, sections.join("\n\n"));
+			}
+			// Every MCP validation result can carry a fix_plan. Surface it
+			// immediately so the model knows the cheapest path.
+			if ((event.toolName === "ilo_validate" || /^mcp__.+__ilo_validate$/.test(event.toolName))) {
+				// Hook .ilo edits: a validation of a dirty file should satisfy
+				// the settle gate, so re-check the on-disk file rather than
+				// trusting a possibly stale source string in the MCP args.
+				const path = iloPathFromInput(event.input, ctx.cwd);
+				if (path && dirtyIloFiles.has(path)) {
+					const diagnostics = await checkIloFile(path);
+					if (diagnostics !== null) return appendTextResult(event, `[ilo] current file diagnostics for ${path}:\n${diagnostics}`);
+					return;
+				}
+				const fp = hasFixPlan(event.structuredContent);
+				if (fp.has) {
+					const hint = fp.code === "ILO-P011" ? " (reserved name → use hyphen or digit suffix)" : "";
+					return appendTextResult(event, `[ilo] → ⚡ fix available: call ilo_apply_fix with same source (index 0) or ilo_fix for multi-fix loop${hint}`);
+				}
+				return;
+			}
+			if ((event.toolName === "ilo_fix" || /^mcp__.+__ilo_fix$/.test(event.toolName)) && event.structuredContent) {
+				const v = event.structuredContent as Record<string, unknown>;
+				const remaining = typeof v.remaining_fixable === "number" ? v.remaining_fixable : null;
+				if (remaining !== null && remaining > 0) return appendTextResult(event, `[ilo] → ${remaining} fixable diagnostic(s) remain — re-validate before finishing.`);
+			}
+			if (event.toolName === "ilo_run") {
+				const details = event.details;
+				const exitCode =
+					details !== null && typeof details === "object" && "exitCode" in details
+						? details.exitCode
+						: undefined;
+				const failed = event.isError || (typeof exitCode === "number" && exitCode !== 0);
+				const file =
+					typeof event.input.file === "string" && event.input.file.endsWith(".ilo")
+						? iloPathFromInput(event.input, ctx.cwd)
+						: null;
+				if (file) {
+					// A successful file run also validates and clears any dirty marker.
+					const diagnostics = await checkIloFile(file);
+					if (diagnostics !== null && failed) {
+						return appendTextResult(event, `[ilo] verifier diagnostics for ${file}:\n${diagnostics}`);
+					}
+					if (diagnostics !== null) {
+						return appendTextResult(event, `[ilo] validation of ${file}:\n${diagnostics}`);
+					}
+					return;
+				}
+				if (failed && typeof event.input.code === "string") {
+					const diagnostics = await checkIloSource(event.input.code);
+					if (diagnostics !== null) {
+						return appendTextResult(event, `[ilo] verifier diagnostics for inline source:\n${diagnostics}`);
+					}
+				}
+			}
+		} catch {
+			// fail-open: never break a turn from a hook
+		}
+	});
+
+	// Redirect: `ilo` over bash is always worse than the native tools.
+	// Blocks the call with a reason so the model retries via ilo_run.
+	pi.on("tool_call", (event) => {
+		try {
+			if (ILO_HOOKS_DISABLED || event.toolName !== "bash") return;
+			const command = event.input.command;
+			if (typeof command !== "string") return;
+			// Match command positions (start of input / after shell separators),
+			// not arbitrary words inside `echo`, comments, or quoted arguments.
+			const iloCommand =
+				/(?:^|[\n;&|])\s*(?:(?:env|command|exec|sudo)\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:(?:env|command|exec|sudo)\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:"(?:[^"]*\/)?ilo(?:\.exe)?"|'(?:[^']*\/)?ilo(?:\.exe)?'|(?:[^\s"';&|]*\/)?ilo(?:\.exe)?)(?=\s|$|[;&|])/m;
+			if (iloCommand.test(command)) {
+				return {
+					block: true,
+					reason:
+						"Do not shell out to the `ilo` binary; use the ilo_run tool (or ilo_repl for sessions) instead: structured results, no permission prompt.",
+				};
+			}
+		} catch {
+			// fail-open
+		}
+	});
+
+	// Settle gate: never finish a run with unvalidated .ilo edits.
+	pi.on("agent_before_settle", async () => {
+		try {
+			if (dirtyIloFiles.size === 0) return;
+			if (settleNudgedTurnIndex !== null) return;
+			settleNudgedTurnIndex = currentTurnIndex;
+			const files = [...dirtyIloFiles].join(", ");
+			return {
+				continue: true,
+				entries: [
+					{
+						type: "custom_message",
+						customType: "ilo-unvalidated-edits",
+						content: `You edited ${files} without a clean validation. Run each file with ilo_run or validate its exact path with ilo, then fix any remaining diagnostics before finishing.`,
+						display: false,
+					},
+				],
+			};
+		} catch {
+			// fail-open
+		}
+	});
+
+	// Bridge ilo's language intelligence into the session when present.
+	const mcpBin = resolveIloBinary();
+	if (mcpBin) {
+		try {
+			pi.registerMcpServer("ilo", { command: mcpBin, args: ["lsp"], exposure: "direct" });
+		} catch {
+			// fail-open: execution tools keep working without intelligence
+		}
+	}
+}
+
 export default function (pi: ExtensionAPI) {
+	registerIloHooks(pi);
+	pi.on("session_shutdown", () => stopRepl());
+	pi.registerTool({
+		name: "ilo_help",
+		label: "ilo guidance",
+		description: "Read focused, version-matched guidance from the installed ilo compiler before writing code. Start with ilo-language and ilo-edit-loop; request one topic at a time.",
+		promptGuidelines: ["Before writing unfamiliar ilo syntax, use ilo_help for ilo-language and ilo-edit-loop; do not guess from another language."],
+		parameters: Type.Object({ topic: Type.Union([
+			Type.Literal("ilo-language"), Type.Literal("ilo-edit-loop"),
+			Type.Literal("ilo-builtins"), Type.Literal("ilo-errors"),
+		]) }),
+		async execute(_id, params, signal, _update, ctx): Promise<ToolResult> {
+			const result = await runIlo(["skill", "get", params.topic], undefined, signal, ctx.cwd);
+			if (result.exitCode !== 0) throw new Error(result.stderr || "Compiler guidance unavailable; check ILO_BIN and compiler version.");
+			return { content: [{ type: "text", text: result.stdout }], details: { topic: params.topic } };
+		},
+	});
 	pi.registerTool({
 		name: "ilo_run",
 		label: "Run ilo",
@@ -242,7 +581,7 @@ export default function (pi: ExtensionAPI) {
 			})),
 		}),
 
-		async execute(_toolCallId, params, signal): Promise<ToolResult> {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult> {
 			const code = params.code as string | undefined;
 			const file = params.file as string | undefined;
 			const func = params.func as string | undefined;
@@ -267,10 +606,10 @@ export default function (pi: ExtensionAPI) {
 			cliArgs.push(...args);
 
 			try {
-				const result = await runIlo(cliArgs, undefined, signal);
+				const result = await runIlo(cliArgs, undefined, signal, ctx.cwd);
 				const text = [
 					result.stdout ? `stdout:\n${result.stdout}` : "stdout: (empty)",
-					result.stderr ? `stderr:\n${result.stderr}` : "",
+					result.stderr ? `stderr:\n${readableDiagnostics(result.stderr)}` : "",
 					`exit: ${result.exitCode}`,
 				].filter(Boolean).join("\n\n");
 
@@ -311,12 +650,12 @@ export default function (pi: ExtensionAPI) {
 			})),
 		}),
 
-		async execute(_toolCallId, params, signal): Promise<ToolResult> {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult> {
 			const command = params.command as string;
 
 			if (command === "start") {
 				try {
-					startRepl();
+					startRepl(ctx.cwd);
 					return {
 						content: [{ type: "text", text: "ilo serv session started." }],
 						details: { running: true },
@@ -359,7 +698,7 @@ export default function (pi: ExtensionAPI) {
 				if (params.args) payload.args = params.args;
 
 				try {
-					const responseLine = await sendToRepl(payload, signal);
+					const responseLine = await sendToRepl(payload, signal, ctx.cwd);
 					return {
 						content: [{ type: "text", text: responseLine }],
 						details: { response: responseLine },
