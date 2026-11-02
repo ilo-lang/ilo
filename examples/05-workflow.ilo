@@ -1,1 +1,33 @@
-chk pid:t amt:n its:L item>R receipt t;reserve its;?{^er:^+"Inventory unavailable: "er;~rid:charge pid amt;?{^er:release rid;^+"Payment failed: "er;~cid:oid=make-id();~receipt oid:oid cid:cid rid:rid}}
+-- 05-workflow: an order workflow that reserves inventory, charges the
+-- payment, and produces a receipt. If the charge fails, the reservation
+-- is released (compensating action) before the error propagates.
+
+type item{
+  id:t;qty:n
+}
+
+type receipt{
+  oid:t;cid:t;rid:t
+}
+
+make-id>t
+  "TXN-9F2K"
+
+reserve its:L item>R t t
+  =len its 0 ^"empty order"
+  ~"rsv-77"
+
+charge pid:t amt:n>R t t
+  >amt 0 ~"pay-55"
+  ^"negative amount"
+
+release rid:t>R t t
+  ~"released"
+
+checkout pid:t amt:n its:L item>R receipt t
+  rid=reserve! its
+  pay=charge pid amt
+  ?pay{
+    ~cid:~receipt oid:make-id() cid:cid rid:rid
+    ^er:release rid;^+"Payment failed: "er
+  }

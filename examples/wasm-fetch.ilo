@@ -14,4 +14,4 @@
 -- works identically through the minreq backend.
 
 resp=get "https://httpbin.org/get"
-?r{~v:prnt v;^e:prnt (fmt "error: {}" e)}resp
+?resp{~v:prnt v;^e:prnt (fmt "error: {}" e)}resp

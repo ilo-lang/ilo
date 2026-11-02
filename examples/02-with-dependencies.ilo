@@ -1,1 +1,34 @@
-prc ord:order>R order t;vld ord.addr;?{^_:^"Invalid shipping address"};sh=shipping ord.weight ord.addr.country;dc=discount ord.subtotal ord.code;fin=+(-ord.subtotal dc)sh;~ord with total:fin cost:sh
+-- 02-with-dependencies: order processing that validates the shipping
+-- address, applies a weight-based shipping fee and a promo code discount,
+-- and returns the updated order record.
+
+type addr{
+  city:t;country:t;zip:t
+}
+
+type order{
+  id:t;weight:n;subtotal:n;code:t;addr:addr;total:n;cost:n
+}
+
+validate-addr a:addr>b
+  =a.zip "" false
+  =a.city "" false
+  true
+
+shipping weight:n country:t>n
+  !=country "US" 40
+  <weight 10 25
+  15
+
+discount subtotal:n code:t>n
+  =code "SAVE20" *subtotal 0.2
+  0
+
+process-order o:order>R order t
+  !validate-addr o.addr{ret ^"Invalid shipping address"}
+  sh=shipping o.weight o.addr.country
+  dc=discount o.subtotal o.code
+  fin=-o.subtotal dc
+  fin=+fin sh
+  upd=o with total:fin cost:sh
+  ~upd

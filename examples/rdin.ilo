@@ -6,5 +6,5 @@
 -- It can only run in a pipeline; the engine harness skips it (no -- run: marker).
 
 main>t
-s=rdin!
-trm s
+  s=rdin!
+  trm s

@@ -15,6 +15,12 @@
 // Multiple run/out (or run/err) pairs per file are supported; they are
 // matched in order. A `-- run:` pairs with whichever of `-- out:` /
 // `-- err:` follows first.
+//
+// Coverage note: a second test (`verify_all_examples`) runs `ilo check` on
+// EVERY example, annotated or not, so un-annotated files (capability/env
+// demos, pipeline-only inputs, external-package demos) cannot silently drift
+// out of grammar. Files that legitimately need an external resource opt out
+// with a `-- check-skip:` annotation.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -164,4 +170,50 @@ fn examples() {
     }
 
     println!("{total} example tests passed across {} files", files.len());
+}
+
+/// Every example must at least *verify* (`ilo check`), whether or not it
+/// carries `-- run:` annotations. This closes the gap where un-annotated
+/// files were never parsed/verified by CI and silently drifted out of
+/// grammar. Files that legitimately need an external resource (e.g. an
+/// `ilo add` package) opt out with a `-- check-skip:` annotation.
+#[test]
+fn verify_all_examples() {
+    let files = find_examples();
+    let mut failures: Vec<String> = Vec::new();
+    let mut verified = 0;
+    let mut skipped = 0;
+
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let src =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {name}: {e}"));
+        if src.lines().any(|l| l.trim().starts_with("-- check-skip:")) {
+            skipped += 1;
+            continue;
+        }
+        verified += 1;
+        let out = ilo().arg("check").arg(path).output()
+            .unwrap_or_else(|e| panic!("failed to run ilo check for {name}: {e}"));
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            failures.push(format!(
+                "{name}: `ilo check` failed (exit {})\n{}",
+                out.status,
+                stderr.trim(),
+            ));
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} example(s) failed verification:\n\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        );
+    }
+
+    println!(
+        "{verified} examples verified, {skipped} skipped (external dependency)"
+    );
 }

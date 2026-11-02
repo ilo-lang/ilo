@@ -16,4 +16,4 @@ notify uid:t msg:t>R _ t
   u=get-user! uid
   !u.verified{ret ^"user not verified"}
   send-email! u.email "Notification" msg
-  ~_
+  ~"ok"

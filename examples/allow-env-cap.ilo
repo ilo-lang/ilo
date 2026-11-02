@@ -22,8 +22,6 @@ blocked-demo>R t t
 -- main: reads PATH and HOME, then prints a summary of whether each succeeded.
 main>_
   r-path=read-path()
-  ?{r-path|er: prnt +"PATH blocked: " er
-           ~v:  prnt +"PATH ok, len=" lnt v}
+  ?r-path{~v:prnt +"PATH ok, len=" str (len v);^e:prnt +"PATH blocked: " e}
   r-home=env "HOME"
-  ?{r-home|er: prnt +"HOME blocked: " er
-           ~v:  prnt +"HOME=" v}
+  ?r-home{~v:prnt +"HOME=" v;^e:prnt +"HOME blocked: " e}

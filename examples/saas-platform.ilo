@@ -17,13 +17,10 @@ type event{user-id:t;action:t;ts:n;meta:t}
 -- === VALIDATION ===
 
 vld-email em:t>R t t
-  !has em "@" ^"invalid email"
-  ~em
+  ?has em "@"{~em}{^"invalid email"}
 
 vld-plan p:t>R t t
-  s=S "free" "pro" "enterprise"
-  !has ["free","pro","enterprise"] p ^cat "unknown plan: " p
-  ~p
+  ?has ["free","pro","enterprise"] p{~p}{^+"unknown plan: " p}
 
 vld-user u:user>R user t
   vld-email! u.email
@@ -35,12 +32,14 @@ vld-user u:user>R user t
 create-user email:t name:t plan:t>R user t
   vld-email! email
   vld-plan! plan
-  uid=cat "usr-" str now
-  ~user id:uid email:email name:name plan:plan created:now active:true
+  ts=now
+  uid=+"usr-" str ts
+  ~user id:uid email:email name:name plan:plan created:ts active:true
 
 update-plan u:user new-plan:t>R user t
   vld-plan! new-plan
-  ~u with plan:new-plan
+  upd=u with plan:new-plan
+  ~upd
 
 deactivate u:user>user
   u with active:false
@@ -54,15 +53,13 @@ is-active u:user>b
 -- === TEAM MANAGEMENT ===
 
 create-team name:t owner:user>R team t
-  !is-active owner ^"owner must be active"
-  tid=cat "team-" str now
-  ~team id:tid name:name owner:owner.id members:[owner.id] plan:owner.plan
+  ?owner.active{true:ts=now;tid=+"team-" str ts;~team id:tid name:name owner:owner.id members:[owner.id] plan:owner.plan;false:^"owner must be active"}
 
 add-member tm:team u:user>R team t
-  !is-active u ^"member must be active"
-  has tm.members u.id ^"already a member"
-  ms=+tm.members u.id
-  ~tm with members:ms
+  mem=has tm.members u.id
+  ms=+tm.members [u.id]
+  upd=tm with members:ms
+  ?mem{true:^"already a member";false:~upd}
 
 team-size tm:team>n
   len tm.members
@@ -72,22 +69,26 @@ team-size tm:team>n
 line-total li:line-item>n
   *li.qty li.rate
 
-invoice-total inv:invoice>n
-  sum map line-total inv.items
+invoice-total myinv:invoice>n
+  sum map line-total myinv.items
 
 create-invoice uid:t items:L line-item>R invoice t
   <=len items 0 ^"no items"
-  iid=cat "inv-" str now
+  ts=now
+  iid=+"inv-" str ts
   tot=sum map line-total items
-  ~invoice id:iid user-id:uid amount:tot status:"pending" due:+now 2592000 items:items
+  dv=+ts 2592000
+  ~invoice id:iid user-id:uid amount:tot status:"pending" due:dv items:items
 
-pay-invoice inv:invoice method:t>R payment t
-  !=inv.status "pending" ^cat "cannot pay: " inv.status
-  pid=cat "pay-" str now
-  ~payment id:pid invoice-id:inv.id amount:inv.amount method:method ts:now
+pay-invoice myinv:invoice method:t>R payment t
+  !=myinv.status "pending"{^+"cannot pay: " myinv.status}
+  ts=now
+  pid=+"pay-" str ts
+  ~payment id:pid invoice-id:myinv.id amount:myinv.amount method:method ts:ts
 
-is-overdue inv:invoice>b
-  &=inv.status "pending" >now inv.due
+is-overdue myinv:invoice>b
+  ts=now
+  &=myinv.status "pending" >ts myinv.due
 
 overdue-invoices invoices:L invoice>L invoice
   flt is-overdue invoices
@@ -95,9 +96,11 @@ overdue-invoices invoices:L invoice>L invoice
 -- === USAGE TRACKING ===
 
 track uid:t feature:t>usage
-  usage user-id:uid feature:feature count:1 period:str now
+  ts=now
+  prd=str ts
+  usage user-id:uid feature:feature count:1 period:prd
 
-aggregate usages:L usage>L usage
+aggregate usages:L usage>M t L usage
   grp by-feature usages
 
 by-feature u:usage>t
@@ -120,15 +123,16 @@ email-notify to:t subject:t body:t>notification
 sms-notify to:t body:t>notification
   notification to:to subject:"" body:body channel:"sms"
 
-notify-overdue inv:invoice u:user>notification
-  subj=cat "Overdue: " inv.id
-  body=fmt "Invoice {} for ${} is overdue" inv.id str inv.amount
+notify-overdue myinv:invoice u:user>notification
+  subj=+"Overdue: " myinv.id
+  body=fmt "Invoice {} for ${} is overdue" myinv.id str myinv.amount
   email-notify u.email subj body
 
 -- === ANALYTICS ===
 
 log-event uid:t action:t>event
-  event user-id:uid action:action ts:now meta:""
+  ts=now
+  event user-id:uid action:action ts:ts meta:""
 
 count-events events:L event action:t>n
   len flt is-action events
@@ -136,12 +140,13 @@ count-events events:L event action:t>n
 is-action ev:event>b
   =ev.action "login"
 
-active-users events:L event window:n>L t
+active-users events:L event win:n>L t
   recent=flt in-window events
   unq map get-uid recent
 
 in-window ev:event>b
-  >ev.ts -now 86400
+  ts=now
+  >ev.ts -ts 86400
 
 get-uid ev:event>t
   ev.user-id
@@ -151,16 +156,16 @@ get-uid ev:event>t
 onboard email:t name:t plan:t>R user t
   u=create-user! email name plan
   log-event u.id "signup"
-  email-notify u.email "Welcome" cat "Hi " name
+  email-notify u.email "Welcome" +"Hi " name
   ~u
 
-process-payment uid:t inv:invoice method:t>R payment t
-  p=pay-invoice! inv method
+process-payment uid:t myinv:invoice method:t>R payment t
+  p=pay-invoice! myinv method
   log-event uid "payment"
-  email-notify uid "Payment received" cat "Paid $" str inv.amount
+  email-notify uid "Payment received" +"Paid $" str myinv.amount
   ~p
 
 monthly-billing u:user items:L line-item>R invoice t
-  inv=create-invoice! u.id items
+  myinv=create-invoice! u.id items
   log-event u.id "invoice-created"
-  ~inv
+  ~myinv

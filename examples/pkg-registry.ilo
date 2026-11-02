@@ -1,6 +1,11 @@
 -- pkg-registry.ilo
 -- End-to-end demo of `ilo add` / `use "owner/repo"` package import.
 --
+-- This example requires an external package (`ilo add ilo-lang/ilo-example-package`)
+-- so it cannot verify in a clean checkout. It is excluded from the verify-all
+-- coverage pass via the `-- check-skip:` annotation below.
+-- check-skip: requires `ilo add ilo-lang/ilo-example-package`
+--
 -- Step 1 — install the example package (one-time, writes ilo.lock):
 --   ilo add ilo-lang/ilo-example-package
 --
