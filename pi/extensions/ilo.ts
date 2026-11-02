@@ -42,14 +42,19 @@ function resolveIloBinary(): string {
 	const bundled = resolvePath(extDir, "..", "node_modules", ".bin", "ilo");
 	if (existsSync(bundled)) return bundled;
 
+	// A checkout build comes before PATH: it is the binary the extension is
+	// usually developed against, and an older `ilo` earlier on PATH would
+	// silently lack newer subcommands (e.g. `ilo fix`). When the extension
+	// is installed from npm there is no checkout, so PATH is the fallback.
 	const executable = process.platform === "win32" ? "ilo.exe" : "ilo";
+	const checkoutBuild = resolvePath(extDir, "../../target/debug", executable);
+	if (existsSync(checkoutBuild)) return checkoutBuild;
+
 	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
 		if (!directory) continue;
 		const candidate = join(directory, executable);
 		if (existsSync(candidate)) return candidate;
 	}
-	const checkoutBuild = resolvePath(extDir, "../../target/debug", executable);
-	if (existsSync(checkoutBuild)) return checkoutBuild;
 	return "ilo";
 }
 
@@ -324,6 +329,24 @@ function iloPathsFromCommand(command: unknown, cwd: string): string[] {
 	return [...found];
 }
 
+/** Parse the JSON diagnostic stream emitted by `ilo check --json`.
+ *  Returns the diagnostics that carry a `fix_plan` first-class so callers
+ *  can decide whether a mechanical repair is available. */
+function parseDiagnosticJson(output: string): Array<Record<string, unknown>> {
+	const diagnostics: Array<Record<string, unknown>> = [];
+	for (const line of output.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith("{")) continue;
+		try {
+			const parsed = JSON.parse(trimmed);
+			if (parsed && typeof parsed === "object" && typeof parsed.message === "string") {
+				diagnostics.push(parsed as Record<string, unknown>);
+			}
+		} catch { /* not a diagnostic line */ }
+	}
+	return diagnostics;
+}
+
 function readableDiagnostics(output: string): string {
 	return output.split("\n").map((line) => {
 		try {
@@ -532,15 +555,21 @@ function registerIloHooks(pi: ExtensionAPI): void {
 		}
 	});
 
-	// Bridge ilo's language intelligence into the session when present.
-	const mcpBin = resolveIloBinary();
-	if (mcpBin) {
-		try {
-			pi.registerMcpServer("ilo", { command: mcpBin, args: ["lsp"], exposure: "direct" });
-		} catch {
-			// fail-open: execution tools keep working without intelligence
-		}
-	}
+	// NOTE: an earlier version bridged the compiler's MCP server into the
+	// session with `pi.registerMcpServer(...)`. That API does not exist in
+	// the pi SDK this extension targets, so the bridge was silently a no-op
+	// and the `ilo_validate` / `ilo_fix` tools never reached the agent.
+	//
+	// The language-intelligence tools are therefore registered directly
+	// below (see `ilo_check` and `ilo_fix`), which works on every pi
+	// version. Users who want the full MCP surface (hover, completion,
+	// go-to-definition, inspect) can still register the compiler manually:
+	//
+	//   pi mcp add ilo -- /absolute/path/to/ilo lsp
+	//
+	// or by adding to the agent's mcp.json:
+	//
+	//   {"mcpServers":{"ilo":{"command":"/abs/path/to/ilo","args":["lsp"],"exposure":"direct"}}}
 }
 
 export default function (pi: ExtensionAPI) {
@@ -561,6 +590,138 @@ export default function (pi: ExtensionAPI) {
 			return { content: [{ type: "text", text: result.stdout }], details: { topic: params.topic } };
 		},
 	});
+	pi.registerTool({
+		name: "ilo_check",
+		label: "Check ilo source",
+		description:
+			"Verify an ilo program WITHOUT running it. Pass `code` for inline source or `file` for a .ilo path. Returns every diagnostic with its code, location, and (where the compiler can prove it) a mechanical `fix_plan`. A diagnostic carrying a fix_plan can be repaired with ilo_fix. Prefer this over running a program to find out whether it compiles.",
+		promptGuidelines: ["After writing or editing ilo code, call ilo_check to see diagnostics before running it."],
+		parameters: Type.Object({
+			code: Type.Optional(Type.String({
+				description: "Inline ilo source. Mutually exclusive with `file`.",
+			})),
+			file: Type.Optional(Type.String({
+				description: "Path to a .ilo file. Mutually exclusive with `code`.",
+			})),
+		}),
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult> {
+			const code = params.code as string | undefined;
+			const file = params.file as string | undefined;
+			if (!code && !file) {
+				return {
+					content: [{ type: "text", text: "Error: provide either `code` or `file`." }],
+					details: { error: "Missing `code` or `file`" },
+				};
+			}
+			if (code && file) {
+				return {
+					content: [{ type: "text", text: "Error: provide `code` OR `file`, not both." }],
+					details: { error: "`code` and `file` are mutually exclusive" },
+				};
+			}
+
+			try {
+				// `ilo check --json` emits one JSON diagnostic per line on
+				// stderr; a clean program exits 0 with no output.
+				const result = await runIlo(["check", "--json", code ?? (file as string)], undefined, signal, ctx.cwd);
+				const diagnostics = parseDiagnosticJson(result.stderr);
+				const ok = result.exitCode === 0 && diagnostics.length === 0;
+				return {
+					content: [{
+						type: "text",
+						text: ok
+							? "No diagnostics. The program verifies."
+							: readableDiagnostics(result.stderr),
+					}],
+					details: { ok, diagnostics, exitCode: result.exitCode },
+				};
+			} catch (err) {
+				const message = describeIloError(err);
+				return {
+					content: [{ type: "text", text: `Error: ${message}` }],
+					details: { error: message },
+				};
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "ilo_fix",
+		label: "Fix ilo source",
+		description:
+			"Apply the compiler's mechanical, type-proven repairs to an ilo program and return the fixed source. Pass `code` for inline source or `file` for a .ilo path. Only edits the verifier can prove safe are applied; anything else is left alone and reported as a remaining diagnostic. Nothing is written to disk — you decide whether to apply the returned source.",
+		promptGuidelines: ["When ilo_check reports a fix_plan, call ilo_fix to get the corrected source instead of hand-editing."],
+		parameters: Type.Object({
+			code: Type.Optional(Type.String({
+				description: "Inline ilo source. Mutually exclusive with `file`.",
+			})),
+			file: Type.Optional(Type.String({
+				description: "Path to a .ilo file. Mutually exclusive with `code`.",
+			})),
+			max_iters: Type.Optional(Type.Number({
+				description: "Maximum repair iterations to apply (default 10).",
+			})),
+			safe_only: Type.Optional(Type.Boolean({
+				description: "Only apply repairs the verifier's types prove safe.",
+			})),
+		}),
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<ToolResult> {
+			const code = params.code as string | undefined;
+			const file = params.file as string | undefined;
+			if (!code && !file) {
+				return {
+					content: [{ type: "text", text: "Error: provide either `code` or `file`." }],
+					details: { error: "Missing `code` or `file`" },
+				};
+			}
+			if (code && file) {
+				return {
+					content: [{ type: "text", text: "Error: provide `code` OR `file`, not both." }],
+					details: { error: "`code` and `file` are mutually exclusive" },
+				};
+			}
+
+			const args = ["fix", code ?? (file as string)];
+			if (typeof params.max_iters === "number") args.push("--max-iters", String(params.max_iters));
+			if (params.safe_only === true) args.push("--safe-only");
+
+			try {
+				const result = await runIlo(args, undefined, signal, ctx.cwd);
+				let parsed: Record<string, unknown> = {};
+				try {
+					parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+				} catch {
+					return {
+						content: [{ type: "text", text: result.stderr || `ilo fix failed (exit ${result.exitCode}).` }],
+						details: { error: "unparseable fixer output", exitCode: result.exitCode },
+					};
+				}
+				const fixed = parsed.fixed_source as string | null | undefined;
+				const remaining = parsed.remaining_fixable as number | undefined;
+				const applied = parsed.applied as number | undefined;
+				const text = fixed
+					? `Applied ${applied ?? 0} repair(s).\n\n${fixed}${
+						remaining ? `\n\n${remaining} diagnostic(s) still need a manual fix.` : ""
+					}`
+					: `No mechanical repair applied.${
+						remaining ? ` ${remaining} diagnostic(s) need a manual fix.` : " The program verifies."
+					}`;
+				return {
+					content: [{ type: "text", text }],
+					details: { ...parsed },
+				};
+			} catch (err) {
+				const message = describeIloError(err);
+				return {
+					content: [{ type: "text", text: `Error: ${message}` }],
+					details: { error: message },
+				};
+			}
+		},
+	});
+
 	pi.registerTool({
 		name: "ilo_run",
 		label: "Run ilo",
