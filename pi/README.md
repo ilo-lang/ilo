@@ -59,7 +59,7 @@ Set `exposure` to `direct` in that server's `mcp.json` entry. Reload Pi after ch
 
 ## Skill
 
-Ships the ilo skill at `skills/ilo/SKILL.md`. Pi loads it automatically so the agent knows the syntax before reaching for the tools. The skill carries *knowledge*; the hooks below carry *invariants* — anything the agent must always/never do lives in code, not prose.
+Ships the ilo skill at `pi/skills/ilo/SKILL.md`. Pi loads it automatically so the agent knows the syntax before reaching for the tools. The skill carries *knowledge*; the hooks below carry *invariants* — anything the agent must always/never do lives in code, not prose.
 
 ## Hooks
 
