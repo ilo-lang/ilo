@@ -14,6 +14,26 @@ The extension calls the `ilo` binary on `PATH`. Install it first with the [proje
 
 ## Tools
 
+### `ilo_check`
+
+Verify an ilo program WITHOUT running it. Pass either inline source (`code`) or a file path (`file`).
+
+```
+ilo_check({ code: "f x:n>n;xyzz" })
+```
+
+Returns every diagnostic (code, location, message, suggestion) and, where the compiler can prove the fix, a structured `fix_plan` that `ilo_fix` can apply. Prefer this over running a program to find out whether it compiles.
+
+### `ilo_fix`
+
+Apply the compiler's mechanical, type-proven repairs to an ilo program and return the corrected source. Nothing is written to disk — you decide whether to apply it.
+
+```
+ilo_fix({ code: "f x:n>n;xyzz" })
+```
+
+Options: `max_iters` (default 10), `safe_only` (only apply repairs the verifier's types prove safe). Returns `{fixed_source, applied, remaining_fixable, preview[]}`. A diagnostic without a fix_plan is left in place and reported.
+
 ### `ilo_run`
 
 Run a program. Pass either inline source (`code`) or a file path (`file`). Optionally invoke a specific function with `func` and pass `args`.
@@ -46,16 +66,16 @@ ilo_help({ topic: "ilo-language" })
 
 ## Language intelligence (MCP)
 
-Requires a compiler build with `ilo lsp`. The extension registers that subcommand with Pi, exposing `ilo_validate`, `ilo_inspect`, and `ilo_fix` directly to the agent. Despite the subcommand name, this transport is MCP, not standard LSP. `ilo serv` remains a custom execution protocol used by `ilo_repl`; do not configure it as MCP.
+Requires a compiler build with `ilo lsp`. The extension's `ilo_check` and `ilo_fix` tools cover the most common verification and repair paths directly, so most agents do not need to register the MCP server at all.
 
-For an explicit global configuration, independent of the extension:
+For the full MCP surface (hover, completion, go-to-definition, inspect), register the compiler manually:
 
 ```bash
 pi mcp add ilo -- /absolute/path/to/ilo lsp
 pi mcp list
 ```
 
-Set `exposure` to `direct` in that server's `mcp.json` entry. Reload Pi after changing configuration. A file-configured `ilo` server overrides the extension registration.
+Set `exposure` to `direct` in that server's `mcp.json` entry. Reload Pi after changing configuration. Despite the subcommand name, this transport is MCP, not standard LSP. `ilo serv` remains a custom execution protocol used by `ilo_repl`; do not configure it as MCP.
 
 ## Skill
 
@@ -69,14 +89,13 @@ Beyond tools, the extension enforces ilo workflow invariants through Pi events (
 - **Run-failure enrichment** (`tool_result` on `ilo_run` errors): attaches verifier diagnostics for file runs, or verifier diagnostics for inline code. Diagnostics are rendered as compact locations, codes, messages, and suggestions; raw stderr remains in tool details.
 - **Shell redirect** (`tool_call`): blocks `bash` invocations of the `ilo` binary with a reason pointing at `ilo_run`/`ilo_repl`.
 - **Settle gate** (`agent_before_settle`): if any `.ilo` file was edited without a subsequent clean check, forces one more model pass naming the files (at most once per user request, avoiding endless retries).
-- **ilo lsp bridge**: auto-registers the `ilo` binary with arguments `["lsp"] as a session MCP server when discoverable, so `ilo_validate`/`ilo_inspect`/`ilo_fix` appear alongside the execution tools.
 
 All hooks are fail-open: timeouts and errors never break a turn.
 
 ## Configuration
 
-- `ILO_BIN`: absolute path to the compiler used for execution, guidance, validation, and the MCP bridge. Otherwise resolve the bundled binary, PATH, then the checkout's `target/debug/ilo`.
-- `ILO_NO_HOOKS=1`: disable hooks and automatic MCP registration (execution and guidance tools keep working).
+- `ILO_BIN`: absolute path to the compiler used for execution, guidance, and validation. Otherwise resolve in order: bundled node_modules binary, `target/debug/ilo` (this repo's build), `PATH`. The checkout build wins over `PATH` so an older `ilo` earlier on PATH (which may lack newer subcommands like `ilo fix`) does not silently break the tools.
+- `ILO_NO_HOOKS=1`: disable hooks (execution and validation tools keep working).
 
 ## Integration test
 

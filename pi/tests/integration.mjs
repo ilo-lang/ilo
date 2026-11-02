@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createAgentSession,
-  createMcpExtension,
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
@@ -25,7 +24,7 @@ const settingsManager = SettingsManager.inMemory({ defaultTools: ["+probe"] });
 const resourceLoader = new DefaultResourceLoader({
   cwd, agentDir, settingsManager,
   additionalExtensionPaths: [fileURLToPath(new URL("../extensions/ilo.ts", import.meta.url))],
-  extensionFactories: [createMcpExtension(), (pi) => pi.registerTool({
+  extensionFactories: [(pi) => pi.registerTool({
     name: "probe", label: "Probe", description: "Integration assertions",
     parameters: Type.Object({}),
     async execute(_id, _args, signal, _update, ctx) {
