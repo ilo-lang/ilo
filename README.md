@@ -276,6 +276,19 @@ ilo help lang        # full spec
 | **[SPEC.md](SPEC.md)** | Full language specification |
 | **[examples/](examples/)** | Runnable examples (also test suite) |
 
+## Agent language intelligence
+
+`ilo lsp` serves MCP tools over stdio: `ilo_validate` (diagnostics), `ilo_inspect` (symbols, dependencies, callers), and `ilo_fix` (previewable mechanical repairs). Validation never executes the program; repair returns source without writing files. Supply `path` with validation/repair for relative imports. Despite the subcommand name, this is MCP, not standard LSP.
+
+For Pi:
+
+```sh
+pi mcp add ilo -- /absolute/path/to/ilo lsp
+pi mcp list
+```
+
+See [pi/README.md](pi/README.md) for execution tools, guidance, edit hooks, and direct tool exposure.
+
 ## Benchmarks
 
 Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →](https://ilo-lang.ai/docs/reference/benchmarks/)

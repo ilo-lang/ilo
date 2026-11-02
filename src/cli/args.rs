@@ -103,6 +103,13 @@ pub enum Cmd {
     /// Verify a program without running it.
     Check(CheckArgs),
 
+    /// Apply mechanical, type-proven repairs to a program. Prints JSON with
+    /// the fixed source and the applied steps.
+    Fix(FixArgs),
+
+    /// Language server over LSP stdio (editor-facing).
+    Lsp(LspArgs),
+
     /// Show language specification or compact spec.
     #[command(alias = "help")]
     Spec(SpecArgs),
@@ -274,6 +281,12 @@ pub struct ServArgs {
     pub tools_path: Option<String>,
 }
 
+// ── Mcp ──────────────────────────────────────────────────────────────────────
+
+/// No options yet: MCP runs over stdio with newline-delimited JSON-RPC.
+#[derive(Args, Debug)]
+pub struct LspArgs {}
+
 // ── Httpd ──────────────────────────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
@@ -419,6 +432,25 @@ pub struct CheckArgs {
     #[arg(long)]
     pub show_effects: bool,
 }
+
+
+// ── Fix ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct FixArgs {
+    /// Source file or inline code.
+    pub source: String,
+
+    /// Maximum number of repair iterations to apply.
+    #[arg(long, default_value_t = 10)]
+    pub max_iters: usize,
+
+    /// Only apply repairs that the verifier's types prove safe. Keeps
+    /// narrowing edits (e.g. `not x` to `!x`) out of the result.
+    #[arg(long)]
+    pub safe_only: bool,
+}
+
 
 // ── Test ───────────────────────────────────────────────────────────────────────
 
