@@ -1400,33 +1400,39 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
     }
 
     // Post-lex: detect underscore-separated identifier fragments like
-    // `rev_ps` → Ident("rev"), Underscore, Ident("ps") with no whitespace.
+    // `rev_ps` -> Ident("rev"), Underscore, Ident("ps") with no whitespace.
+    //
+    // The trailing fragment may be a *keyword* rather than an identifier
+    // (`my_var` lexes as Ident("my"), Underscore, KwVar). Those are exactly
+    // the inputs an agent is most likely to write, and letting them fall
+    // through to the parser produces a pile of misleading diagnostics
+    // (a reserved-word error on the fragment, plus undefined-variable and
+    // undefined-function errors on the rest) instead of the one L002 that
+    // says what to do. So the fragment may be any word-like token.
     for i in 0..tokens.len().saturating_sub(2) {
         let (a, sa) = (&tokens[i].0, &tokens[i].1);
         let (b, sb) = (&tokens[i + 1].0, &tokens[i + 1].1);
         let (c, sc) = (&tokens[i + 2].0, &tokens[i + 2].1);
         if matches!(a, Token::Ident(_))
             && *b == Token::Underscore
-            && matches!(c, Token::Ident(_))
+            && is_word_like(c)
             && sa.end == sb.start
             && sb.end == sc.start
         {
             let Token::Ident(ap) = a else { unreachable!() };
-            let Token::Ident(cp) = c else { unreachable!() };
-            // Greedily collect any further `_ident` pairs in the same run.
+            let cp = word_text(c);
+            // Greedily collect any further `_word` pairs in the same run.
             let mut combined = format!("{ap}_{cp}");
             let mut end = sc.end;
             let mut j = i + 3;
             while j + 1 < tokens.len()
                 && tokens[j].0 == Token::Underscore
-                && matches!(tokens[j + 1].0, Token::Ident(_))
-                && tokens[j - 1].1.end == tokens[j].1.start
+                && is_word_like(&tokens[j + 1].0)
+                && tokens[j - 1].1.end == tokens[j].1.end
                 && tokens[j].1.end == tokens[j + 1].1.start
             {
-                if let Token::Ident(s) = &tokens[j + 1].0 {
-                    combined.push('_');
-                    combined.push_str(s);
-                }
+                combined.push('_');
+                combined.push_str(word_text(&tokens[j + 1].0));
                 end = tokens[j + 1].1.end;
                 j += 2;
             }
@@ -1443,6 +1449,57 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
     }
 
     Ok(tokens)
+}
+
+/// Is this token a word-like fragment that can follow an underscore in an
+/// identifier run? Identifiers, keywords, and the boolean/nil literals all
+/// qualify: `my_var`, `my_if`, and `my_true` are all the same mistake.
+fn is_word_like(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::Ident(_)
+            | Token::Type
+            | Token::Tool
+            | Token::Use
+            | Token::With
+            | Token::Timeout
+            | Token::Retry
+            | Token::KwIf
+            | Token::KwReturn
+            | Token::KwLet
+            | Token::KwFn
+            | Token::KwDef
+            | Token::KwVar
+            | Token::KwConst
+            | Token::True
+            | Token::False
+            | Token::Nil
+    )
+}
+
+/// The source text of a word-like token, for building the hyphenated
+/// suggestion.
+fn word_text(token: &Token) -> &str {
+    match token {
+        Token::Ident(name) => name.as_str(),
+        Token::Type => "type",
+        Token::Tool => "tool",
+        Token::Use => "use",
+        Token::With => "with",
+        Token::Timeout => "timeout",
+        Token::Retry => "retry",
+        Token::KwIf => "if",
+        Token::KwReturn => "return",
+        Token::KwLet => "let",
+        Token::KwFn => "fn",
+        Token::KwDef => "def",
+        Token::KwVar => "var",
+        Token::KwConst => "const",
+        Token::True => "true",
+        Token::False => "false",
+        Token::Nil => "nil",
+        _ => "",
+    }
 }
 
 /// True when the last token is an `Ident` and the token before it is a
