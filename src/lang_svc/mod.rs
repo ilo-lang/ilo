@@ -113,10 +113,11 @@ mod tests {
 
     #[test]
     fn fix_p011_rename_basic() {
-        // Test for P011 reserved name rename
-        let source = "unique xs;";
+        // P011 fires when a reserved builtin name is used as a binding.
+        // `unique` is an alias for the `unq` builtin, so binding it is a
+        // reserved-name error, not an undefined-variable error.
+        let source = "unique = 5;";
         let diagnostics = check(source, None);
-        // Check for ILO-P011 error code
         let diagnostic = diagnostics.iter().find(|d| d.code == Some("ILO-P011"));
         assert!(diagnostic.is_some(), "Expected P011 diagnostic for reserved name");
     }
@@ -133,12 +134,12 @@ mod tests {
 
     #[test]
     fn fix_p009_let_basic() {
-        // Test for P009 let-in syntax removal
-        let source = "let x = 1 in x";
+        // P009 is the paren-form call error (`f(a, b)` needs commas).
+        // Postfix form `f a b` is what ilo actually uses.
+        let source = "f a:n>n;a(1 2)";
         let diagnostics = check(source, None);
-        // Should flag let-in syntax
         let diagnostic = diagnostics.iter().find(|d| d.code == Some("ILO-P009"));
-        assert!(diagnostic.is_some(), "Expected P009 diagnostic for let-in");
+        assert!(diagnostic.is_some(), "Expected P009 diagnostic for paren-form call");
     }
 
     #[test]

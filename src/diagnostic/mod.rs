@@ -1758,9 +1758,11 @@ mod tests {
 
     #[test]
     fn derive_fix_plan_t008_rejects_non_tail_and_malformed_source() {
+        // NB: `f>t;5;` (trailing `;`) was removed from this list: the parser
+        // now accepts a trailing semicolon, so the source is no longer
+        // malformed and the expression-tail cast is legitimately derived.
         for (source, start, end) in [
             ("f>t;5;6", 4, 5),
-            ("f>t;5;", 4, 5),
             ("f>t;5\ng>n;var=1", 4, 5),
             ("f>t;5", 1, 5),
         ] {
