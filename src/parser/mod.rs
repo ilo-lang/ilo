@@ -478,6 +478,27 @@ impl Parser {
         }
     }
 
+    /// Like `error_hint`, but anchored on an explicit span.
+    ///
+    /// Used where the offending token has already been consumed: `error_hint`
+    /// anchors on `peek_span()` (the *next* token), so a diagnostic about a
+    /// declaration's name would point at the first parameter instead.
+    fn error_hint_at(
+        &self,
+        code: &'static str,
+        span: Span,
+        message: String,
+        hint: String,
+    ) -> ParseError {
+        ParseError {
+            code,
+            position: self.pos,
+            span,
+            message,
+            hint: Some(hint),
+        }
+    }
+
     fn at_end(&self) -> bool {
         self.pos >= self.tokens.len()
     }
@@ -1628,6 +1649,12 @@ statement boundary; bind the chain to a local first. For example, split \
     /// `name params>return;body`
     fn parse_fn_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
+        // Remember where the declaration's own name is. The name token is
+        // consumed by `expect_decl_name`, so the parser has already moved past
+        // it by the time we can reject it - and `error_hint` anchors on the
+        // *next* token, which would point the diagnostic at the first
+        // parameter instead of the offending name.
+        let name_span = self.peek_span();
         let name = self.expect_decl_name()?;
         // Reject user functions whose name collides with a builtin. Without this
         // the verifier's call-dispatch (which checks `is_builtin` before user
@@ -1638,8 +1665,9 @@ statement boundary; bind the chain to a local first. For example, split \
         // builtin). Same precedent applies in `parse_stmt` for `fld=`/`cnt=`/
         // `brk=` bindings — keep the diagnostic shape consistent.
         if Builtin::is_builtin(&name) {
-            return Err(self.error_hint(
+            return Err(self.error_hint_at(
                 "ILO-P011",
+                name_span,
                 format!(
                     "`{name}` is a builtin and cannot be used as a function name"
                 ),
@@ -1652,8 +1680,9 @@ statement boundary; bind the chain to a local first. For example, split \
         // shadow-in-call-position problem as a canonical builtin name, surfaced
         // here because `Builtin::is_builtin` doesn't include aliases.
         if let Some(canonical) = resolve_alias(&name) {
-            return Err(self.error_hint(
+            return Err(self.error_hint_at(
                 "ILO-P011",
+                name_span,
                 format!("`{name}` is an alias for the `{canonical}` builtin and cannot be used as a function name"),
                 format!("rename to something like `my{name}` or `{name}of`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch to `{canonical}`."),
             ));

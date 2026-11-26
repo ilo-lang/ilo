@@ -103,6 +103,12 @@ pub enum Cmd {
     /// Verify a program without running it.
     Check(CheckArgs),
 
+    /// Apply mechanical repairs to a program. Prints JSON with fixed source.
+    Fix(FixArgs),
+
+    /// MCP language-intelligence server (stdio JSON-RPC).
+    Lsp(LspArgs),
+
     /// Show language specification or compact spec.
     #[command(alias = "help")]
     Spec(SpecArgs),
@@ -274,6 +280,28 @@ pub struct ServArgs {
     pub tools_path: Option<String>,
 }
 
+// ── Fix ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct FixArgs {
+    /// Source file or inline code.
+    pub source: String,
+
+    /// Maximum repair iterations (clamped internally).
+    #[arg(long, default_value_t = 10)]
+    pub max_iters: usize,
+
+    /// Only apply type-proven repairs.
+    #[arg(long)]
+    pub safe_only: bool,
+}
+
+// ── Lsp (MCP transport) ─────────────────────────────────────────────────────
+
+/// MCP stdio server; no options yet. (Traditional editor LSP tracked in #830.)
+#[derive(Args, Debug)]
+pub struct LspArgs {}
+
 // ── Httpd ──────────────────────────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
@@ -419,6 +447,7 @@ pub struct CheckArgs {
     #[arg(long)]
     pub show_effects: bool,
 }
+
 
 // ── Test ───────────────────────────────────────────────────────────────────────
 
