@@ -258,8 +258,7 @@ pub fn repair(source: &str, path: Option<&str>, max_iters: usize) -> Value {
 /// Repair using only narrowly type-proven edits that preserve operand roles.
 /// Unlike `repair`, this deliberately skips generic typo/reserved-name fixes.
 pub fn repair_safe(source: &str, path: Option<&str>, max_iters: usize) -> Value {
-    const SAFE_ITER_CAP: usize = 100;
-    let max_iters = max_iters.min(SAFE_ITER_CAP);
+    let max_iters = max_iters.min(MAX_ITERS_CAP);
     if max_iters == 0 {
         let diagnostics = crate::lang_svc::check(source, path);
         let preview: Vec<Value> = diagnostics
@@ -357,7 +356,6 @@ fn is_safe_fix(diagnostic: &Diagnostic) -> bool {
             | (Some("ILO-T013"), Some(crate::diagnostic::FIX_HINT_SWAP_AT_ARGS))
             | (Some("ILO-T006"), Some(crate::diagnostic::FIX_HINT_RANGE_ZERO_START))
             | (Some("ILO-T008"), Some(crate::diagnostic::FIX_HINT_TERNARY_BOOL_LITERALS))
-            | (Some("ILO-P011"), Some(_))
     )
 }
 
@@ -684,6 +682,13 @@ mod tests {
         assert_eq!(single["applied"], 0, "{single}");
         assert!(single["fixed_source"].is_null());
         assert_eq!(single["error"], "fix regressed error count; reverted");
+    }
+
+    #[test]
+    fn safe_repair_skips_reserved_name_suggestions() {
+        let out = repair_safe("f>n;var=5", None, 10);
+        assert_eq!(out["applied"], 0, "{out}");
+        assert_eq!(out["fixed_source"], Value::Null);
     }
 
     #[test]
