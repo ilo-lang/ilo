@@ -3064,6 +3064,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             check_cmd(&c.source, mode, explicit_json, c.strict, c.show_effects)
         }
         Some(cli::Cmd::Fix(f)) => fix_cmd(&f.source, f.max_iters, f.safe_only),
+        Some(cli::Cmd::Lsp(_)) => { cli::lsp::run(); 0 }
         Some(cli::Cmd::Explain(e)) => {
             let as_json = cli.global.explicit_json();
             explain_cmd(&e.code, as_json)
@@ -3231,7 +3232,8 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         );
         eprintln!("       ilo repl                                  Interactive REPL");
         eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
-        eprintln!("       ilo fix <file-or-code> [--safe-only]      Apply mechanical repairs (JSON)");
+        eprintln!("       ilo fix <file-or-code> [--safe-only]      Apply mechanical repairs (JSON)
+       ilo lsp                                  MCP language intelligence (stdio)");
         eprintln!("       ilo graph <file> [--fn NAME] [--dot]      Dependency graph");
         eprintln!("       ilo compile <file> [-o out] [func]        AOT compile to binary");
         eprintln!("       ilo help | -h     Show usage and examples");
@@ -4565,7 +4567,8 @@ fn print_help() {
     println!("  ilo --ast <code-or-file>          Print AST as JSON");
     println!("  ilo <code> --bench func [args...] Benchmark a function");
     println!("  ilo repl                          Interactive REPL");
-    println!("  ilo fix <file>                     Apply mechanical repairs (JSON)");
+    println!("  ilo fix <file>                     Apply mechanical repairs (JSON)
+  ilo lsp                           MCP language intelligence (stdio)");
     println!("  ilo graph <file> [flags]          Dependency graph (JSON or DOT)");
     println!("  ilo help lang                     Show language specification");
     println!("  ilo help ai | ilo -ai             Compact spec for LLM consumption");
