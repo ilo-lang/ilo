@@ -24,6 +24,7 @@ pub mod interpreter;
 pub mod lexer;
 pub mod parser;
 pub mod pkg;
+pub mod lang_svc;
 pub mod runtime_guard;
 pub mod tools;
 pub mod verify;
