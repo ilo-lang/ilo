@@ -276,6 +276,16 @@ ilo help lang        # full spec
 | **[SPEC.md](SPEC.md)** | Full language specification |
 | **[examples/](examples/)** | Runnable examples (also test suite) |
 
+## Agent language intelligence
+
+`ilo lsp` serves MCP tools over stdio (newline-delimited JSON-RPC): `ilo_validate` (diagnostics + fix plans), `ilo_fix` (repair loop), and `ilo_apply_fix` (single edit by index). Validation never executes the program; repair returns source without writing files. Supply `path` when relative imports matter.
+
+```sh
+pi mcp add ilo -- /absolute/path/to/ilo lsp
+```
+
+Despite the `lsp` subcommand name, this is MCP (agent tool transport), not the editor LSP protocol. Traditional `textDocument/*` LSP is tracked in [#830](https://github.com/ilo-lang/ilo/issues/830).
+
 ## Benchmarks
 
 Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →](https://ilo-lang.ai/docs/reference/benchmarks/)
