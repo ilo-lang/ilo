@@ -311,7 +311,6 @@ impl Diagnostic {
                 "ILO-P011" => derive_reserved_rename(&self, source),
                 "ILO-T039" => derive_zero_arg_call_parens(&self, source),
                 "ILO-T041" => derive_nil_coalesce_result(&self, source),
-                "ILO-P009" => derive_let_in_rewrite(&self, source),
                 _ => None,
             }
         };
@@ -323,95 +322,6 @@ impl Diagnostic {
 // ---- Fix-plan derivation helpers ----
 
 use crate::ast::SourceMap;
-
-/// P009: `let X = EXPR in REST` foreign syntax → binding chain
-/// `X = EXPR; REST`. Fires when the offending token is a bare `let` whose
-/// line carries the full `let ... in` construct — the biggest single source
-/// of broken generator output.
-fn derive_let_in_rewrite(d: &Diagnostic, source: &str) -> Option<FixPlan> {
-    if d.message != "expected expression, got `let`" {
-        return None;
-    }
-    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
-    if span.start >= source.len() || span.start >= span.end {
-        return None;
-    }
-    let sm = SourceMap::new(source);
-    let (line_start, _) = sm.lookup(span.start);
-    let lines: Vec<&str> = source.split('\n').collect();
-    let lo = line_start.saturating_sub(1);
-    if lo >= lines.len() {
-        return None;
-    }
-    let line = lines[lo];
-    let rewritten = rewrite_let_in_line(line)?;
-    if rewritten == line {
-        return None;
-    }
-    Some(FixPlan {
-        path: d.path.clone(),
-        edits: vec![FixEdit {
-            line_start,
-            line_end: line_start,
-            before: line.to_string(),
-            after: rewritten,
-        }],
-    })
-}
-
-/// Rewrite a `let X = EXPR in REST` line into `X = EXPR; REST`.
-///
-/// The `REST` half is often an infix arithmetic expression borrowed from
-/// another language (`s / len xs`). ilo is prefix-only, so a bare infix
-/// operator would still not parse. Convert the simple `A op B` shape to
-/// ilo's prefix form (`/A (B)`) so the rewritten line actually compiles.
-fn rewrite_let_in_line(line: &str) -> Option<String> {
-    let m = regex::Regex::new(
-        r"^(\s*)let\s+([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(.*?)\s+in\s+(.+)$",
-    )
-    .ok()?;
-    let caps = m.captures(line)?;
-    let indent = caps.get(1)?.as_str();
-    let var = caps.get(2)?.as_str();
-    let expr = caps.get(3)?.as_str();
-    let rest = caps.get(4)?.as_str();
-    let rest = infix_to_prefix(rest);
-    Some(format!("{indent}{var}={expr};{rest}"))
-}
-
-/// Convert a simple infix arithmetic expression to ilo's prefix form.
-///
-/// Handles `A op B` where `A` and `B` are single atoms (identifiers,
-/// numbers, or parenthesised groups): `s / len xs` -> `/s (len xs)`.
-///
-/// A compound left-hand side (`a + b / c`) is left alone — the caller
-/// re-validates and falls back rather than guessing at precedence.
-fn infix_to_prefix(expr: &str) -> String {
-    // Only handle the single-operator case, and only when the operator is
-    // surrounded by whitespace (so `a-b` as a name is not misread).
-    //
-    // The right-hand side may be a call (`len xs`) or a parenthesised group
-    // (`(flt {...} xs)`), so the atom pattern allows a name followed by
-    // space-separated arguments.
-    let re = regex::Regex::new(
-        r"^(?P<lhs>[A-Za-z0-9_().]+)\s+(?P<op>[-+*/])\s+(?P<rhs>[A-Za-z0-9_().]+(?:\s+[A-Za-z0-9_().{}]+)*)$",
-    )
-    .ok();
-    let Some(re) = re else { return expr.to_string() };
-    let Some(caps) = re.captures(expr.trim()) else {
-        return expr.to_string();
-    };
-    let lhs = caps.name("lhs").map(|m| m.as_str()).unwrap_or("");
-    let op = caps.name("op").map(|m| m.as_str()).unwrap_or("");
-    let rhs = caps.name("rhs").map(|m| m.as_str()).unwrap_or("");
-    if lhs.is_empty() || op.is_empty() || rhs.is_empty() {
-        return expr.to_string();
-    }
-    // The right side is a grouped sub-expression: parenthesise it so the
-    // prefix operator consumes exactly two operands.
-    format!("{op}{lhs} ({rhs})")
-}
-
 
 /// Heuristic: is `from` a plausible misspelling of builtin `to`?
 /// Allows close typos/abbreviations (uniq→unq) but rejects semantically
